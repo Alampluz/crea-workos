@@ -4,21 +4,23 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>CREA WorkOS</title>
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🟣</text></svg>">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><rect width='64' height='64' rx='14' fill='%2316181D'/><text x='32' y='45' font-size='36' font-family='Georgia,serif' font-weight='700' fill='white' text-anchor='middle'>C</text></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700&family=Fraunces:opsz,wght@9..144,600&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
 <style>
 :root{
-  --bg:#F4F5F9; --panel:#FFFFFF; --ink:#1B1D29; --ink2:#5A5E74; --ink3:#9BA0B4;
-  --line:#E5E7F0; --accent:#5B5BD6; --accent-soft:#EEEEFC; --accent-ink:#4341C8;
-  --green:#12915E; --green-soft:#E3F6ED; --red:#D6455B; --red-soft:#FCE9EC;
-  --amber:#B97A08; --amber-soft:#FDF2DC; --blue:#2273C9; --blue-soft:#E7F1FB;
-  --purple:#7A4FD1; --purple-soft:#F1EAFC; --gray-soft:#EEF0F6;
-  --sidebar:#17181F; --sidebar-ink:#B9BCCB; --sidebar-hover:#24252F;
-  --radius:12px; --shadow:0 1px 3px rgba(20,22,40,.08),0 8px 24px rgba(20,22,40,.06);
+  --bg:#F7F7F4; --panel:#FFFFFF; --ink:#16181D; --ink2:#5D6167; --ink3:#9DA1A7;
+  --line:#E9E8E3; --accent:#0F766E; --accent-soft:#EAF3F1; --accent-ink:#0B5D57;
+  --green:#12915E; --green-soft:#E5F4EC; --red:#C2434F; --red-soft:#FAECEC;
+  --amber:#A8770E; --amber-soft:#FBF3DE; --blue:#2A6FB8; --blue-soft:#EAF1F9;
+  --purple:#6E56B8; --purple-soft:#F1EDFA; --gray-soft:#F0EFEA;
+  --sidebar:#FFFFFF; --sidebar-ink:#5D6167; --sidebar-hover:#F2F2EE;
+  --radius:14px; --shadow:0 1px 2px rgba(22,24,29,.05),0 10px 30px rgba(22,24,29,.05);
 }
 *{margin:0;padding:0;box-sizing:border-box}
 html,body{height:100%}
-body{font-family:'Segoe UI',system-ui,-apple-system,'Helvetica Neue',Arial,sans-serif;background:var(--bg);color:var(--ink);font-size:14px;-webkit-font-smoothing:antialiased}
+body{font-family:'DM Sans',system-ui,-apple-system,'Helvetica Neue',Arial,sans-serif;background:var(--bg);color:var(--ink);font-size:14px;-webkit-font-smoothing:antialiased;letter-spacing:.1px}
 button{font-family:inherit;cursor:pointer;border:none;background:none;font-size:13.5px}
 input,select,textarea{font-family:inherit;font-size:14px;color:var(--ink);background:#fff;border:1px solid var(--line);border-radius:8px;padding:9px 11px;width:100%;outline:none;transition:border-color .15s, box-shadow .15s}
 input:focus,select:focus,textarea:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
@@ -32,34 +34,33 @@ a{color:var(--accent-ink);text-decoration:none}
 
 /* ---------- layout ---------- */
 #app{display:flex;height:100vh;overflow:hidden}
-#sidebar{width:248px;min-width:248px;background:var(--sidebar);color:var(--sidebar-ink);display:flex;flex-direction:column;overflow-y:auto}
+#sidebar{width:248px;min-width:248px;background:var(--sidebar);color:var(--sidebar-ink);display:flex;flex-direction:column;overflow-y:auto;border-right:1px solid var(--line)}
 #main{flex:1;display:flex;flex-direction:column;overflow:hidden}
 #topbar{height:58px;min-height:58px;background:var(--panel);border-bottom:1px solid var(--line);display:flex;align-items:center;gap:14px;padding:0 22px}
 #content{flex:1;overflow-y:auto;padding:24px 28px}
 
-.logo{display:flex;align-items:center;gap:10px;padding:18px 18px 14px;color:#fff}
-.logo-mark{width:32px;height:32px;border-radius:9px;background:linear-gradient(135deg,#6D6DF0,#4341C8);display:flex;align-items:center;justify-content:center;font-weight:800;font-size:15px;color:#fff}
-.logo b{font-size:15.5px;letter-spacing:.2px}
-.logo span{display:block;font-size:10.5px;color:#7C7F92;font-weight:500;letter-spacing:.6px;text-transform:uppercase}
+.logo{display:flex;align-items:center;gap:11px;padding:22px 18px 18px;color:var(--ink)}
+.logo-mark{width:34px;height:34px;border-radius:10px;background:#16181D;display:flex;align-items:center;justify-content:center;font-weight:600;font-size:17px;color:#fff;font-family:'Fraunces',Georgia,serif}
+.logo b{font-size:16px;letter-spacing:.2px;font-weight:700}
+.logo span{display:block;font-size:9.5px;color:var(--ink3);font-weight:600;letter-spacing:1.6px;text-transform:uppercase;margin-top:1px}
 
-.nav-section{padding:10px 12px 4px;font-size:10.5px;font-weight:700;letter-spacing:.8px;text-transform:uppercase;color:#63667A}
-.nav-item{display:flex;align-items:center;gap:10px;margin:1px 8px;padding:8px 10px;border-radius:8px;color:var(--sidebar-ink);font-weight:500;font-size:13.5px;cursor:pointer;user-select:none}
-.nav-item:hover{background:var(--sidebar-hover);color:#fff}
-.nav-item.active{background:#2E2F45;color:#fff}
-.nav-item .ico{width:20px;text-align:center;font-size:15px}
-.nav-item .count{margin-left:auto;background:#33354a;color:#C9CBDD;font-size:11px;font-weight:700;padding:1px 7px;border-radius:10px}
+.nav-section{padding:14px 20px 6px;font-size:10px;font-weight:700;letter-spacing:1.4px;text-transform:uppercase;color:var(--ink3)}
+.nav-item{display:flex;align-items:center;gap:10px;margin:1px 10px;padding:8px 12px;border-radius:9px;color:var(--sidebar-ink);font-weight:500;font-size:13.5px;cursor:pointer;user-select:none;transition:all .12s}
+.nav-item:hover{background:var(--sidebar-hover);color:var(--ink)}
+.nav-item.active{background:var(--accent-soft);color:var(--accent-ink);font-weight:600}
+.nav-item .count{margin-left:auto;background:var(--gray-soft);color:var(--ink2);font-size:11px;font-weight:700;padding:1px 7px;border-radius:10px}
 .nav-item .count.hot{background:var(--red);color:#fff}
-.ws-item{display:flex;align-items:center;gap:9px;margin:1px 8px;padding:7px 10px;border-radius:8px;font-size:13px;cursor:pointer;color:var(--sidebar-ink)}
-.ws-item:hover{background:var(--sidebar-hover);color:#fff}
-.ws-item.active{background:#2E2F45;color:#fff}
-.ws-dot{width:9px;min-width:9px;height:9px;border-radius:3px}
+.ws-item{display:flex;align-items:center;gap:10px;margin:1px 10px;padding:7px 12px;border-radius:9px;font-size:13px;cursor:pointer;color:var(--sidebar-ink);transition:all .12s}
+.ws-item:hover{background:var(--sidebar-hover);color:var(--ink)}
+.ws-item.active{background:var(--accent-soft);color:var(--accent-ink);font-weight:600}
+.ws-dot{width:8px;min-width:8px;height:8px;border-radius:50%}
 .ws-name{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-#sidebar-user{margin-top:auto;padding:12px;border-top:1px solid #262735;display:flex;align-items:center;gap:10px}
+#sidebar-user{margin-top:auto;padding:14px;border-top:1px solid var(--line);display:flex;align-items:center;gap:10px}
 #sidebar-user .who{flex:1;min-width:0}
-#sidebar-user .who b{display:block;color:#fff;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-#sidebar-user .who span{font-size:11px;color:#7C7F92;text-transform:capitalize}
-#sidebar-user button{color:#7C7F92;font-size:16px;padding:6px;border-radius:6px}
-#sidebar-user button:hover{background:var(--sidebar-hover);color:#fff}
+#sidebar-user .who b{display:block;color:var(--ink);font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#sidebar-user .who span{font-size:10.5px;color:var(--ink3);text-transform:capitalize;letter-spacing:.4px}
+#sidebar-user button{color:var(--ink3);padding:6px;border-radius:7px;display:inline-flex;align-items:center}
+#sidebar-user button:hover{background:var(--sidebar-hover);color:var(--ink)}
 
 .crumb{font-size:15.5px;font-weight:700}
 .crumb span{color:var(--ink3);font-weight:500}
@@ -68,7 +69,8 @@ a{color:var(--accent-ink);text-decoration:none}
 /* ---------- shared components ---------- */
 .btn{display:inline-flex;align-items:center;gap:7px;padding:8px 15px;border-radius:8px;font-weight:600;font-size:13.5px;transition:filter .12s;white-space:nowrap}
 .btn:hover{filter:brightness(.96)}
-.btn-primary{background:var(--accent);color:#fff}
+.btn-primary{background:#16181D;color:#fff}
+.btn-primary:hover{background:#2A2D34;filter:none}
 .btn-ghost{background:var(--panel);border:1px solid var(--line);color:var(--ink)}
 .btn-danger{background:var(--red);color:#fff}
 .btn-green{background:var(--green);color:#fff}
@@ -81,7 +83,7 @@ a{color:var(--accent-ink);text-decoration:none}
 .empty{padding:44px 20px;text-align:center;color:var(--ink3)}
 .empty .big{font-size:34px;margin-bottom:10px}
 .page-head{display:flex;align-items:center;gap:12px;margin-bottom:18px;flex-wrap:wrap}
-.page-head h1{font-size:20px;font-weight:800}
+.page-head h1{font-size:22px;font-weight:600;font-family:'Fraunces',Georgia,serif;letter-spacing:.2px}
 .page-head .sub{color:var(--ink2);font-size:13px}
 .page-head .actions{margin-left:auto;display:flex;gap:8px}
 .tabs{display:flex;gap:2px;background:var(--gray-soft);border-radius:9px;padding:3px}
@@ -92,7 +94,7 @@ table.tbl{width:100%;border-collapse:collapse;font-size:13.5px}
 .tbl td{padding:11px 14px;border-bottom:1px solid var(--line);vertical-align:middle}
 .tbl tr:last-child td{border-bottom:none}
 .tbl tr.rowlink{cursor:pointer}
-.tbl tr.rowlink:hover{background:#FAFAFE}
+.tbl tr.rowlink:hover{background:#FAFAF6}
 
 /* toast */
 #toasts{position:fixed;bottom:20px;right:20px;z-index:300;display:flex;flex-direction:column;gap:8px}
@@ -112,7 +114,7 @@ table.tbl{width:100%;border-collapse:collapse;font-size:13.5px}
 .modal-foot{display:flex;justify-content:flex-end;gap:8px;padding:14px 20px;border-top:1px solid var(--line)}
 
 /* login */
-#login-screen{position:fixed;inset:0;background:radial-gradient(1200px 700px at 20% -10%,#2B2C56 0%,#17181F 55%);display:flex;align-items:center;justify-content:center;z-index:100}
+#login-screen{position:fixed;inset:0;background:radial-gradient(1200px 700px at 18% -10%,#14403A 0%,#101114 58%);display:flex;align-items:center;justify-content:center;z-index:100}
 .login-card{background:#fff;border-radius:18px;padding:38px 36px;width:100%;max-width:400px;box-shadow:0 30px 80px rgba(0,0,0,.45)}
 .login-card .logo-mark{width:44px;height:44px;font-size:19px;margin-bottom:16px}
 .login-card h1{font-size:21px;margin-bottom:4px}
@@ -130,21 +132,21 @@ table.tbl{width:100%;border-collapse:collapse;font-size:13.5px}
 
 /* kanban */
 .board{display:flex;gap:14px;align-items:flex-start;overflow-x:auto;padding-bottom:14px;min-height:calc(100vh - 210px)}
-.col{background:#ECEEF5;border-radius:12px;min-width:272px;width:272px;display:flex;flex-direction:column;max-height:calc(100vh - 190px)}
+.col{background:#EFEEE9;border-radius:14px;min-width:272px;width:272px;display:flex;flex-direction:column;max-height:calc(100vh - 190px)}
 .col-head{display:flex;align-items:center;gap:8px;padding:12px 14px 8px;font-weight:700;font-size:13px}
 .col-head .dot{width:8px;height:8px;border-radius:50%}
 .col-head .count{margin-left:auto;color:var(--ink3);font-size:12px;font-weight:600}
 .col-body{padding:4px 8px 8px;overflow-y:auto;display:flex;flex-direction:column;gap:8px;min-height:60px}
 .col-body.dragover{background:rgba(91,91,214,.07);border-radius:10px}
 .tcard{background:#fff;border:1px solid var(--line);border-radius:10px;padding:11px 12px;cursor:pointer;box-shadow:0 1px 2px rgba(20,22,40,.06)}
-.tcard:hover{border-color:#C9CBE8}
+.tcard:hover{border-color:#C9C7BE;box-shadow:0 3px 10px rgba(22,24,29,.07)}
 .tcard.dragging{opacity:.4}
 .tcard .t{font-weight:600;font-size:13.5px;line-height:1.35;margin-bottom:8px}
 .tcard .meta{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
 .tcard .due{font-size:11.5px;color:var(--ink2);font-weight:600}
 .tcard .due.over{color:var(--red)}
 .add-card{margin:0 8px 10px;padding:7px;border-radius:8px;color:var(--ink2);font-weight:600;font-size:12.5px;text-align:left}
-.add-card:hover{background:#E2E4EE;color:var(--ink)}
+.add-card:hover{background:#E6E5DF;color:var(--ink)}
 
 /* dashboard charts */
 .grid-2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
@@ -206,9 +208,9 @@ table.tbl{width:100%;border-collapse:collapse;font-size:13.5px}
 
 <div id="app" class="hidden">
   <div id="sidebar">
-    <div class="logo"><div class="logo-mark">C</div><div><b>CREA WorkOS</b><span>Operations Hub</span></div></div>
+    <div class="logo"><div class="logo-mark">C</div><div><b>CREA WorkOS</b><span>Operations</span></div></div>
     <div id="nav-main"></div>
-    <div class="nav-section" id="ws-section-title">Workspaces</div>
+    <div class="nav-section" id="ws-section-title" style="display:flex;align-items:center;justify-content:space-between">Teams</div>
     <div id="nav-ws"></div>
     <div id="sidebar-user"></div>
   </div>
@@ -238,10 +240,10 @@ const STATUSES = [
   {k:'done', label:'Done', color:'#12915E'},
 ];
 const PRIORITIES = [
-  {k:'urgent', label:'Urgent', color:'var(--red)', soft:'var(--red-soft)', ico:'🔴'},
-  {k:'high', label:'High', color:'var(--amber)', soft:'var(--amber-soft)', ico:'🟠'},
-  {k:'normal', label:'Normal', color:'var(--blue)', soft:'var(--blue-soft)', ico:'🔵'},
-  {k:'low', label:'Low', color:'var(--ink3)', soft:'var(--gray-soft)', ico:'⚪'},
+  {k:'urgent', label:'Urgent', color:'var(--red)', soft:'var(--red-soft)'},
+  {k:'high', label:'High', color:'var(--amber)', soft:'var(--amber-soft)'},
+  {k:'normal', label:'Normal', color:'var(--blue)', soft:'var(--blue-soft)'},
+  {k:'low', label:'Low', color:'var(--ink3)', soft:'var(--gray-soft)'},
 ];
 const REQ_STATUSES = [
   {k:'submitted', label:'Submitted', color:'var(--blue)', soft:'var(--blue-soft)'},
@@ -288,7 +290,7 @@ function dueBadge(d, doneAlready){
   const n = daysDiff(d);
   const over = n<0 && !doneAlready;
   const txt = n===0 ? 'Today' : n===1 ? 'Tomorrow' : n===-1 ? 'Yesterday' : fmtDate(d);
-  return `<span class="due ${over?'over':''}">📅 ${txt}</span>`;
+  return `<span class="due ${over?'over':''}">${txt}</span>`;
 }
 function slaBadge(sla, status){
   if(!sla) return '';
@@ -383,7 +385,7 @@ async function uploadAttachments(entity_type, entity_id, fileInput){
 }
 function attLink(a){
   const {data} = db.storage.from('attachments').getPublicUrl(a.storage_path);
-  return `<a href="${data.publicUrl}" target="_blank" rel="noopener" style="display:inline-flex;align-items:center;gap:5px;margin:2px 10px 2px 0;font-size:12.5px">📎 ${esc(a.file_name)}</a>`;
+  return `<a href="${data.publicUrl}" target="_blank" rel="noopener" style="display:inline-flex;align-items:center;gap:5px;margin:2px 10px 2px 0;font-size:12.5px;text-decoration:underline;text-underline-offset:3px">${esc(a.file_name)}</a>`;
 }
 
 /* ================= ROUTER ================= */
@@ -404,32 +406,36 @@ function navigate(hash){
 function renderSidebar(){
   const v = S.route.view, id=S.route.id;
   const items = [
-    {h:'#/home', ico:'🏠', label:'My Work', show:true},
-    {h:'#/requests', ico:'📨', label:'Requests', show:true},
-    {h:'#/approvals', ico:'✅', label:'Approvals', show:true, badge:'appr'},
-    {h:'#/dashboard', ico:'📊', label:'Dashboard', show:isStaff()},
-    {h:'#/admin', ico:'⚙️', label:'Admin', show:isAdmin()},
+    {h:'#/home', label:'My Work', show:true},
+    {h:'#/requests', label:'Requests', show:true},
+    {h:'#/approvals', label:'Approvals', show:true, badge:'appr'},
+    {h:'#/dashboard', label:'Dashboard', show:isStaff()},
+    {h:'#/admin', label:'Admin', show:isAdmin()},
   ];
   $('#nav-main').innerHTML = '<div class="nav-section">Menu</div>' + items.filter(i=>i.show).map(i=>
-    `<div class="nav-item ${('#/'+v)===i.h?'active':''}" onclick="location.hash='${i.h}'"><span class="ico">${i.ico}</span>${i.label}<span class="count hidden" id="badge-${i.badge||''}"></span></div>`).join('');
+    `<div class="nav-item ${('#/'+v)===i.h?'active':''}" onclick="location.hash='${i.h}'">${i.label}<span class="count hidden" id="badge-${i.badge||''}"></span></div>`).join('');
   updateApprovalBadge();
 
-  // workspaces: staff see all; external users see only workspaces containing their projects
+  // teams: RLS already scopes what each user can see (internal = their teams only)
   let wss = S.workspaces;
   if(isExternal()){
     const myWs = new Set(S.projects.map(p=>p.workspace_id));
     wss = wss.filter(w=>myWs.has(w.id));
   }
-  $('#ws-section-title').style.display = wss.length? '' : 'none';
+  const tt = $('#ws-section-title');
+  tt.style.display = (wss.length || isStaff())? 'flex' : 'none';
+  tt.innerHTML = 'Teams' + (isStaff()? '<button onclick="newWorkspaceModal()" title="New team" style="color:var(--ink3);font-size:15px;line-height:1;padding:0 2px;border-radius:5px">+</button>':'');
   $('#nav-ws').innerHTML = wss.map(w=>
     `<div class="ws-item ${v==='ws'&&id===w.id?'active':''}" onclick="location.hash='#/ws/${w.id}'">
-      <span class="ws-dot" style="background:${w.color}"></span><span class="ws-name">${w.icon} ${esc(w.name)}</span>
-    </div>`).join('');
+      <span class="ws-dot" style="background:${w.color}"></span><span class="ws-name">${esc(w.name)}</span>
+    </div>`).join('') || (isStaff()? '<div style="padding:4px 22px;font-size:12px;color:var(--ink3)">No teams yet — press +</div>':'');
 
+  const icoKey = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="7.5" cy="15.5" r="4.5"/><path d="m21 2-9.6 9.6"/><path d="m15.5 7.5 3 3L22 7l-3-3"/></svg>';
+  const icoOut = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>';
   $('#sidebar-user').innerHTML = `${avatar(S.me)}
     <div class="who"><b>${esc(S.me.full_name)}</b><span>${S.me.role}</span></div>
-    <button title="Change password" onclick="changePasswordModal()">🔑</button>
-    <button title="Sign out" onclick="db.auth.signOut()">⎋</button>`;
+    <button title="Change password" onclick="changePasswordModal()">${icoKey}</button>
+    <button title="Sign out" onclick="db.auth.signOut()">${icoOut}</button>`;
 }
 async function updateApprovalBadge(){
   const {count} = await db.from('approvals').select('id',{count:'exact',head:true}).eq('approver_id',S.me.id).eq('status','pending');
@@ -470,7 +476,7 @@ async function renderHome(){
 
   const hello = new Date().getHours()<12?'Good morning':new Date().getHours()<17?'Good afternoon':'Good evening';
   C.innerHTML = `
-    <div class="page-head"><div><h1>${hello}, ${esc(S.me.full_name.split(' ')[0])} 👋</h1>
+    <div class="page-head"><div><h1>${hello}, ${esc(S.me.full_name.split(' ')[0])}</h1>
       <div class="sub">${new Date().toLocaleDateString('en-GB',{weekday:'long', day:'numeric', month:'long'})}</div></div>
       <div class="actions"><button class="btn btn-primary" onclick="newRequestFlow()">＋ New request</button></div></div>
     <div class="stat-row">
@@ -480,21 +486,21 @@ async function renderHome(){
       <div class="stat"><div class="n">${requests.length}</div><div class="l">My open requests</div></div>
       <div class="stat"><div class="n ${approvals.length?'red':''}">${approvals.length}</div><div class="l">Waiting for my approval</div></div>
     </div>
-    <div class="section-title">📌 My tasks <span class="count">${tasks.length}</span></div>
-    <div class="card">${tasks.length? taskTable(tasks) : `<div class="empty"><div class="big">🎉</div>No open tasks assigned to you</div>`}</div>
-    <div class="section-title">📨 My requests <span class="count">${requests.length}</span></div>
-    <div class="card">${requests.length? requestTable(requests) : `<div class="empty">No open requests. Use “＋ New request” to submit one.</div>`}</div>
-    ${approvals.length? `<div class="section-title">✅ Waiting for my approval <span class="count">${approvals.length}</span></div>
+    <div class="section-title">My tasks <span class="count">${tasks.length}</span></div>
+    <div class="card">${tasks.length? taskTable(tasks) : `<div class="empty">No open tasks assigned to you</div>`}</div>
+    <div class="section-title">My requests <span class="count">${requests.length}</span></div>
+    <div class="card">${requests.length? requestTable(requests) : `<div class="empty">No open requests yet</div>`}</div>
+    ${approvals.length? `<div class="section-title">Waiting for my approval <span class="count">${approvals.length}</span></div>
       <div class="card">${approvalTable(approvals)}</div>`:''}
   `;
 }
 function taskTable(tasks){
   return `<table class="tbl"><thead><tr><th>Task</th><th>Project</th><th>Status</th><th>Priority</th><th>Due</th><th>Assignee</th></tr></thead><tbody>
     ${tasks.map(t=>{
-      const p=projById(t.project_id); const w=p&&wsById(p.workspace_id);
+      const p=projById(t.project_id);
       return `<tr class="rowlink" onclick="openTask('${t.id}')">
         <td style="font-weight:600">${esc(t.title)}</td>
-        <td style="color:var(--ink2)">${w? w.icon+' ':''}${esc(p?p.name:'—')}</td>
+        <td style="color:var(--ink2)">${esc(p?p.name:'—')}</td>
         <td>${statusChip(t.status)}</td><td>${prioChip(t.priority)}</td>
         <td>${dueBadge(t.due_date, t.status==='done')||'<span style="color:var(--ink3)">—</span>'}</td>
         <td>${avatar(prof(t.assignee_id), true)}</td></tr>`;
@@ -506,7 +512,7 @@ function requestTable(reqs){
       const rt=S.requestTypes.find(x=>x.id===r.request_type_id);
       return `<tr class="rowlink" onclick="openRequest('${r.id}')">
         <td style="font-weight:600">${r.ticket_no? `<span style="color:var(--ink3);font-weight:700;font-size:11.5px;margin-right:6px">WO-${r.ticket_no}</span>`:''}${esc(r.title)}</td>
-        <td style="color:var(--ink2)">${rt? rt.icon+' '+esc(rt.name):'—'}</td>
+        <td style="color:var(--ink2)">${rt? esc(rt.name):'—'}</td>
         <td>${reqStatusChip(r.status)}</td>
         <td>${slaBadge(r.sla_due_at, r.status)}</td>
         <td>${avatar(prof(r.submitted_by), true)}</td>
@@ -529,7 +535,8 @@ function approvalTable(apprs){
 /* ================= WORKSPACE ================= */
 async function renderWorkspace(id){
   const w = wsById(id); if(!w){ location.hash='#/home'; return; }
-  setTopbar(`${w.icon} ${esc(w.name)}`, isStaff()? `<button class="btn btn-primary btn-sm" onclick="newProjectModal('${w.id}')">＋ New project</button>`:'');
+  setTopbar(esc(w.name), isStaff()? `<button class="btn btn-ghost btn-sm" onclick="teamMembersModal('${w.id}')">Members</button>
+    <button class="btn btn-primary btn-sm" onclick="newProjectModal('${w.id}')">＋ New project</button>`:'');
   const C=$('#content'); C.innerHTML='<div class="empty">Loading…</div>';
   const projects = S.projects.filter(p=>p.workspace_id===id && p.status!=='archived');
   const ids = projects.map(p=>p.id);
@@ -539,7 +546,7 @@ async function renderWorkspace(id){
     (data||[]).forEach(t=>{ counts[t.project_id]=counts[t.project_id]||{open:0,done:0}; t.status==='done'?counts[t.project_id].done++:counts[t.project_id].open++; });
   }
   C.innerHTML = `
-    <div class="page-head"><div><h1>${w.icon} ${esc(w.name)}</h1><div class="sub">${esc(w.description)}</div></div></div>
+    <div class="page-head"><div><h1>${esc(w.name)}</h1><div class="sub">${esc(w.description)}</div></div></div>
     ${projects.length? `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:14px">
       ${projects.map(p=>{
         const c = counts[p.id]||{open:0,done:0}; const total=c.open+c.done;
@@ -557,7 +564,29 @@ async function renderWorkspace(id){
             ${p.due_date? dueBadge(p.due_date,false):''}
           </div></div>`;
       }).join('')}</div>`
-    : `<div class="card empty"><div class="big">📂</div>No projects yet in this workspace${isStaff()? ' — create the first one.':''}</div>`}`;
+    : `<div class="card empty">No projects yet in this team${isStaff()? ' — create the first one.':''}</div>`}`;
+}
+async function teamMembersModal(wsId){
+  const {data:members} = await db.from('workspace_members').select('*').eq('workspace_id',wsId);
+  const memberIds = new Set((members||[]).map(m=>m.user_id));
+  const internals = S.profiles.filter(p=>p.active && p.role==='internal');
+  const m = modal(`<div class="modal-head"><h2>Team members</h2><button class="x" onclick="closeModals()">✕</button></div>
+    <div class="modal-body">
+      <p style="color:var(--ink2);font-size:13px;margin-top:8px">Internal staff only see the teams they belong to. Admin and Management see every team. Partners get access per-project via project members.</p>
+      ${internals.length? internals.map(p=>`
+        <div class="chk"><input type="checkbox" data-uid="${p.id}" ${memberIds.has(p.id)?'checked':''}>
+        ${avatar(p,true)} <span>${esc(p.full_name)} <span style="color:var(--ink3)">· ${esc(p.email)}</span></span></div>`).join('')
+      : '<div class="empty">No internal staff accounts yet. Create them in Admin → Users.</div>'}
+    </div>
+    <div class="modal-foot"><button class="btn btn-ghost" onclick="closeModals()">Close</button><button class="btn btn-primary" id="tm-save">Save</button></div>`);
+  m.querySelector('#tm-save').onclick = async ()=>{
+    const want = new Set([...m.querySelectorAll('input[data-uid]:checked')].map(i=>i.dataset.uid));
+    const add=[...want].filter(u=>!memberIds.has(u)).map(user_id=>({workspace_id:wsId,user_id}));
+    const rm=[...memberIds].filter(u=>!want.has(u) && internals.some(p=>p.id===u));
+    if(add.length){ const {error} = await db.from('workspace_members').insert(add); if(error) return toast(error.message, true); }
+    if(rm.length){ const {error} = await db.from('workspace_members').delete().eq('workspace_id',wsId).in('user_id',rm); if(error) return toast(error.message, true); }
+    closeModals(); toast('Team members updated');
+  };
 }
 function newProjectModal(wsId){
   const m = modal(`<div class="modal-head"><h2>New project</h2><button class="x" onclick="closeModals()">✕</button></div>
@@ -565,7 +594,7 @@ function newProjectModal(wsId){
       <label>Project name <span class="req">*</span></label><input id="pj-name" placeholder="e.g. 9.9 Mega Sale — Brand X">
       <label>Description</label><textarea id="pj-desc" rows="2"></textarea>
       <div class="field-grid">
-        <div><label>Workspace</label><select id="pj-ws">${S.workspaces.map(w=>`<option value="${w.id}" ${w.id===wsId?'selected':''}>${w.icon} ${esc(w.name)}</option>`).join('')}</select></div>
+        <div><label>Team</label><select id="pj-ws">${S.workspaces.map(w=>`<option value="${w.id}" ${w.id===wsId?'selected':''}>${esc(w.name)}</option>`).join('')}</select></div>
         <div><label>Due date</label><input id="pj-due" type="date"></div>
       </div></div>
     <div class="modal-foot"><button class="btn btn-ghost" onclick="closeModals()">Cancel</button><button class="btn btn-primary" id="pj-save">Create project</button></div>`);
@@ -594,10 +623,10 @@ async function renderProject(id){
     S.projects.push(data); return renderProject(id);
   }
   const w = wsById(p.workspace_id);
-  setTopbar(`<span onclick="location.hash='#/ws/${p.workspace_id}'" style="cursor:pointer">${w? w.icon+' '+esc(w.name):''}</span> <span>/</span> ${esc(p.name)}`,
+  setTopbar(`<span onclick="location.hash='#/ws/${p.workspace_id}'" style="cursor:pointer">${w? esc(w.name):''}</span> <span>/</span> ${esc(p.name)}`,
     `<div class="tabs"><button class="tab ${boardMode==='board'?'active':''}" onclick="boardMode='board';renderProject('${id}')">Board</button>
      <button class="tab ${boardMode==='list'?'active':''}" onclick="boardMode='list';renderProject('${id}')">List</button></div>
-     ${isStaff()? `<button class="btn btn-ghost btn-sm" onclick="projectMembersModal('${id}')">👥 Members</button>`:''}
+     ${isStaff()? `<button class="btn btn-ghost btn-sm" onclick="projectMembersModal('${id}')">Partner access</button>`:''}
      <button class="btn btn-primary btn-sm" onclick="newTaskModal('${id}')">＋ New task</button>`);
   const C=$('#content'); C.innerHTML='<div class="empty">Loading…</div>';
   const {data:tasks, error} = await db.from('tasks').select('*').eq('project_id',id).order('position');
@@ -605,7 +634,7 @@ async function renderProject(id){
   S._tasks = tasks||[];
   if(boardMode==='list'){
     const sorted=[...S._tasks].sort((a,b)=> (a.status==='done')-(b.status==='done') || (a.due_date||'9999').localeCompare(b.due_date||'9999'));
-    C.innerHTML = `<div class="card">${sorted.length? taskTable(sorted): `<div class="empty"><div class="big">📋</div>No tasks yet</div>`}</div>`;
+    C.innerHTML = `<div class="card">${sorted.length? taskTable(sorted): `<div class="empty">No tasks yet</div>`}</div>`;
     return;
   }
   C.innerHTML = `<div class="board">${STATUSES.map(s=>{
@@ -729,8 +758,8 @@ async function openTask(id){
   if(!t) return toast('Task not found', true);
   const p = projById(t.project_id);
   const m = modal(`<div class="modal-head">
-      <h2 style="display:flex;align-items:center;gap:8px">📌 <span id="tv-title-view">${esc(t.title)}</span></h2>
-      ${isStaff()? `<button class="x" title="Delete task" onclick="deleteTask('${t.id}','${t.project_id}')">🗑</button>`:''}
+      <h2><span id="tv-title-view">${esc(t.title)}</span></h2>
+      ${isStaff()? `<button class="x" title="Delete task" onclick="deleteTask('${t.id}','${t.project_id}')" style="font-size:12px;font-weight:600">Delete</button>`:''}
       <button class="x" onclick="closeModals()">✕</button></div>
     <div class="modal-body">
       <div class="field-grid">
@@ -795,7 +824,7 @@ function chkRow(c){
   return `<div class="chk ${c.done?'done':''}" id="chk-${c.id}">
     <input type="checkbox" ${c.done?'checked':''} onchange="toggleChk('${c.id}', this.checked)">
     <span>${esc(c.label)}</span>
-    <button class="del" onclick="delChk('${c.id}')">🗑</button></div>`;
+    <button class="del" onclick="delChk('${c.id}')">✕</button></div>`;
 }
 async function toggleChk(id, done){
   await db.from('task_checklist').update({done}).eq('id',id);
@@ -820,7 +849,7 @@ async function deleteTask(id, projectId){
 /* ================= REQUESTS ================= */
 let reqTab = 'mine';
 async function renderRequests(){
-  setTopbar('📨 Requests', `<button class="btn btn-primary btn-sm" onclick="newRequestFlow()">＋ New request</button>`);
+  setTopbar('Requests', `<button class="btn btn-primary btn-sm" onclick="newRequestFlow()">＋ New request</button>`);
   const C=$('#content'); C.innerHTML='<div class="empty">Loading…</div>';
   if(!isStaff()) reqTab='mine';
   let q = db.from('requests').select('*').order('created_at',{ascending:false});
@@ -836,13 +865,13 @@ async function renderRequests(){
         <button class="tab ${reqTab==='mine'?'active':''}" onclick="reqTab='mine';renderRequests()">Mine</button>
       </div>`:''}
       <div class="actions"><button class="btn btn-primary" onclick="newRequestFlow()">＋ New request</button></div></div>
-    <div class="card">${(reqs||[]).length? requestTable(reqs) : `<div class="empty"><div class="big">📨</div>No requests here yet</div>`}</div>`;
+    <div class="card">${(reqs||[]).length? requestTable(reqs) : `<div class="empty">No requests here yet</div>`}</div>`;
 }
 function newRequestFlow(){
   const m = modal(`<div class="modal-head"><h2>What do you need?</h2><button class="x" onclick="closeModals()">✕</button></div>
     <div class="modal-body" style="padding-top:14px"><div class="rt-grid">
       ${S.requestTypes.map(rt=>`<button class="rt-pick" onclick="newRequestForm('${rt.id}')">
-        <span class="ic">${rt.icon}</span><span><b>${esc(rt.name)}</b><span>${esc(rt.description)}</span>
+        <span><b>${esc(rt.name)}</b><span>${esc(rt.description)}</span>
         <span style="display:block;margin-top:5px;font-size:11px;color:var(--ink3)">SLA ${rt.sla_hours}h${rt.approval_required?' · needs approval':''}</span></span>
       </button>`).join('')}
     </div></div>`, true);
@@ -862,7 +891,7 @@ function readField(m, f){
 function newRequestForm(rtId){
   closeModals();
   const rt = S.requestTypes.find(x=>x.id===rtId); if(!rt) return;
-  const m = modal(`<div class="modal-head"><h2>${rt.icon} ${esc(rt.name)}</h2><button class="x" onclick="closeModals()">✕</button></div>
+  const m = modal(`<div class="modal-head"><h2>${esc(rt.name)}</h2><button class="x" onclick="closeModals()">✕</button></div>
     <div class="modal-body">
       <label>Request title <span class="req">*</span></label><input id="rq-title" placeholder="Short summary of this request">
       ${(rt.fields||[]).map(fieldInput).join('')}
@@ -885,7 +914,7 @@ function newRequestForm(rtId){
     }).select().single();
     if(error){ btn.disabled=false; btn.textContent='Submit request'; return toast(error.message, true); }
     const nUp = await uploadAttachments('request', req.id, m.querySelector('#rq-files'));
-    closeModals(); toast('Request WO-' + (req.ticket_no||'') + ' submitted 🎉' + (nUp? ' ('+nUp+' file'+(nUp>1?'s':'')+' attached)':'')); logActivity('request', req.id, 'submitted', {title});
+    closeModals(); toast('Request WO-' + (req.ticket_no||'') + ' submitted' + (nUp? ' · '+nUp+' file'+(nUp>1?'s':'')+' attached':'')); logActivity('request', req.id, 'submitted', {title});
     if(S.route.view==='requests') renderRequests(); else renderHome();
   };
 }
@@ -900,7 +929,7 @@ async function openRequest(id){
   const rt = S.requestTypes.find(x=>x.id===r.request_type_id);
   const staff = isStaff();
   const canEditStatus = staff || r.assigned_to===S.me.id;
-  const m = modal(`<div class="modal-head"><h2>${rt? rt.icon:''} ${r.ticket_no? `<span style="color:var(--ink3);font-size:13px;font-weight:700">WO-${r.ticket_no}</span> `:''}${esc(r.title)}</h2>${reqStatusChip(r.status)}<button class="x" onclick="closeModals()">✕</button></div>
+  const m = modal(`<div class="modal-head"><h2>${r.ticket_no? `<span style="color:var(--ink3);font-size:13px;font-weight:700">WO-${r.ticket_no}</span> `:''}${esc(r.title)}</h2>${reqStatusChip(r.status)}<button class="x" onclick="closeModals()">✕</button></div>
     <div class="modal-body">
       <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">
         ${prioChip(r.priority)} ${slaBadge(r.sla_due_at, r.status)}
@@ -925,8 +954,8 @@ async function openRequest(id){
         <select id="rv-status" style="width:auto">${REQ_STATUSES.map(s=>`<option value="${s.k}" ${s.k===r.status?'selected':''}>${s.label}</option>`).join('')}</select>
         <select id="rv-assign" style="width:auto"><option value="">Unassigned</option>${S.profiles.filter(p=>p.active).map(p=>`<option value="${p.id}" ${p.id===r.assigned_to?'selected':''}>${esc(p.full_name)}</option>`).join('')}</select>
         <button class="btn btn-ghost btn-sm" id="rv-update">Update</button>
-        <button class="btn btn-ghost btn-sm" onclick="requestApprovalModal('${r.id}','${esc(r.title).replace(/'/g,"\\'")}')">🙋 Ask approval</button>
-        ${!r.project_id? `<button class="btn btn-ghost btn-sm" onclick="convertToTask('${r.id}')">📌 Convert to task</button>`:'<span class="chip" style="background:var(--green-soft);color:var(--green)">Linked to project task</span>'}
+        <button class="btn btn-ghost btn-sm" id="rv-askappr">Ask approval</button>
+        ${!r.project_id? `<button class="btn btn-ghost btn-sm" onclick="convertToTask('${r.id}')">Convert to task</button>`:'<span class="chip" style="background:var(--green-soft);color:var(--green)">Linked to project task</span>'}
       </div>`:''}
       <label>Attachments</label>
       <div id="rv-atts">${(atts||[]).length? atts.map(attLink).join('') : '<span style="color:var(--ink3);font-size:13px">No files attached</span>'}</div>
@@ -941,6 +970,7 @@ async function openRequest(id){
       ${r.submitted_by===S.me.id && ['submitted','in_review'].includes(r.status)? `<button class="btn btn-danger" id="rv-cancel">Cancel request</button>`:''}
       <button class="btn btn-ghost" onclick="closeModals()">Close</button></div>`, true);
 
+  m.querySelector('#rv-askappr')?.addEventListener('click', ()=> requestApprovalModal(r.id, r.title));
   m.querySelector('#rv-update')?.addEventListener('click', async ()=>{
     const status = m.querySelector('#rv-status').value;
     const assigned_to = m.querySelector('#rv-assign').value||null;
@@ -1000,7 +1030,7 @@ async function convertToTask(reqId){
     <div class="modal-body">
       <label>Into project</label><select id="cv-proj">${projs.map(p=>{
         const w=wsById(p.workspace_id);
-        return `<option value="${p.id}" ${p.workspace_id===wsId?'selected':''}>${w?w.icon+' ':''}${esc(p.name)}</option>`;}).join('')}</select>
+        return `<option value="${p.id}" ${p.workspace_id===wsId?'selected':''}>${w?esc(w.name)+' · ':''}${esc(p.name)}</option>`;}).join('')}</select>
       <label>Assignee</label><select id="cv-assignee"><option value="">Unassigned</option>${S.profiles.filter(p=>p.active).map(p=>`<option value="${p.id}" ${p.id===r.assigned_to?'selected':''}>${esc(p.full_name)}</option>`).join('')}</select>
     </div>
     <div class="modal-foot"><button class="btn btn-ghost" onclick="closeModals()">Cancel</button><button class="btn btn-primary" id="cv-save">Create task</button></div>`);
@@ -1023,7 +1053,7 @@ async function convertToTask(reqId){
 /* ================= APPROVALS ================= */
 let apprTab='pending';
 async function renderApprovals(){
-  setTopbar('✅ Approvals');
+  setTopbar('Approvals');
   const C=$('#content'); C.innerHTML='<div class="empty">Loading…</div>';
   let q = db.from('approvals').select('*').order('created_at',{ascending:false});
   if(apprTab==='pending') q=q.eq('status','pending').eq('approver_id',S.me.id);
@@ -1049,7 +1079,7 @@ async function renderApprovals(){
           ${a.status==='pending'&&a.approver_id===S.me.id? `<button class="btn btn-green btn-sm" onclick="decideApproval('${a.id}','approved')">Approve</button>
           <button class="btn btn-danger btn-sm" onclick="decideApproval('${a.id}','rejected')">Reject</button>`:''}</td>
       </tr>`).join('')}</tbody></table>`
-      : `<div class="empty"><div class="big">✅</div>Nothing here — all clear</div>`}</div>`;
+      : `<div class="empty">Nothing here — all clear</div>`}</div>`;
 }
 async function decideApproval(id, status, reqIdToRefresh){
   let note = '';
@@ -1060,7 +1090,7 @@ async function decideApproval(id, status, reqIdToRefresh){
   if(a?.request_id){
     try{ await db.from('requests').update({status: status==='approved'?'approved':'rejected', decided_by:S.me.id, decided_at:new Date().toISOString(), decision_note:note}).eq('id',a.request_id).in('status',['submitted','in_review']); }catch(e){}
   }
-  toast(status==='approved'? 'Approved ✅':'Rejected'); logActivity('approval', id, status, {});
+  toast(status==='approved'? 'Approved':'Rejected'); logActivity('approval', id, status, {});
   updateApprovalBadge();
   closeModals();
   if(S.route.view==='approvals') renderApprovals(); else if(S.route.view==='home') renderHome(); else if(reqIdToRefresh) openRequest(reqIdToRefresh);
@@ -1070,7 +1100,7 @@ async function decideApproval(id, status, reqIdToRefresh){
 /* ================= DASHBOARD ================= */
 async function renderDashboard(){
   if(!isStaff()){ location.hash='#/home'; return; }
-  setTopbar('📊 Dashboard');
+  setTopbar('Dashboard');
   const C=$('#content'); C.innerHTML='<div class="empty">Loading…</div>';
   const [tks, reqs, apprs] = await Promise.all([
     db.from('tasks').select('id,project_id,title,status,priority,assignee_id,due_date,completed_at,created_at'),
@@ -1091,7 +1121,7 @@ async function renderDashboard(){
   // by workspace
   const byWs = S.workspaces.map(w=>{
     const pids = new Set(S.projects.filter(p=>p.workspace_id===w.id).map(p=>p.id));
-    return {label:`${w.icon} ${w.name}`, color:w.color, n:open.filter(t=>pids.has(t.project_id)).length};
+    return {label:w.name, color:w.color, n:open.filter(t=>pids.has(t.project_id)).length};
   }).filter(x=>x.n>0).sort((a,b)=>b.n-a.n);
   // by status
   const byStatus = STATUSES.map(s=>({label:s.label, color:s.color, n:tasks.filter(t=>t.status===s.k).length})).filter(x=>x.n>0);
@@ -1099,7 +1129,7 @@ async function renderDashboard(){
   const byAssignee = S.profiles.map(p=>({label:p.full_name, color:p.avatar_color, n:open.filter(t=>t.assignee_id===p.id).length}))
     .filter(x=>x.n>0).sort((a,b)=>b.n-a.n).slice(0,8);
   // requests by type
-  const byType = S.requestTypes.map(rt=>({label:`${rt.icon} ${rt.name}`, color:'#5B5BD6', n:requests.filter(r=>r.request_type_id===rt.id).length})).filter(x=>x.n>0).sort((a,b)=>b.n-a.n);
+  const byType = S.requestTypes.map(rt=>({label:rt.name, color:'#0F766E', n:requests.filter(r=>r.request_type_id===rt.id).length})).filter(x=>x.n>0).sort((a,b)=>b.n-a.n);
 
   C.innerHTML = `
     <div class="page-head"><div><h1>Operations Dashboard</h1><div class="sub">Live view across all workspaces</div></div></div>
@@ -1113,12 +1143,12 @@ async function renderDashboard(){
       <div class="stat"><div class="n ${pendingAppr?'amber':''}">${pendingAppr}</div><div class="l">Pending approvals</div></div>
     </div>
     <div class="grid-2">
-      <div class="card chart-card"><h3>Open tasks by workspace</h3>${hbars(byWs)}</div>
+      <div class="card chart-card"><h3>Open tasks by team</h3>${hbars(byWs)}</div>
       <div class="card chart-card"><h3>Tasks by status</h3>${hbars(byStatus)}</div>
       <div class="card chart-card"><h3>Open workload by person</h3>${hbars(byAssignee)}</div>
       <div class="card chart-card"><h3>Requests by type (all time)</h3>${hbars(byType)}</div>
     </div>
-    ${overdue.length? `<div class="section-title" style="margin-top:22px">🔥 Overdue tasks <span class="count">${overdue.length}</span></div>
+    ${overdue.length? `<div class="section-title" style="margin-top:22px">Overdue tasks <span class="count">${overdue.length}</span></div>
       <div class="card">${taskTable(overdue)}</div>`:''}`;
 }
 function hbars(rows){
@@ -1133,19 +1163,19 @@ function hbars(rows){
 let adminTab='users';
 async function renderAdmin(){
   if(!isAdmin()){ location.hash='#/home'; return; }
-  setTopbar('⚙️ Admin');
+  setTopbar('Admin');
   const C=$('#content'); C.innerHTML='<div class="empty">Loading…</div>';
   await refreshCore();
   C.innerHTML = `
     <div class="page-head"><h1>Admin</h1>
       <div class="tabs">
         <button class="tab ${adminTab==='users'?'active':''}" onclick="adminTab='users';renderAdmin()">Users</button>
-        <button class="tab ${adminTab==='workspaces'?'active':''}" onclick="adminTab='workspaces';renderAdmin()">Workspaces</button>
+        <button class="tab ${adminTab==='workspaces'?'active':''}" onclick="adminTab='workspaces';renderAdmin()">Teams</button>
         <button class="tab ${adminTab==='brands'?'active':''}" onclick="adminTab='brands';renderAdmin()">Brands</button>
         <button class="tab ${adminTab==='types'?'active':''}" onclick="adminTab='types';renderAdmin()">Request types</button>
       </div>
       <div class="actions">${adminTab==='users'? '<button class="btn btn-primary" onclick="inviteUserModal()">＋ Add user</button>':''}
-        ${adminTab==='workspaces'? '<button class="btn btn-primary" onclick="newWorkspaceModal()">＋ Add workspace</button>':''}</div></div>
+        ${adminTab==='workspaces'? '<button class="btn btn-primary" onclick="newWorkspaceModal()">＋ Add team</button>':''}</div></div>
     <div id="admin-body"></div>`;
   const B=$('#admin-body');
   if(adminTab==='users'){
@@ -1160,13 +1190,15 @@ async function renderAdmin(){
           <button class="btn btn-ghost btn-sm" onclick="resetPassword('${p.id}','${esc(p.full_name).replace(/'/g,"\\'")}')">Reset password</button>
           ${p.id!==S.me.id? `<button class="btn btn-ghost btn-sm" onclick="toggleActive('${p.id}', ${!p.active})">${p.active?'Deactivate':'Activate'}</button>`:''}</td>
       </tr>`).join('')}</tbody></table></div>
-      <p style="margin-top:12px;font-size:12.5px;color:var(--ink2)">Roles — <b>admin</b>: everything · <b>internal</b>: all workspaces & requests · <b>management</b>: same as internal, meant for dashboard-first use · <b>partner / freelancer</b>: only projects they're added to + their own requests.</p>`;
+      <p style="margin-top:12px;font-size:12.5px;color:var(--ink2)">Roles — <b>admin</b>: everything · <b>management</b>: sees all teams · <b>internal</b>: only the teams they are members of · <b>partner / freelancer</b>: only projects they're added to + their own requests.</p>`;
   }
   if(adminTab==='workspaces'){
-    B.innerHTML = `<div class="card"><table class="tbl"><thead><tr><th>Workspace</th><th>Description</th><th>Projects</th></tr></thead><tbody>
-      ${S.workspaces.map(w=>`<tr><td style="font-weight:600"><span class="ws-dot" style="display:inline-block;background:${w.color}"></span> ${w.icon} ${esc(w.name)}</td>
+    B.innerHTML = `<div class="card"><table class="tbl"><thead><tr><th>Team</th><th>Description</th><th>Projects</th><th></th></tr></thead><tbody>
+      ${S.workspaces.map(w=>`<tr><td style="font-weight:600"><span class="ws-dot" style="display:inline-block;background:${w.color}"></span> ${esc(w.name)}</td>
         <td style="color:var(--ink2)">${esc(w.description)}</td>
-        <td>${S.projects.filter(p=>p.workspace_id===w.id).length}</td></tr>`).join('')}</tbody></table></div>`;
+        <td>${S.projects.filter(p=>p.workspace_id===w.id).length}</td>
+        <td style="text-align:right"><button class="btn btn-ghost btn-sm" onclick="teamMembersModal('${w.id}')">Members</button></td></tr>`).join('')}</tbody></table></div>
+      <p style="margin-top:12px;font-size:12.5px;color:var(--ink2)">Internal staff only see teams they are members of. Admin and Management see everything.</p>`;
   }
   if(adminTab==='brands'){
     const brs = S.brandsList||[];
@@ -1192,11 +1224,11 @@ async function renderAdmin(){
   }
   if(adminTab==='types'){
     B.innerHTML = `<div class="card"><table class="tbl"><thead><tr><th>Type</th><th>SLA</th><th>Approval</th><th>Fields</th><th>Active</th></tr></thead><tbody>
-      ${S.requestTypes.map(rt=>`<tr><td style="font-weight:600">${rt.icon} ${esc(rt.name)}</td>
+      ${S.requestTypes.map(rt=>`<tr><td style="font-weight:600">${esc(rt.name)}</td>
         <td>${rt.sla_hours}h</td><td>${rt.approval_required?'Required':'—'}</td>
         <td style="color:var(--ink2)">${(rt.fields||[]).map(f=>esc(f.label)).join(', ')}</td>
         <td><span class="chip" style="background:var(--green-soft);color:var(--green)">active</span></td></tr>`).join('')}</tbody></table></div>
-      <p style="margin-top:12px;font-size:12.5px;color:var(--ink2)">Need a new request type or different fields/SLAs? Ask your workspace admin (or Claude 😉) to add it.</p>`;
+      <p style="margin-top:12px;font-size:12.5px;color:var(--ink2)">Need a new request type or different fields/SLAs? Ask your admin to add it.</p>`;
   }
 }
 function inviteUserModal(){
@@ -1211,7 +1243,7 @@ function inviteUserModal(){
           <option value="admin">Admin</option></select></div>
         <div><label>Temporary password <span class="req">*</span></label><input id="iu-pass" value="${'Crea'+Math.random().toString(36).slice(2,8)+'!'}"></div>
       </div>
-      <p style="margin-top:12px;font-size:12.5px;color:var(--ink2)">Share the email + temporary password with them directly. They can change it after signing in (🔑 in the sidebar).</p>
+      <p style="margin-top:12px;font-size:12.5px;color:var(--ink2)">Share the email + temporary password with them directly. They can change it after signing in with the key button in the sidebar.</p>
     </div>
     <div class="modal-foot"><button class="btn btn-ghost" onclick="closeModals()">Cancel</button><button class="btn btn-primary" id="iu-save">Create account</button></div>`);
   m.querySelector('#iu-save').onclick = async ()=>{
@@ -1225,7 +1257,7 @@ function inviteUserModal(){
         body:JSON.stringify({email, password, full_name, role})});
       const out = await res.json();
       if(!res.ok) throw new Error(out.error||'Failed');
-      closeModals(); toast('User created ✅'); await refreshCore(); renderAdmin();
+      closeModals(); toast('User created'); await refreshCore(); renderAdmin();
     }catch(e){ toast(e.message, true); btn.disabled=false; btn.textContent='Create account'; }
   };
 }
@@ -1257,21 +1289,22 @@ async function resetPassword(uid, name){
   }catch(e){ toast(e.message, true); }
 }
 function newWorkspaceModal(){
-  const m = modal(`<div class="modal-head"><h2>New workspace</h2><button class="x" onclick="closeModals()">✕</button></div>
+  const m = modal(`<div class="modal-head"><h2>New team</h2><button class="x" onclick="closeModals()">✕</button></div>
     <div class="modal-body">
-      <label>Name <span class="req">*</span></label><input id="nw-name">
-      <label>Icon (emoji)</label><input id="nw-icon" value="📁" maxlength="4">
+      <label>Team name <span class="req">*</span></label><input id="nw-name" placeholder="e.g. Livestream Squad">
       <label>Description</label><input id="nw-desc">
+      <p style="margin-top:12px;font-size:12.5px;color:var(--ink2)">You'll be added as a member automatically. Add colleagues from the team page → Members.</p>
     </div>
-    <div class="modal-foot"><button class="btn btn-ghost" onclick="closeModals()">Cancel</button><button class="btn btn-primary" id="nw-save">Create</button></div>`);
+    <div class="modal-foot"><button class="btn btn-ghost" onclick="closeModals()">Cancel</button><button class="btn btn-primary" id="nw-save">Create team</button></div>`);
   m.querySelector('#nw-save').onclick = async ()=>{
     const name=m.querySelector('#nw-name').value.trim(); if(!name) return toast('Name required', true);
-    const colors=['#6C5CE7','#0984E3','#D63031','#E84393','#E17055','#00B894','#FDCB6E'];
-    const {error} = await db.from('workspaces').insert({name, icon:m.querySelector('#nw-icon').value||'📁',
+    const colors=['#0F766E','#3E5C95','#8C5A3B','#5A6B4F','#6E56B8','#A8770E','#7D3C55'];
+    const {data, error} = await db.from('workspaces').insert({name,
       description:m.querySelector('#nw-desc').value.trim(), color:colors[Math.floor(Math.random()*colors.length)],
-      position:S.workspaces.length+1});
+      position:S.workspaces.length+1}).select().single();
     if(error) return toast(error.message, true);
-    closeModals(); toast('Workspace created'); await refreshCore(); renderAdmin(); renderSidebar();
+    closeModals(); toast('Team created'); await refreshCore(); renderSidebar();
+    if(S.route.view==='admin') renderAdmin(); else if(data) location.hash='#/ws/'+data.id;
   };
 }
 
