@@ -1,0 +1,1212 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CREA WorkOS</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🟣</text></svg>">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<style>
+:root{
+  --bg:#F4F5F9; --panel:#FFFFFF; --ink:#1B1D29; --ink2:#5A5E74; --ink3:#9BA0B4;
+  --line:#E5E7F0; --accent:#5B5BD6; --accent-soft:#EEEEFC; --accent-ink:#4341C8;
+  --green:#12915E; --green-soft:#E3F6ED; --red:#D6455B; --red-soft:#FCE9EC;
+  --amber:#B97A08; --amber-soft:#FDF2DC; --blue:#2273C9; --blue-soft:#E7F1FB;
+  --purple:#7A4FD1; --purple-soft:#F1EAFC; --gray-soft:#EEF0F6;
+  --sidebar:#17181F; --sidebar-ink:#B9BCCB; --sidebar-hover:#24252F;
+  --radius:12px; --shadow:0 1px 3px rgba(20,22,40,.08),0 8px 24px rgba(20,22,40,.06);
+}
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{height:100%}
+body{font-family:'Segoe UI',system-ui,-apple-system,'Helvetica Neue',Arial,sans-serif;background:var(--bg);color:var(--ink);font-size:14px;-webkit-font-smoothing:antialiased}
+button{font-family:inherit;cursor:pointer;border:none;background:none;font-size:13.5px}
+input,select,textarea{font-family:inherit;font-size:14px;color:var(--ink);background:#fff;border:1px solid var(--line);border-radius:8px;padding:9px 11px;width:100%;outline:none;transition:border-color .15s, box-shadow .15s}
+input:focus,select:focus,textarea:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
+textarea{resize:vertical;min-height:80px}
+label{display:block;font-size:12.5px;font-weight:600;color:var(--ink2);margin:14px 0 5px}
+label .req{color:var(--red)}
+a{color:var(--accent-ink);text-decoration:none}
+::-webkit-scrollbar{width:10px;height:10px}
+::-webkit-scrollbar-thumb{background:#CDD0DE;border-radius:6px;border:2px solid transparent;background-clip:content-box}
+::-webkit-scrollbar-track{background:transparent}
+
+/* ---------- layout ---------- */
+#app{display:flex;height:100vh;overflow:hidden}
+#sidebar{width:248px;min-width:248px;background:var(--sidebar);color:var(--sidebar-ink);display:flex;flex-direction:column;overflow-y:auto}
+#main{flex:1;display:flex;flex-direction:column;overflow:hidden}
+#topbar{height:58px;min-height:58px;background:var(--panel);border-bottom:1px solid var(--line);display:flex;align-items:center;gap:14px;padding:0 22px}
+#content{flex:1;overflow-y:auto;padding:24px 28px}
+
+.logo{display:flex;align-items:center;gap:10px;padding:18px 18px 14px;color:#fff}
+.logo-mark{width:32px;height:32px;border-radius:9px;background:linear-gradient(135deg,#6D6DF0,#4341C8);display:flex;align-items:center;justify-content:center;font-weight:800;font-size:15px;color:#fff}
+.logo b{font-size:15.5px;letter-spacing:.2px}
+.logo span{display:block;font-size:10.5px;color:#7C7F92;font-weight:500;letter-spacing:.6px;text-transform:uppercase}
+
+.nav-section{padding:10px 12px 4px;font-size:10.5px;font-weight:700;letter-spacing:.8px;text-transform:uppercase;color:#63667A}
+.nav-item{display:flex;align-items:center;gap:10px;margin:1px 8px;padding:8px 10px;border-radius:8px;color:var(--sidebar-ink);font-weight:500;font-size:13.5px;cursor:pointer;user-select:none}
+.nav-item:hover{background:var(--sidebar-hover);color:#fff}
+.nav-item.active{background:#2E2F45;color:#fff}
+.nav-item .ico{width:20px;text-align:center;font-size:15px}
+.nav-item .count{margin-left:auto;background:#33354a;color:#C9CBDD;font-size:11px;font-weight:700;padding:1px 7px;border-radius:10px}
+.nav-item .count.hot{background:var(--red);color:#fff}
+.ws-item{display:flex;align-items:center;gap:9px;margin:1px 8px;padding:7px 10px;border-radius:8px;font-size:13px;cursor:pointer;color:var(--sidebar-ink)}
+.ws-item:hover{background:var(--sidebar-hover);color:#fff}
+.ws-item.active{background:#2E2F45;color:#fff}
+.ws-dot{width:9px;min-width:9px;height:9px;border-radius:3px}
+.ws-name{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#sidebar-user{margin-top:auto;padding:12px;border-top:1px solid #262735;display:flex;align-items:center;gap:10px}
+#sidebar-user .who{flex:1;min-width:0}
+#sidebar-user .who b{display:block;color:#fff;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#sidebar-user .who span{font-size:11px;color:#7C7F92;text-transform:capitalize}
+#sidebar-user button{color:#7C7F92;font-size:16px;padding:6px;border-radius:6px}
+#sidebar-user button:hover{background:var(--sidebar-hover);color:#fff}
+
+.crumb{font-size:15.5px;font-weight:700}
+.crumb span{color:var(--ink3);font-weight:500}
+.topbar-right{margin-left:auto;display:flex;align-items:center;gap:10px}
+
+/* ---------- shared components ---------- */
+.btn{display:inline-flex;align-items:center;gap:7px;padding:8px 15px;border-radius:8px;font-weight:600;font-size:13.5px;transition:filter .12s;white-space:nowrap}
+.btn:hover{filter:brightness(.96)}
+.btn-primary{background:var(--accent);color:#fff}
+.btn-ghost{background:var(--panel);border:1px solid var(--line);color:var(--ink)}
+.btn-danger{background:var(--red);color:#fff}
+.btn-green{background:var(--green);color:#fff}
+.btn-sm{padding:5px 11px;font-size:12.5px;border-radius:7px}
+.btn:disabled{opacity:.55;cursor:default}
+.chip{display:inline-flex;align-items:center;gap:5px;font-size:11.5px;font-weight:700;padding:3px 9px;border-radius:20px;white-space:nowrap}
+.avatar{width:28px;height:28px;min-width:28px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;color:#fff;font-size:11px;font-weight:700;letter-spacing:.3px}
+.avatar.sm{width:22px;height:22px;min-width:22px;font-size:9.5px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow)}
+.empty{padding:44px 20px;text-align:center;color:var(--ink3)}
+.empty .big{font-size:34px;margin-bottom:10px}
+.page-head{display:flex;align-items:center;gap:12px;margin-bottom:18px;flex-wrap:wrap}
+.page-head h1{font-size:20px;font-weight:800}
+.page-head .sub{color:var(--ink2);font-size:13px}
+.page-head .actions{margin-left:auto;display:flex;gap:8px}
+.tabs{display:flex;gap:2px;background:var(--gray-soft);border-radius:9px;padding:3px}
+.tab{padding:6px 14px;border-radius:7px;font-weight:600;font-size:13px;color:var(--ink2)}
+.tab.active{background:#fff;color:var(--ink);box-shadow:0 1px 2px rgba(20,22,40,.1)}
+table.tbl{width:100%;border-collapse:collapse;font-size:13.5px}
+.tbl th{text-align:left;font-size:11.5px;text-transform:uppercase;letter-spacing:.5px;color:var(--ink3);font-weight:700;padding:10px 14px;border-bottom:1px solid var(--line)}
+.tbl td{padding:11px 14px;border-bottom:1px solid var(--line);vertical-align:middle}
+.tbl tr:last-child td{border-bottom:none}
+.tbl tr.rowlink{cursor:pointer}
+.tbl tr.rowlink:hover{background:#FAFAFE}
+
+/* toast */
+#toasts{position:fixed;bottom:20px;right:20px;z-index:300;display:flex;flex-direction:column;gap:8px}
+.toast{background:#22242F;color:#fff;padding:11px 16px;border-radius:10px;font-size:13.5px;box-shadow:0 8px 30px rgba(0,0,0,.25);animation:pop .18s ease;max-width:340px}
+.toast.err{background:var(--red)}
+@keyframes pop{from{transform:translateY(8px);opacity:0}to{transform:none;opacity:1}}
+
+/* modal */
+.modal-back{position:fixed;inset:0;background:rgba(15,16,26,.45);z-index:200;display:flex;align-items:flex-start;justify-content:center;padding:5vh 16px;overflow-y:auto}
+.modal{background:#fff;border-radius:14px;width:100%;max-width:640px;box-shadow:0 20px 60px rgba(0,0,0,.3);animation:pop .16s ease;margin-bottom:5vh}
+.modal.wide{max-width:820px}
+.modal-head{display:flex;align-items:center;gap:10px;padding:16px 20px;border-bottom:1px solid var(--line)}
+.modal-head h2{font-size:16px;font-weight:700;flex:1}
+.modal-head .x{font-size:18px;color:var(--ink3);padding:4px 8px;border-radius:6px}
+.modal-head .x:hover{background:var(--gray-soft);color:var(--ink)}
+.modal-body{padding:6px 20px 20px}
+.modal-foot{display:flex;justify-content:flex-end;gap:8px;padding:14px 20px;border-top:1px solid var(--line)}
+
+/* login */
+#login-screen{position:fixed;inset:0;background:radial-gradient(1200px 700px at 20% -10%,#2B2C56 0%,#17181F 55%);display:flex;align-items:center;justify-content:center;z-index:100}
+.login-card{background:#fff;border-radius:18px;padding:38px 36px;width:100%;max-width:400px;box-shadow:0 30px 80px rgba(0,0,0,.45)}
+.login-card .logo-mark{width:44px;height:44px;font-size:19px;margin-bottom:16px}
+.login-card h1{font-size:21px;margin-bottom:4px}
+.login-card p{color:var(--ink2);font-size:13.5px;margin-bottom:10px}
+.login-err{background:var(--red-soft);color:var(--red);padding:9px 12px;border-radius:8px;font-size:13px;margin-top:14px;display:none}
+
+/* home */
+.stat-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:14px;margin-bottom:22px}
+.stat{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:16px 18px;box-shadow:var(--shadow)}
+.stat .n{font-size:26px;font-weight:800;line-height:1.1}
+.stat .l{font-size:12.5px;color:var(--ink2);font-weight:600;margin-top:3px}
+.stat .n.red{color:var(--red)} .stat .n.amber{color:var(--amber)} .stat .n.green{color:var(--green)} .stat .n.accent{color:var(--accent-ink)}
+.section-title{font-size:14.5px;font-weight:800;margin:20px 0 10px;display:flex;align-items:center;gap:8px}
+.section-title .count{background:var(--gray-soft);color:var(--ink2);font-size:11.5px;padding:1px 8px;border-radius:10px}
+
+/* kanban */
+.board{display:flex;gap:14px;align-items:flex-start;overflow-x:auto;padding-bottom:14px;min-height:calc(100vh - 210px)}
+.col{background:#ECEEF5;border-radius:12px;min-width:272px;width:272px;display:flex;flex-direction:column;max-height:calc(100vh - 190px)}
+.col-head{display:flex;align-items:center;gap:8px;padding:12px 14px 8px;font-weight:700;font-size:13px}
+.col-head .dot{width:8px;height:8px;border-radius:50%}
+.col-head .count{margin-left:auto;color:var(--ink3);font-size:12px;font-weight:600}
+.col-body{padding:4px 8px 8px;overflow-y:auto;display:flex;flex-direction:column;gap:8px;min-height:60px}
+.col-body.dragover{background:rgba(91,91,214,.07);border-radius:10px}
+.tcard{background:#fff;border:1px solid var(--line);border-radius:10px;padding:11px 12px;cursor:pointer;box-shadow:0 1px 2px rgba(20,22,40,.06)}
+.tcard:hover{border-color:#C9CBE8}
+.tcard.dragging{opacity:.4}
+.tcard .t{font-weight:600;font-size:13.5px;line-height:1.35;margin-bottom:8px}
+.tcard .meta{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.tcard .due{font-size:11.5px;color:var(--ink2);font-weight:600}
+.tcard .due.over{color:var(--red)}
+.add-card{margin:0 8px 10px;padding:7px;border-radius:8px;color:var(--ink2);font-weight:600;font-size:12.5px;text-align:left}
+.add-card:hover{background:#E2E4EE;color:var(--ink)}
+
+/* dashboard charts */
+.grid-2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+@media(max-width:1000px){.grid-2{grid-template-columns:1fr}}
+.chart-card{padding:18px 20px}
+.chart-card h3{font-size:14px;font-weight:800;margin-bottom:14px}
+.hbar-row{display:flex;align-items:center;gap:10px;margin-bottom:9px;font-size:12.5px}
+.hbar-label{width:150px;min-width:150px;color:var(--ink2);font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-align:right}
+.hbar-track{flex:1;background:var(--gray-soft);border-radius:6px;height:20px;position:relative}
+.hbar-fill{height:100%;border-radius:6px;min-width:2px;transition:width .4s ease}
+.hbar-val{font-weight:700;width:30px}
+
+.sla-pill{font-size:11px;font-weight:700;padding:2px 8px;border-radius:10px}
+
+/* request type picker */
+.rt-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.rt-pick{border:1px solid var(--line);border-radius:11px;padding:14px;cursor:pointer;display:flex;gap:11px;align-items:flex-start;background:#fff;text-align:left}
+.rt-pick:hover{border-color:var(--accent);background:var(--accent-soft)}
+.rt-pick .ic{font-size:20px}
+.rt-pick b{display:block;font-size:13.5px;margin-bottom:2px}
+.rt-pick span{font-size:12px;color:var(--ink2);line-height:1.35}
+
+/* comments */
+.comment{display:flex;gap:10px;margin-bottom:12px}
+.comment .body{flex:1;background:var(--gray-soft);border-radius:0 10px 10px 10px;padding:9px 12px;font-size:13.5px}
+.comment .body b{font-size:12.5px}
+.comment .body .when{color:var(--ink3);font-size:11px;font-weight:500;margin-left:6px}
+.comment .body p{margin-top:3px;white-space:pre-wrap}
+
+/* checklist */
+.chk{display:flex;align-items:center;gap:9px;padding:6px 2px;font-size:13.5px}
+.chk input[type=checkbox]{width:16px;height:16px;accent-color:var(--accent)}
+.chk.done span{text-decoration:line-through;color:var(--ink3)}
+.chk .del{margin-left:auto;color:var(--ink3);font-size:14px;visibility:hidden}
+.chk:hover .del{visibility:visible}
+
+.field-grid{display:grid;grid-template-columns:1fr 1fr;gap:0 16px}
+@media(max-width:700px){.field-grid{grid-template-columns:1fr}#sidebar{display:none}}
+.kv{margin-bottom:8px;font-size:13.5px}
+.kv b{color:var(--ink2);font-weight:600;font-size:12px;display:block;text-transform:uppercase;letter-spacing:.4px}
+.hidden{display:none!important}
+</style>
+</head>
+<body>
+<div id="login-screen">
+  <div class="login-card">
+    <div class="logo-mark">C</div>
+    <h1>CREA WorkOS</h1>
+    <p>Sign in with your CREA account</p>
+    <label>Email</label>
+    <input id="li-email" type="email" placeholder="you@crea.asia" autocomplete="username">
+    <label>Password</label>
+    <input id="li-pass" type="password" placeholder="••••••••" autocomplete="current-password">
+    <div class="login-err" id="li-err"></div>
+    <button class="btn btn-primary" id="li-btn" style="width:100%;justify-content:center;margin-top:18px;padding:11px">Sign in</button>
+    <p style="margin-top:16px;font-size:12px;color:var(--ink3)">No account? Ask your CREA admin for an invite.</p>
+  </div>
+</div>
+
+<div id="app" class="hidden">
+  <div id="sidebar">
+    <div class="logo"><div class="logo-mark">C</div><div><b>CREA WorkOS</b><span>Operations Hub</span></div></div>
+    <div id="nav-main"></div>
+    <div class="nav-section" id="ws-section-title">Workspaces</div>
+    <div id="nav-ws"></div>
+    <div id="sidebar-user"></div>
+  </div>
+  <div id="main">
+    <div id="topbar">
+      <div class="crumb" id="crumb">Home</div>
+      <div class="topbar-right" id="topbar-actions"></div>
+    </div>
+    <div id="content"></div>
+  </div>
+</div>
+<div id="toasts"></div>
+<div id="modal-root"></div>
+
+<script>
+/* ================= CONFIG ================= */
+const SUPABASE_URL = "https://sknspnorwpoayymvndaz.supabase.co";
+const SUPABASE_ANON = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNrbnNwbm9yd3BvYXl5bXZuZGF6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODc1NjgwODcsImV4cCI6MjEwMzE0NDA4N30.73Q4zYazekw5U9r2od_h7zYcoJOVACAEFKep-qdnJ1I";
+const ADMIN_API = SUPABASE_URL + "/functions/v1/admin-api";
+const db = supabase.createClient(SUPABASE_URL, SUPABASE_ANON);
+
+const STATUSES = [
+  {k:'todo', label:'To Do', color:'#8E93A8'},
+  {k:'in_progress', label:'In Progress', color:'#2273C9'},
+  {k:'review', label:'Review', color:'#B97A08'},
+  {k:'blocked', label:'Blocked', color:'#D6455B'},
+  {k:'done', label:'Done', color:'#12915E'},
+];
+const PRIORITIES = [
+  {k:'urgent', label:'Urgent', color:'var(--red)', soft:'var(--red-soft)', ico:'🔴'},
+  {k:'high', label:'High', color:'var(--amber)', soft:'var(--amber-soft)', ico:'🟠'},
+  {k:'normal', label:'Normal', color:'var(--blue)', soft:'var(--blue-soft)', ico:'🔵'},
+  {k:'low', label:'Low', color:'var(--ink3)', soft:'var(--gray-soft)', ico:'⚪'},
+];
+const REQ_STATUSES = [
+  {k:'submitted', label:'Submitted', color:'var(--blue)', soft:'var(--blue-soft)'},
+  {k:'in_review', label:'In Review', color:'var(--amber)', soft:'var(--amber-soft)'},
+  {k:'approved', label:'Approved', color:'var(--green)', soft:'var(--green-soft)'},
+  {k:'rejected', label:'Rejected', color:'var(--red)', soft:'var(--red-soft)'},
+  {k:'in_progress', label:'In Progress', color:'var(--purple)', soft:'var(--purple-soft)'},
+  {k:'done', label:'Done', color:'var(--green)', soft:'var(--green-soft)'},
+  {k:'cancelled', label:'Cancelled', color:'var(--ink3)', soft:'var(--gray-soft)'},
+];
+
+/* ================= STATE ================= */
+const S = {
+  session:null, me:null,
+  profiles:[], workspaces:[], projects:[], requestTypes:[],
+  route:{view:'home'},
+};
+const isStaff = ()=> S.me && ['admin','internal','management'].includes(S.me.role);
+const isAdmin = ()=> S.me && S.me.role==='admin';
+const isMgmt  = ()=> S.me && S.me.role==='management';
+const isExternal = ()=> S.me && ['partner','freelancer'].includes(S.me.role);
+
+/* ================= HELPERS ================= */
+const $ = s=>document.querySelector(s);
+const el = (h)=>{const t=document.createElement('template');t.innerHTML=h.trim();return t.content.firstChild;};
+const esc = s=> (s??'').toString().replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+function toast(msg, err=false){
+  const t=el(`<div class="toast ${err?'err':''}">${esc(msg)}</div>`);
+  $('#toasts').appendChild(t); setTimeout(()=>t.remove(), 3800);
+}
+function initials(name){ return (name||'?').trim().split(/\s+/).slice(0,2).map(w=>w[0]).join('').toUpperCase(); }
+function avatar(p, sm=false){
+  if(!p) return `<span class="avatar ${sm?'sm':''}" style="background:#C6C9D8" title="Unassigned">–</span>`;
+  return `<span class="avatar ${sm?'sm':''}" style="background:${p.avatar_color}" title="${esc(p.full_name)}">${initials(p.full_name)}</span>`;
+}
+const prof = id => S.profiles.find(p=>p.id===id);
+const wsById = id => S.workspaces.find(w=>w.id===id);
+const projById = id => S.projects.find(p=>p.id===id);
+function fmtDate(d){ if(!d) return ''; const dt=new Date(d); return dt.toLocaleDateString('en-GB',{day:'numeric',month:'short'}) + (dt.getFullYear()!==new Date().getFullYear()? ' '+dt.getFullYear():''); }
+function fmtDateTime(d){ if(!d) return ''; return new Date(d).toLocaleString('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}); }
+function daysDiff(d){ const a=new Date(d); a.setHours(0,0,0,0); const b=new Date(); b.setHours(0,0,0,0); return Math.round((a-b)/86400000); }
+function dueBadge(d, doneAlready){
+  if(!d) return '';
+  const n = daysDiff(d);
+  const over = n<0 && !doneAlready;
+  const txt = n===0 ? 'Today' : n===1 ? 'Tomorrow' : n===-1 ? 'Yesterday' : fmtDate(d);
+  return `<span class="due ${over?'over':''}">📅 ${txt}</span>`;
+}
+function slaBadge(sla, status){
+  if(!sla) return '';
+  if(['done','approved','rejected','cancelled'].includes(status)) return '';
+  const ms = new Date(sla) - Date.now();
+  const h = Math.round(ms/3600000);
+  if(ms<0) return `<span class="sla-pill" style="background:var(--red-soft);color:var(--red)">SLA breached ${Math.abs(h)}h ago</span>`;
+  if(h<=8) return `<span class="sla-pill" style="background:var(--amber-soft);color:var(--amber)">SLA in ${h}h</span>`;
+  return `<span class="sla-pill" style="background:var(--gray-soft);color:var(--ink2)">SLA ${fmtDateTime(sla)}</span>`;
+}
+function statusChip(k){
+  const s = STATUSES.find(x=>x.k===k)||STATUSES[0];
+  return `<span class="chip" style="background:${s.color}1A;color:${s.color}"><span style="width:7px;height:7px;border-radius:50%;background:${s.color}"></span>${s.label}</span>`;
+}
+function prioChip(k){
+  const p = PRIORITIES.find(x=>x.k===k)||PRIORITIES[2];
+  return `<span class="chip" style="background:${p.soft};color:${p.color}">${p.label}</span>`;
+}
+function reqStatusChip(k){
+  const s = REQ_STATUSES.find(x=>x.k===k)||REQ_STATUSES[0];
+  return `<span class="chip" style="background:${s.soft};color:${s.color}">${s.label}</span>`;
+}
+function modal(html, wide=false){
+  const back = el(`<div class="modal-back"><div class="modal ${wide?'wide':''}">${html}</div></div>`);
+  back.addEventListener('mousedown', e=>{ if(e.target===back) back.remove(); });
+  $('#modal-root').appendChild(back);
+  return back;
+}
+function closeModals(){ $('#modal-root').innerHTML=''; }
+async function logActivity(entity_type, entity_id, action, detail={}){
+  try{ await db.from('activity_log').insert({actor_id:S.me.id, entity_type, entity_id, action, detail}); }catch(e){}
+}
+
+/* ================= AUTH ================= */
+async function signIn(){
+  const email=$('#li-email').value.trim(), pass=$('#li-pass').value;
+  const errBox=$('#li-err'); errBox.style.display='none';
+  if(!email||!pass) return;
+  $('#li-btn').disabled=true; $('#li-btn').textContent='Signing in…';
+  const {error} = await db.auth.signInWithPassword({email, password:pass});
+  $('#li-btn').disabled=false; $('#li-btn').textContent='Sign in';
+  if(error){ errBox.textContent = error.message==='Invalid login credentials' ? 'Wrong email or password.' : error.message; errBox.style.display='block'; }
+}
+$('#li-btn').addEventListener('click', signIn);
+$('#li-pass').addEventListener('keydown', e=>{ if(e.key==='Enter') signIn(); });
+$('#li-email').addEventListener('keydown', e=>{ if(e.key==='Enter') signIn(); });
+
+db.auth.onAuthStateChange(async (event, session)=>{
+  S.session = session;
+  if(session && !S.me){ await boot(); }
+  if(!session){ S.me=null; $('#app').classList.add('hidden'); $('#login-screen').classList.remove('hidden'); }
+});
+
+let _booting=false;
+async function boot(){
+  if(_booting || S.me) return; _booting=true;
+  try{ await _boot(); } finally{ _booting=false; }
+}
+async function _boot(){
+  const {data:me, error} = await db.from('profiles').select('*').eq('id', S.session.user.id).single();
+  if(error || !me){ toast('Could not load your profile', true); return; }
+  if(!me.active){ await db.auth.signOut(); toast('Your account is awaiting activation by a CREA admin.', true); return; }
+  S.me = me;
+  await refreshCore();
+  $('#login-screen').classList.add('hidden');
+  $('#app').classList.remove('hidden');
+  renderSidebar();
+  navigate(location.hash || '#/home');
+}
+async function refreshCore(){
+  const [pr, ws, pj, rt] = await Promise.all([
+    db.from('profiles').select('*').order('full_name'),
+    db.from('workspaces').select('*').order('position'),
+    db.from('projects').select('*').order('created_at'),
+    db.from('request_types').select('*').eq('active', true).order('position'),
+  ]);
+  S.profiles = pr.data||[]; S.workspaces = ws.data||[]; S.projects = pj.data||[]; S.requestTypes = rt.data||[];
+}
+
+/* ================= ROUTER ================= */
+window.addEventListener('hashchange', ()=>{ if(S.me) navigate(location.hash); });
+function navigate(hash){
+  if(location.hash !== hash) { location.hash = hash; return; }
+  closeModals();
+  const parts = hash.replace(/^#\//,'').split('/');
+  const view = parts[0]||'home';
+  S.route = {view, id:parts[1]};
+  renderSidebar();
+  const C = $('#content'); C.scrollTop=0;
+  const map = {home:renderHome, ws:renderWorkspace, project:renderProject, requests:renderRequests, approvals:renderApprovals, dashboard:renderDashboard, admin:renderAdmin};
+  (map[view]||renderHome)(parts[1]);
+}
+
+/* ================= SIDEBAR ================= */
+function renderSidebar(){
+  const v = S.route.view, id=S.route.id;
+  const items = [
+    {h:'#/home', ico:'🏠', label:'My Work', show:true},
+    {h:'#/requests', ico:'📨', label:'Requests', show:true},
+    {h:'#/approvals', ico:'✅', label:'Approvals', show:true, badge:'appr'},
+    {h:'#/dashboard', ico:'📊', label:'Dashboard', show:isStaff()},
+    {h:'#/admin', ico:'⚙️', label:'Admin', show:isAdmin()},
+  ];
+  $('#nav-main').innerHTML = '<div class="nav-section">Menu</div>' + items.filter(i=>i.show).map(i=>
+    `<div class="nav-item ${('#/'+v)===i.h?'active':''}" onclick="location.hash='${i.h}'"><span class="ico">${i.ico}</span>${i.label}<span class="count hidden" id="badge-${i.badge||''}"></span></div>`).join('');
+  updateApprovalBadge();
+
+  // workspaces: staff see all; external users see only workspaces containing their projects
+  let wss = S.workspaces;
+  if(isExternal()){
+    const myWs = new Set(S.projects.map(p=>p.workspace_id));
+    wss = wss.filter(w=>myWs.has(w.id));
+  }
+  $('#ws-section-title').style.display = wss.length? '' : 'none';
+  $('#nav-ws').innerHTML = wss.map(w=>
+    `<div class="ws-item ${v==='ws'&&id===w.id?'active':''}" onclick="location.hash='#/ws/${w.id}'">
+      <span class="ws-dot" style="background:${w.color}"></span><span class="ws-name">${w.icon} ${esc(w.name)}</span>
+    </div>`).join('');
+
+  $('#sidebar-user').innerHTML = `${avatar(S.me)}
+    <div class="who"><b>${esc(S.me.full_name)}</b><span>${S.me.role}</span></div>
+    <button title="Change password" onclick="changePasswordModal()">🔑</button>
+    <button title="Sign out" onclick="db.auth.signOut()">⎋</button>`;
+}
+async function updateApprovalBadge(){
+  const {count} = await db.from('approvals').select('id',{count:'exact',head:true}).eq('approver_id',S.me.id).eq('status','pending');
+  const b = $('#badge-appr'); if(!b) return;
+  if(count>0){ b.textContent=count; b.classList.remove('hidden'); b.classList.add('hot'); } else b.classList.add('hidden');
+}
+function changePasswordModal(){
+  const m = modal(`<div class="modal-head"><h2>Change password</h2><button class="x" onclick="closeModals()">✕</button></div>
+    <div class="modal-body"><label>New password</label><input id="np" type="password" placeholder="At least 8 characters"></div>
+    <div class="modal-foot"><button class="btn btn-ghost" onclick="closeModals()">Cancel</button><button class="btn btn-primary" id="np-save">Save</button></div>`);
+  m.querySelector('#np-save').onclick = async ()=>{
+    const p = m.querySelector('#np').value;
+    if(p.length<8) return toast('Password must be at least 8 characters', true);
+    const {error} = await db.auth.updateUser({password:p});
+    if(error) return toast(error.message, true);
+    closeModals(); toast('Password updated');
+  };
+}
+function setTopbar(crumb, actionsHtml=''){
+  $('#crumb').innerHTML = crumb;
+  $('#topbar-actions').innerHTML = actionsHtml;
+}
+</script>
+<script>
+/* ================= HOME (My Work) ================= */
+async function renderHome(){
+  setTopbar('My Work');
+  const C=$('#content');
+  C.innerHTML = '<div class="empty">Loading…</div>';
+  const [tks, reqs, apprs] = await Promise.all([
+    db.from('tasks').select('*').eq('assignee_id',S.me.id).neq('status','done').order('due_date',{ascending:true,nullsFirst:false}),
+    db.from('requests').select('*').eq('submitted_by',S.me.id).not('status','in',"(done,cancelled)").order('created_at',{ascending:false}),
+    db.from('approvals').select('*').eq('approver_id',S.me.id).eq('status','pending'),
+  ]);
+  const tasks = tks.data||[], requests = reqs.data||[], approvals = apprs.data||[];
+  const overdue = tasks.filter(t=>t.due_date && daysDiff(t.due_date)<0);
+  const today = tasks.filter(t=>t.due_date && daysDiff(t.due_date)===0);
+
+  const hello = new Date().getHours()<12?'Good morning':new Date().getHours()<17?'Good afternoon':'Good evening';
+  C.innerHTML = `
+    <div class="page-head"><div><h1>${hello}, ${esc(S.me.full_name.split(' ')[0])} 👋</h1>
+      <div class="sub">${new Date().toLocaleDateString('en-GB',{weekday:'long', day:'numeric', month:'long'})}</div></div>
+      <div class="actions"><button class="btn btn-primary" onclick="newRequestFlow()">＋ New request</button></div></div>
+    <div class="stat-row">
+      <div class="stat"><div class="n ${overdue.length?'red':''}">${overdue.length}</div><div class="l">Overdue tasks</div></div>
+      <div class="stat"><div class="n amber">${today.length}</div><div class="l">Due today</div></div>
+      <div class="stat"><div class="n accent">${tasks.length}</div><div class="l">Open tasks</div></div>
+      <div class="stat"><div class="n">${requests.length}</div><div class="l">My open requests</div></div>
+      <div class="stat"><div class="n ${approvals.length?'red':''}">${approvals.length}</div><div class="l">Waiting for my approval</div></div>
+    </div>
+    <div class="section-title">📌 My tasks <span class="count">${tasks.length}</span></div>
+    <div class="card">${tasks.length? taskTable(tasks) : `<div class="empty"><div class="big">🎉</div>No open tasks assigned to you</div>`}</div>
+    <div class="section-title">📨 My requests <span class="count">${requests.length}</span></div>
+    <div class="card">${requests.length? requestTable(requests) : `<div class="empty">No open requests. Use “＋ New request” to submit one.</div>`}</div>
+    ${approvals.length? `<div class="section-title">✅ Waiting for my approval <span class="count">${approvals.length}</span></div>
+      <div class="card">${approvalTable(approvals)}</div>`:''}
+  `;
+}
+function taskTable(tasks){
+  return `<table class="tbl"><thead><tr><th>Task</th><th>Project</th><th>Status</th><th>Priority</th><th>Due</th><th>Assignee</th></tr></thead><tbody>
+    ${tasks.map(t=>{
+      const p=projById(t.project_id); const w=p&&wsById(p.workspace_id);
+      return `<tr class="rowlink" onclick="openTask('${t.id}')">
+        <td style="font-weight:600">${esc(t.title)}</td>
+        <td style="color:var(--ink2)">${w? w.icon+' ':''}${esc(p?p.name:'—')}</td>
+        <td>${statusChip(t.status)}</td><td>${prioChip(t.priority)}</td>
+        <td>${dueBadge(t.due_date, t.status==='done')||'<span style="color:var(--ink3)">—</span>'}</td>
+        <td>${avatar(prof(t.assignee_id), true)}</td></tr>`;
+    }).join('')}</tbody></table>`;
+}
+function requestTable(reqs){
+  return `<table class="tbl"><thead><tr><th>Request</th><th>Type</th><th>Status</th><th>SLA</th><th>Submitted by</th><th>Assigned</th></tr></thead><tbody>
+    ${reqs.map(r=>{
+      const rt=S.requestTypes.find(x=>x.id===r.request_type_id);
+      return `<tr class="rowlink" onclick="openRequest('${r.id}')">
+        <td style="font-weight:600">${esc(r.title)}</td>
+        <td style="color:var(--ink2)">${rt? rt.icon+' '+esc(rt.name):'—'}</td>
+        <td>${reqStatusChip(r.status)}</td>
+        <td>${slaBadge(r.sla_due_at, r.status)}</td>
+        <td>${avatar(prof(r.submitted_by), true)}</td>
+        <td>${avatar(prof(r.assigned_to), true)}</td></tr>`;
+    }).join('')}</tbody></table>`;
+}
+function approvalTable(apprs){
+  return `<table class="tbl"><thead><tr><th>Approval</th><th>Requested by</th><th>Created</th><th></th></tr></thead><tbody>
+    ${apprs.map(a=>`<tr>
+      <td style="font-weight:600">${esc(a.title||'Approval')}</td>
+      <td>${avatar(prof(a.requested_by), true)} <span style="color:var(--ink2)">${esc(prof(a.requested_by)?.full_name||'')}</span></td>
+      <td style="color:var(--ink2)">${fmtDateTime(a.created_at)}</td>
+      <td style="text-align:right;white-space:nowrap">
+        ${a.request_id? `<button class="btn btn-ghost btn-sm" onclick="openRequest('${a.request_id}')">View</button>`:''}
+        <button class="btn btn-green btn-sm" onclick="decideApproval('${a.id}','approved')">Approve</button>
+        <button class="btn btn-danger btn-sm" onclick="decideApproval('${a.id}','rejected')">Reject</button></td>
+    </tr>`).join('')}</tbody></table>`;
+}
+
+/* ================= WORKSPACE ================= */
+async function renderWorkspace(id){
+  const w = wsById(id); if(!w){ location.hash='#/home'; return; }
+  setTopbar(`${w.icon} ${esc(w.name)}`, isStaff()? `<button class="btn btn-primary btn-sm" onclick="newProjectModal('${w.id}')">＋ New project</button>`:'');
+  const C=$('#content'); C.innerHTML='<div class="empty">Loading…</div>';
+  const projects = S.projects.filter(p=>p.workspace_id===id && p.status!=='archived');
+  const ids = projects.map(p=>p.id);
+  let counts = {};
+  if(ids.length){
+    const {data} = await db.from('tasks').select('project_id,status').in('project_id', ids);
+    (data||[]).forEach(t=>{ counts[t.project_id]=counts[t.project_id]||{open:0,done:0}; t.status==='done'?counts[t.project_id].done++:counts[t.project_id].open++; });
+  }
+  C.innerHTML = `
+    <div class="page-head"><div><h1>${w.icon} ${esc(w.name)}</h1><div class="sub">${esc(w.description)}</div></div></div>
+    ${projects.length? `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:14px">
+      ${projects.map(p=>{
+        const c = counts[p.id]||{open:0,done:0}; const total=c.open+c.done;
+        const pct = total? Math.round(c.done/total*100):0;
+        return `<div class="card" style="padding:16px;cursor:pointer" onclick="location.hash='#/project/${p.id}'">
+          <div style="display:flex;align-items:center;gap:9px;margin-bottom:6px">
+            <span class="ws-dot" style="background:${p.color};width:11px;height:11px"></span>
+            <b style="font-size:14.5px;flex:1">${esc(p.name)}</b>
+            ${p.status!=='active'? `<span class="chip" style="background:var(--gray-soft);color:var(--ink2)">${p.status.replace('_',' ')}</span>`:''}
+          </div>
+          <div style="color:var(--ink2);font-size:12.5px;min-height:18px;margin-bottom:12px">${esc(p.description||'')}</div>
+          <div style="display:flex;align-items:center;gap:10px;font-size:12px;color:var(--ink2)">
+            <div style="flex:1;height:6px;background:var(--gray-soft);border-radius:4px"><div style="width:${pct}%;height:100%;border-radius:4px;background:${p.color}"></div></div>
+            <span style="font-weight:700">${pct}%</span><span>${c.open} open</span>
+            ${p.due_date? dueBadge(p.due_date,false):''}
+          </div></div>`;
+      }).join('')}</div>`
+    : `<div class="card empty"><div class="big">📂</div>No projects yet in this workspace${isStaff()? ' — create the first one.':''}</div>`}`;
+}
+function newProjectModal(wsId){
+  const m = modal(`<div class="modal-head"><h2>New project</h2><button class="x" onclick="closeModals()">✕</button></div>
+    <div class="modal-body">
+      <label>Project name <span class="req">*</span></label><input id="pj-name" placeholder="e.g. 9.9 Mega Sale — Brand X">
+      <label>Description</label><textarea id="pj-desc" rows="2"></textarea>
+      <div class="field-grid">
+        <div><label>Workspace</label><select id="pj-ws">${S.workspaces.map(w=>`<option value="${w.id}" ${w.id===wsId?'selected':''}>${w.icon} ${esc(w.name)}</option>`).join('')}</select></div>
+        <div><label>Due date</label><input id="pj-due" type="date"></div>
+      </div></div>
+    <div class="modal-foot"><button class="btn btn-ghost" onclick="closeModals()">Cancel</button><button class="btn btn-primary" id="pj-save">Create project</button></div>`);
+  m.querySelector('#pj-save').onclick = async ()=>{
+    const name=m.querySelector('#pj-name').value.trim(); if(!name) return toast('Name is required', true);
+    const colors=['#00B894','#0984E3','#6C5CE7','#E17055','#E84393','#D63031','#FDCB6E','#00CEC9'];
+    const {data, error} = await db.from('projects').insert({
+      workspace_id:m.querySelector('#pj-ws').value, name, description:m.querySelector('#pj-desc').value.trim(),
+      due_date:m.querySelector('#pj-due').value||null, created_by:S.me.id,
+      color:colors[Math.floor(Math.random()*colors.length)]
+    }).select().single();
+    if(error) return toast(error.message, true);
+    S.projects.push(data); closeModals(); toast('Project created');
+    logActivity('project', data.id, 'created', {name});
+    location.hash = '#/project/'+data.id;
+  };
+}
+
+/* ================= PROJECT (Board / List) ================= */
+let boardMode = 'board';
+async function renderProject(id){
+  const p = projById(id);
+  if(!p){ // maybe not in cache (partner) — try fetch
+    const {data} = await db.from('projects').select('*').eq('id',id).single();
+    if(!data){ location.hash='#/home'; return; }
+    S.projects.push(data); return renderProject(id);
+  }
+  const w = wsById(p.workspace_id);
+  setTopbar(`<span onclick="location.hash='#/ws/${p.workspace_id}'" style="cursor:pointer">${w? w.icon+' '+esc(w.name):''}</span> <span>/</span> ${esc(p.name)}`,
+    `<div class="tabs"><button class="tab ${boardMode==='board'?'active':''}" onclick="boardMode='board';renderProject('${id}')">Board</button>
+     <button class="tab ${boardMode==='list'?'active':''}" onclick="boardMode='list';renderProject('${id}')">List</button></div>
+     ${isStaff()? `<button class="btn btn-ghost btn-sm" onclick="projectMembersModal('${id}')">👥 Members</button>`:''}
+     <button class="btn btn-primary btn-sm" onclick="newTaskModal('${id}')">＋ New task</button>`);
+  const C=$('#content'); C.innerHTML='<div class="empty">Loading…</div>';
+  const {data:tasks, error} = await db.from('tasks').select('*').eq('project_id',id).order('position');
+  if(error){ C.innerHTML=`<div class="card empty">${esc(error.message)}</div>`; return; }
+  S._tasks = tasks||[];
+  if(boardMode==='list'){
+    const sorted=[...S._tasks].sort((a,b)=> (a.status==='done')-(b.status==='done') || (a.due_date||'9999').localeCompare(b.due_date||'9999'));
+    C.innerHTML = `<div class="card">${sorted.length? taskTable(sorted): `<div class="empty"><div class="big">📋</div>No tasks yet</div>`}</div>`;
+    return;
+  }
+  C.innerHTML = `<div class="board">${STATUSES.map(s=>{
+    const list = S._tasks.filter(t=>t.status===s.k);
+    return `<div class="col" data-status="${s.k}">
+      <div class="col-head"><span class="dot" style="background:${s.color}"></span>${s.label}<span class="count">${list.length}</span></div>
+      <div class="col-body" data-status="${s.k}">${list.map(taskCard).join('')}</div>
+      <button class="add-card" onclick="newTaskModal('${id}','${s.k}')">＋ Add task</button>
+    </div>`;}).join('')}</div>`;
+  wireDnD(id);
+}
+function taskCard(t){
+  const done = t.status==='done';
+  const chk = t._chk;
+  return `<div class="tcard" draggable="true" data-id="${t.id}" onclick="openTask('${t.id}')">
+    <div class="t">${esc(t.title)}</div>
+    <div class="meta">${prioChip(t.priority)}${dueBadge(t.due_date, done)}
+      ${t.tags?.length? t.tags.slice(0,2).map(g=>`<span class="chip" style="background:var(--purple-soft);color:var(--purple)">${esc(g)}</span>`).join(''):''}
+      <span style="margin-left:auto">${avatar(prof(t.assignee_id), true)}</span></div></div>`;
+}
+function wireDnD(projectId){
+  let dragId=null;
+  document.querySelectorAll('.tcard').forEach(c=>{
+    c.addEventListener('dragstart', e=>{ dragId=c.dataset.id; c.classList.add('dragging'); });
+    c.addEventListener('dragend', ()=> c.classList.remove('dragging'));
+  });
+  document.querySelectorAll('.col-body').forEach(col=>{
+    col.addEventListener('dragover', e=>{ e.preventDefault(); col.classList.add('dragover'); });
+    col.addEventListener('dragleave', ()=> col.classList.remove('dragover'));
+    col.addEventListener('drop', async e=>{
+      e.preventDefault(); col.classList.remove('dragover');
+      const status = col.dataset.status; if(!dragId) return;
+      const t = S._tasks.find(x=>x.id===dragId); if(!t || t.status===status) return;
+      const old = t.status; t.status=status;
+      renderProjectFromCache(projectId);
+      const {error} = await db.from('tasks').update({status}).eq('id',dragId);
+      if(error){ t.status=old; renderProjectFromCache(projectId); toast(error.message, true); }
+      else logActivity('task', dragId, 'status_changed', {from:old, to:status});
+    });
+  });
+}
+function renderProjectFromCache(id){
+  const C=$('#content');
+  C.innerHTML = `<div class="board">${STATUSES.map(s=>{
+    const list = S._tasks.filter(t=>t.status===s.k);
+    return `<div class="col" data-status="${s.k}">
+      <div class="col-head"><span class="dot" style="background:${s.color}"></span>${s.label}<span class="count">${list.length}</span></div>
+      <div class="col-body" data-status="${s.k}">${list.map(taskCard).join('')}</div>
+      <button class="add-card" onclick="newTaskModal('${id}','${s.k}')">＋ Add task</button>
+    </div>`;}).join('')}</div>`;
+  wireDnD(id);
+}
+async function projectMembersModal(pid){
+  const {data:members} = await db.from('project_members').select('*').eq('project_id',pid);
+  const memberIds = new Set((members||[]).map(m=>m.user_id));
+  const externals = S.profiles.filter(p=>['partner','freelancer'].includes(p.role));
+  const m = modal(`<div class="modal-head"><h2>Project members (partner access)</h2><button class="x" onclick="closeModals()">✕</button></div>
+    <div class="modal-body">
+      <p style="color:var(--ink2);font-size:13px;margin-top:8px">Internal staff can see every project. Add partners or freelancers here to give them access to <b>this project only</b>.</p>
+      ${externals.length? externals.map(p=>`
+        <div class="chk"><input type="checkbox" data-uid="${p.id}" ${memberIds.has(p.id)?'checked':''}>
+        ${avatar(p,true)} <span>${esc(p.full_name)} <span style="color:var(--ink3)">· ${p.role} · ${esc(p.email)}</span></span></div>`).join('')
+      : '<div class="empty">No partner or freelancer accounts yet. Create them in Admin → Users.</div>'}
+    </div>
+    <div class="modal-foot"><button class="btn btn-ghost" onclick="closeModals()">Close</button><button class="btn btn-primary" id="pm-save">Save</button></div>`);
+  m.querySelector('#pm-save').onclick = async ()=>{
+    const want = new Set([...m.querySelectorAll('input[data-uid]:checked')].map(i=>i.dataset.uid));
+    const add=[...want].filter(u=>!memberIds.has(u)).map(user_id=>({project_id:pid,user_id}));
+    const rm=[...memberIds].filter(u=>!want.has(u));
+    if(add.length) await db.from('project_members').insert(add);
+    if(rm.length) await db.from('project_members').delete().eq('project_id',pid).in('user_id',rm);
+    closeModals(); toast('Members updated');
+  };
+}
+</script>
+<script>
+/* ================= TASK MODAL ================= */
+function newTaskModal(projectId, status='todo'){
+  const p = projById(projectId);
+  const m = modal(`<div class="modal-head"><h2>New task</h2><button class="x" onclick="closeModals()">✕</button></div>
+    <div class="modal-body">
+      <label>Title <span class="req">*</span></label><input id="tk-title" placeholder="What needs to be done?">
+      <label>Description</label><textarea id="tk-desc" rows="3"></textarea>
+      <div class="field-grid">
+        <div><label>Status</label><select id="tk-status">${STATUSES.map(s=>`<option value="${s.k}" ${s.k===status?'selected':''}>${s.label}</option>`).join('')}</select></div>
+        <div><label>Priority</label><select id="tk-prio">${PRIORITIES.map(x=>`<option value="${x.k}" ${x.k==='normal'?'selected':''}>${x.label}</option>`).join('')}</select></div>
+        <div><label>Assignee</label><select id="tk-assignee"><option value="">Unassigned</option>${assigneeOptions(projectId)}</select></div>
+        <div><label>Due date</label><input id="tk-due" type="date"></div>
+      </div>
+      <label>Tags (comma separated)</label><input id="tk-tags" placeholder="e.g. 9.9, shopee">
+    </div>
+    <div class="modal-foot"><button class="btn btn-ghost" onclick="closeModals()">Cancel</button><button class="btn btn-primary" id="tk-save">Create task</button></div>`);
+  m.querySelector('#tk-title').focus();
+  m.querySelector('#tk-save').onclick = async ()=>{
+    const title=m.querySelector('#tk-title').value.trim(); if(!title) return toast('Title is required', true);
+    const maxPos = Math.max(0, ...(S._tasks||[]).map(t=>t.position||0));
+    const {data, error} = await db.from('tasks').insert({
+      project_id:projectId, title, description:m.querySelector('#tk-desc').value.trim(),
+      status:m.querySelector('#tk-status').value, priority:m.querySelector('#tk-prio').value,
+      assignee_id:m.querySelector('#tk-assignee').value||null, due_date:m.querySelector('#tk-due').value||null,
+      tags:m.querySelector('#tk-tags').value.split(',').map(s=>s.trim()).filter(Boolean),
+      created_by:S.me.id, position:maxPos+1
+    }).select().single();
+    if(error) return toast(error.message, true);
+    closeModals(); toast('Task created'); logActivity('task', data.id, 'created', {title});
+    if(S.route.view==='project') renderProject(projectId); else renderHome();
+  };
+}
+function assigneeOptions(projectId, selected){
+  // staff can assign anyone; also include project members (partners)
+  return S.profiles.filter(p=>p.active).map(p=>
+    `<option value="${p.id}" ${p.id===selected?'selected':''}>${esc(p.full_name)} (${p.role})</option>`).join('');
+}
+async function openTask(id){
+  const [{data:t}, {data:chk}, {data:comments}] = await Promise.all([
+    db.from('tasks').select('*').eq('id',id).single(),
+    db.from('task_checklist').select('*').eq('task_id',id).order('position'),
+    db.from('comments').select('*').eq('entity_type','task').eq('entity_id',id).order('created_at'),
+  ]);
+  if(!t) return toast('Task not found', true);
+  const p = projById(t.project_id);
+  const m = modal(`<div class="modal-head">
+      <h2 style="display:flex;align-items:center;gap:8px">📌 <span id="tv-title-view">${esc(t.title)}</span></h2>
+      ${isStaff()? `<button class="x" title="Delete task" onclick="deleteTask('${t.id}','${t.project_id}')">🗑</button>`:''}
+      <button class="x" onclick="closeModals()">✕</button></div>
+    <div class="modal-body">
+      <div class="field-grid">
+        <div><label>Status</label><select id="tv-status">${STATUSES.map(s=>`<option value="${s.k}" ${s.k===t.status?'selected':''}>${s.label}</option>`).join('')}</select></div>
+        <div><label>Priority</label><select id="tv-prio">${PRIORITIES.map(x=>`<option value="${x.k}" ${x.k===t.priority?'selected':''}>${x.label}</option>`).join('')}</select></div>
+        <div><label>Assignee</label><select id="tv-assignee"><option value="">Unassigned</option>${assigneeOptions(t.project_id, t.assignee_id)}</select></div>
+        <div><label>Due date</label><input id="tv-due" type="date" value="${t.due_date||''}"></div>
+      </div>
+      <label>Title</label><input id="tv-title" value="${esc(t.title)}">
+      <label>Description</label><textarea id="tv-desc" rows="3">${esc(t.description)}</textarea>
+      <label>Checklist</label>
+      <div id="tv-chk">${(chk||[]).map(c=>chkRow(c)).join('')}</div>
+      <div style="display:flex;gap:8px;margin-top:6px"><input id="tv-chk-new" placeholder="Add checklist item…" style="flex:1">
+        <button class="btn btn-ghost btn-sm" id="tv-chk-add">Add</button></div>
+      <label>Comments</label>
+      <div id="tv-comments">${(comments||[]).map(commentRow).join('')||'<div style="color:var(--ink3);font-size:13px">No comments yet</div>'}</div>
+      <div style="display:flex;gap:8px;margin-top:10px"><input id="tv-comment" placeholder="Write a comment…" style="flex:1">
+        <button class="btn btn-primary btn-sm" id="tv-comment-add">Send</button></div>
+      <div style="margin-top:14px;font-size:11.5px;color:var(--ink3)">Created ${fmtDateTime(t.created_at)} by ${esc(prof(t.created_by)?.full_name||'—')} · in ${esc(p?.name||'')}</div>
+    </div>
+    <div class="modal-foot"><button class="btn btn-ghost" onclick="closeModals()">Close</button><button class="btn btn-primary" id="tv-save">Save changes</button></div>`, true);
+
+  m.querySelector('#tv-save').onclick = async ()=>{
+    const upd = {
+      title:m.querySelector('#tv-title').value.trim()||t.title,
+      description:m.querySelector('#tv-desc').value,
+      status:m.querySelector('#tv-status').value, priority:m.querySelector('#tv-prio').value,
+      assignee_id:m.querySelector('#tv-assignee').value||null, due_date:m.querySelector('#tv-due').value||null,
+    };
+    const {error} = await db.from('tasks').update(upd).eq('id',t.id);
+    if(error) return toast(error.message, true);
+    closeModals(); toast('Task saved'); logActivity('task', t.id, 'updated', {});
+    if(S.route.view==='project') renderProject(t.project_id); else if(S.route.view==='home') renderHome();
+  };
+  m.querySelector('#tv-chk-add').onclick = async ()=>{
+    const label = m.querySelector('#tv-chk-new').value.trim(); if(!label) return;
+    const {data, error} = await db.from('task_checklist').insert({task_id:t.id, label, position:(chk?.length||0)+1}).select().single();
+    if(error) return toast(error.message, true);
+    m.querySelector('#tv-chk').insertAdjacentHTML('beforeend', chkRow(data));
+    m.querySelector('#tv-chk-new').value='';
+  };
+  m.querySelector('#tv-comment-add').onclick = async ()=>{
+    const body = m.querySelector('#tv-comment').value.trim(); if(!body) return;
+    const {data, error} = await db.from('comments').insert({entity_type:'task', entity_id:t.id, author_id:S.me.id, body}).select().single();
+    if(error) return toast(error.message, true);
+    const box = m.querySelector('#tv-comments');
+    if(box.firstElementChild && !box.firstElementChild.classList.contains('comment')) box.innerHTML='';
+    box.insertAdjacentHTML('beforeend', commentRow(data));
+    m.querySelector('#tv-comment').value='';
+  };
+}
+function chkRow(c){
+  return `<div class="chk ${c.done?'done':''}" id="chk-${c.id}">
+    <input type="checkbox" ${c.done?'checked':''} onchange="toggleChk('${c.id}', this.checked)">
+    <span>${esc(c.label)}</span>
+    <button class="del" onclick="delChk('${c.id}')">🗑</button></div>`;
+}
+async function toggleChk(id, done){
+  await db.from('task_checklist').update({done}).eq('id',id);
+  const row = document.getElementById('chk-'+id); if(row) row.classList.toggle('done', done);
+}
+async function delChk(id){
+  await db.from('task_checklist').delete().eq('id',id);
+  document.getElementById('chk-'+id)?.remove();
+}
+function commentRow(c){
+  const a = prof(c.author_id);
+  return `<div class="comment">${avatar(a,true)}<div class="body"><b>${esc(a?.full_name||'Unknown')}</b><span class="when">${fmtDateTime(c.created_at)}</span><p>${esc(c.body)}</p></div></div>`;
+}
+async function deleteTask(id, projectId){
+  if(!confirm('Delete this task permanently?')) return;
+  const {error} = await db.from('tasks').delete().eq('id',id);
+  if(error) return toast(error.message, true);
+  closeModals(); toast('Task deleted'); renderProject(projectId);
+}
+</script>
+<script>
+/* ================= REQUESTS ================= */
+let reqTab = 'mine';
+async function renderRequests(){
+  setTopbar('📨 Requests', `<button class="btn btn-primary btn-sm" onclick="newRequestFlow()">＋ New request</button>`);
+  const C=$('#content'); C.innerHTML='<div class="empty">Loading…</div>';
+  if(!isStaff()) reqTab='mine';
+  let q = db.from('requests').select('*').order('created_at',{ascending:false});
+  if(reqTab==='mine') q = q.eq('submitted_by', S.me.id);
+  if(reqTab==='open') q = q.in('status',['submitted','in_review','approved','in_progress']);
+  const {data:reqs, error} = await q;
+  if(error){ C.innerHTML=`<div class="card empty">${esc(error.message)}</div>`; return; }
+  C.innerHTML = `
+    <div class="page-head"><h1>Requests</h1>
+      ${isStaff()? `<div class="tabs">
+        <button class="tab ${reqTab==='open'?'active':''}" onclick="reqTab='open';renderRequests()">Open queue</button>
+        <button class="tab ${reqTab==='all'?'active':''}" onclick="reqTab='all';renderRequests()">All</button>
+        <button class="tab ${reqTab==='mine'?'active':''}" onclick="reqTab='mine';renderRequests()">Mine</button>
+      </div>`:''}
+      <div class="actions"><button class="btn btn-primary" onclick="newRequestFlow()">＋ New request</button></div></div>
+    <div class="card">${(reqs||[]).length? requestTable(reqs) : `<div class="empty"><div class="big">📨</div>No requests here yet</div>`}</div>`;
+}
+function newRequestFlow(){
+  const m = modal(`<div class="modal-head"><h2>What do you need?</h2><button class="x" onclick="closeModals()">✕</button></div>
+    <div class="modal-body" style="padding-top:14px"><div class="rt-grid">
+      ${S.requestTypes.map(rt=>`<button class="rt-pick" onclick="newRequestForm('${rt.id}')">
+        <span class="ic">${rt.icon}</span><span><b>${esc(rt.name)}</b><span>${esc(rt.description)}</span>
+        <span style="display:block;margin-top:5px;font-size:11px;color:var(--ink3)">SLA ${rt.sla_hours}h${rt.approval_required?' · needs approval':''}</span></span>
+      </button>`).join('')}
+    </div></div>`, true);
+}
+function fieldInput(f){
+  const req = f.required? '<span class="req">*</span>':'';
+  if(f.type==='textarea') return `<label>${esc(f.label)} ${req}</label><textarea data-fk="${f.key}" rows="3"></textarea>`;
+  if(f.type==='select') return `<label>${esc(f.label)} ${req}</label><select data-fk="${f.key}"><option value="">— select —</option>${(f.options||[]).map(o=>`<option>${esc(o)}</option>`).join('')}</select>`;
+  return `<label>${esc(f.label)} ${req}</label><input data-fk="${f.key}" type="${f.type==='number'?'number':f.type==='date'?'date':'text'}">`;
+}
+function newRequestForm(rtId){
+  closeModals();
+  const rt = S.requestTypes.find(x=>x.id===rtId); if(!rt) return;
+  const m = modal(`<div class="modal-head"><h2>${rt.icon} ${esc(rt.name)}</h2><button class="x" onclick="closeModals()">✕</button></div>
+    <div class="modal-body">
+      <label>Request title <span class="req">*</span></label><input id="rq-title" placeholder="Short summary of this request">
+      ${(rt.fields||[]).map(fieldInput).join('')}
+      <label>Priority</label><select id="rq-prio">${PRIORITIES.map(x=>`<option value="${x.k}" ${x.k==='normal'?'selected':''}>${x.label}</option>`).join('')}</select>
+      <p style="margin-top:14px;font-size:12px;color:var(--ink3)">Response SLA: ${rt.sla_hours} hours${rt.approval_required? ' · This request requires approval before work starts.':''}</p>
+    </div>
+    <div class="modal-foot"><button class="btn btn-ghost" onclick="closeModals()">Cancel</button><button class="btn btn-primary" id="rq-save">Submit request</button></div>`, true);
+  m.querySelector('#rq-save').onclick = async ()=>{
+    const title = m.querySelector('#rq-title').value.trim(); if(!title) return toast('Title is required', true);
+    const data = {};
+    for(const f of (rt.fields||[])){
+      const v = m.querySelector(`[data-fk="${f.key}"]`)?.value?.trim()||'';
+      if(f.required && !v) return toast(`"${f.label}" is required`, true);
+      data[f.key]=v;
+    }
+    const {data:req, error} = await db.from('requests').insert({
+      request_type_id:rt.id, title, data, priority:m.querySelector('#rq-prio').value, submitted_by:S.me.id
+    }).select().single();
+    if(error) return toast(error.message, true);
+    closeModals(); toast('Request submitted 🎉'); logActivity('request', req.id, 'submitted', {title});
+    if(S.route.view==='requests') renderRequests(); else renderHome();
+  };
+}
+async function openRequest(id){
+  const [{data:r}, {data:comments}, {data:apprs}] = await Promise.all([
+    db.from('requests').select('*').eq('id',id).single(),
+    db.from('comments').select('*').eq('entity_type','request').eq('entity_id',id).order('created_at'),
+    db.from('approvals').select('*').eq('request_id',id).order('created_at'),
+  ]);
+  if(!r) return toast('Request not found', true);
+  const rt = S.requestTypes.find(x=>x.id===r.request_type_id);
+  const staff = isStaff();
+  const canEditStatus = staff || r.assigned_to===S.me.id;
+  const m = modal(`<div class="modal-head"><h2>${rt? rt.icon:''} ${esc(r.title)}</h2>${reqStatusChip(r.status)}<button class="x" onclick="closeModals()">✕</button></div>
+    <div class="modal-body">
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">
+        ${prioChip(r.priority)} ${slaBadge(r.sla_due_at, r.status)}
+        <span class="chip" style="background:var(--gray-soft);color:var(--ink2)">${rt? esc(rt.name):''}</span>
+      </div>
+      <div class="field-grid" style="margin-top:14px">
+        <div class="kv"><b>Submitted by</b>${esc(prof(r.submitted_by)?.full_name||'—')} · ${fmtDateTime(r.created_at)}</div>
+        <div class="kv"><b>Assigned to</b>${esc(prof(r.assigned_to)?.full_name||'Unassigned')}</div>
+      </div>
+      ${Object.keys(r.data||{}).length? `<div style="background:var(--gray-soft);border-radius:10px;padding:12px 14px;margin-top:6px">
+        ${(rt?.fields||[]).map(f=> r.data[f.key]? `<div class="kv"><b>${esc(f.label)}</b>${esc(r.data[f.key])}</div>`:'').join('')}</div>`:''}
+      ${(apprs||[]).length? `<label>Approvals</label>${apprs.map(a=>`
+        <div style="display:flex;align-items:center;gap:8px;padding:7px 0;font-size:13px">
+          ${avatar(prof(a.approver_id),true)} ${esc(prof(a.approver_id)?.full_name||'')}
+          <span class="chip" style="background:${a.status==='approved'?'var(--green-soft);color:var(--green)':a.status==='rejected'?'var(--red-soft);color:var(--red)':'var(--amber-soft);color:var(--amber)'}">${a.status}</span>
+          ${a.note? `<span style="color:var(--ink2)">· ${esc(a.note)}</span>`:''}
+          ${a.status==='pending' && a.approver_id===S.me.id? `
+            <span style="margin-left:auto"><button class="btn btn-green btn-sm" onclick="decideApproval('${a.id}','approved','${r.id}')">Approve</button>
+            <button class="btn btn-danger btn-sm" onclick="decideApproval('${a.id}','rejected','${r.id}')">Reject</button></span>`:''}
+        </div>`).join('')}`:''}
+      ${staff? `<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:16px;padding-top:14px;border-top:1px solid var(--line)">
+        <select id="rv-status" style="width:auto">${REQ_STATUSES.map(s=>`<option value="${s.k}" ${s.k===r.status?'selected':''}>${s.label}</option>`).join('')}</select>
+        <select id="rv-assign" style="width:auto"><option value="">Unassigned</option>${S.profiles.filter(p=>p.active).map(p=>`<option value="${p.id}" ${p.id===r.assigned_to?'selected':''}>${esc(p.full_name)}</option>`).join('')}</select>
+        <button class="btn btn-ghost btn-sm" id="rv-update">Update</button>
+        <button class="btn btn-ghost btn-sm" onclick="requestApprovalModal('${r.id}','${esc(r.title).replace(/'/g,"\\'")}')">🙋 Ask approval</button>
+        ${!r.project_id? `<button class="btn btn-ghost btn-sm" onclick="convertToTask('${r.id}')">📌 Convert to task</button>`:'<span class="chip" style="background:var(--green-soft);color:var(--green)">Linked to project task</span>'}
+      </div>`:''}
+      <label>Comments</label>
+      <div id="rv-comments">${(comments||[]).map(commentRow).join('')||'<div style="color:var(--ink3);font-size:13px">No comments yet</div>'}</div>
+      <div style="display:flex;gap:8px;margin-top:10px"><input id="rv-comment" placeholder="Write a comment…" style="flex:1">
+        <button class="btn btn-primary btn-sm" id="rv-comment-add">Send</button></div>
+    </div>
+    <div class="modal-foot">
+      ${r.submitted_by===S.me.id && ['submitted','in_review'].includes(r.status)? `<button class="btn btn-danger" id="rv-cancel">Cancel request</button>`:''}
+      <button class="btn btn-ghost" onclick="closeModals()">Close</button></div>`, true);
+
+  m.querySelector('#rv-update')?.addEventListener('click', async ()=>{
+    const status = m.querySelector('#rv-status').value;
+    const assigned_to = m.querySelector('#rv-assign').value||null;
+    const upd = {status, assigned_to};
+    if(['approved','rejected'].includes(status) && r.status!==status){ upd.decided_by=S.me.id; upd.decided_at=new Date().toISOString(); }
+    const {error} = await db.from('requests').update(upd).eq('id',r.id);
+    if(error) return toast(error.message, true);
+    closeModals(); toast('Request updated'); logActivity('request', r.id, 'updated', {status});
+    if(S.route.view==='requests') renderRequests(); else renderHome();
+  });
+  m.querySelector('#rv-cancel')?.addEventListener('click', async ()=>{
+    if(!confirm('Cancel this request?')) return;
+    await db.from('requests').update({status:'cancelled'}).eq('id',r.id);
+    closeModals(); toast('Request cancelled');
+    if(S.route.view==='requests') renderRequests(); else renderHome();
+  });
+  m.querySelector('#rv-comment-add').onclick = async ()=>{
+    const body = m.querySelector('#rv-comment').value.trim(); if(!body) return;
+    const {data, error} = await db.from('comments').insert({entity_type:'request', entity_id:r.id, author_id:S.me.id, body}).select().single();
+    if(error) return toast(error.message, true);
+    const box = m.querySelector('#rv-comments');
+    if(box.firstElementChild && !box.firstElementChild.classList.contains('comment')) box.innerHTML='';
+    box.insertAdjacentHTML('beforeend', commentRow(data));
+    m.querySelector('#rv-comment').value='';
+  };
+}
+function requestApprovalModal(reqId, title){
+  const staffList = S.profiles.filter(p=>p.active && ['admin','internal','management'].includes(p.role));
+  const m = modal(`<div class="modal-head"><h2>Ask for approval</h2><button class="x" onclick="closeModals()">✕</button></div>
+    <div class="modal-body">
+      <label>Approver</label><select id="ap-who">${staffList.map(p=>`<option value="${p.id}">${esc(p.full_name)} (${p.role})</option>`).join('')}</select>
+      <label>What are they approving?</label><input id="ap-title" value="Approve: ${esc(title)}">
+    </div>
+    <div class="modal-foot"><button class="btn btn-ghost" onclick="closeModals()">Cancel</button><button class="btn btn-primary" id="ap-save">Send</button></div>`);
+  m.querySelector('#ap-save').onclick = async ()=>{
+    const {error} = await db.from('approvals').insert({
+      request_id:reqId, approver_id:m.querySelector('#ap-who').value,
+      requested_by:S.me.id, title:m.querySelector('#ap-title').value.trim()
+    });
+    if(error) return toast(error.message, true);
+    await db.from('requests').update({status:'in_review'}).eq('id',reqId).in('status',['submitted']);
+    closeModals(); toast('Approval requested');
+  };
+}
+async function convertToTask(reqId){
+  const {data:r} = await db.from('requests').select('*').eq('id',reqId).single();
+  if(!r) return;
+  const rt = S.requestTypes.find(x=>x.id===r.request_type_id);
+  const wsId = rt?.default_workspace_id || S.workspaces[0]?.id;
+  const projs = S.projects.filter(p=>p.status==='active');
+  const m = modal(`<div class="modal-head"><h2>Convert to task</h2><button class="x" onclick="closeModals()">✕</button></div>
+    <div class="modal-body">
+      <label>Into project</label><select id="cv-proj">${projs.map(p=>{
+        const w=wsById(p.workspace_id);
+        return `<option value="${p.id}" ${p.workspace_id===wsId?'selected':''}>${w?w.icon+' ':''}${esc(p.name)}</option>`;}).join('')}</select>
+      <label>Assignee</label><select id="cv-assignee"><option value="">Unassigned</option>${S.profiles.filter(p=>p.active).map(p=>`<option value="${p.id}" ${p.id===r.assigned_to?'selected':''}>${esc(p.full_name)}</option>`).join('')}</select>
+    </div>
+    <div class="modal-foot"><button class="btn btn-ghost" onclick="closeModals()">Cancel</button><button class="btn btn-primary" id="cv-save">Create task</button></div>`);
+  m.querySelector('#cv-save').onclick = async ()=>{
+    const project_id = m.querySelector('#cv-proj').value; if(!project_id) return toast('Pick a project', true);
+    const desc = (rt?.fields||[]).map(f=> r.data[f.key]? `${f.label}: ${r.data[f.key]}`:'').filter(Boolean).join('\n');
+    const {data:task, error} = await db.from('tasks').insert({
+      project_id, title:r.title, description:`From request (${rt?.name||'request'}):\n${desc}`,
+      priority:r.priority, assignee_id:m.querySelector('#cv-assignee').value||null,
+      due_date: r.sla_due_at? r.sla_due_at.slice(0,10):null, request_id:r.id, created_by:S.me.id,
+      tags:['request']
+    }).select().single();
+    if(error) return toast(error.message, true);
+    await db.from('requests').update({project_id, status: r.status==='submitted'||r.status==='in_review'?'in_progress':r.status}).eq('id',r.id);
+    closeModals(); toast('Task created from request'); logActivity('request', r.id, 'converted_to_task', {task:task.id});
+    location.hash = '#/project/'+project_id;
+  };
+}
+
+/* ================= APPROVALS ================= */
+let apprTab='pending';
+async function renderApprovals(){
+  setTopbar('✅ Approvals');
+  const C=$('#content'); C.innerHTML='<div class="empty">Loading…</div>';
+  let q = db.from('approvals').select('*').order('created_at',{ascending:false});
+  if(apprTab==='pending') q=q.eq('status','pending').eq('approver_id',S.me.id);
+  if(apprTab==='requested') q=q.eq('requested_by',S.me.id);
+  const {data:apprs} = await q;
+  C.innerHTML = `
+    <div class="page-head"><h1>Approvals</h1>
+      <div class="tabs">
+        <button class="tab ${apprTab==='pending'?'active':''}" onclick="apprTab='pending';renderApprovals()">For me</button>
+        <button class="tab ${apprTab==='requested'?'active':''}" onclick="apprTab='requested';renderApprovals()">Requested by me</button>
+        ${isStaff()? `<button class="tab ${apprTab==='all'?'active':''}" onclick="apprTab='all';renderApprovals()">All</button>`:''}
+      </div></div>
+    <div class="card">${(apprs||[]).length?
+      `<table class="tbl"><thead><tr><th>Approval</th><th>Approver</th><th>Requested by</th><th>Status</th><th>Created</th><th></th></tr></thead><tbody>
+      ${apprs.map(a=>`<tr>
+        <td style="font-weight:600">${esc(a.title||'Approval')}</td>
+        <td>${avatar(prof(a.approver_id),true)}</td>
+        <td>${avatar(prof(a.requested_by),true)}</td>
+        <td><span class="chip" style="background:${a.status==='approved'?'var(--green-soft);color:var(--green)':a.status==='rejected'?'var(--red-soft);color:var(--red)':'var(--amber-soft);color:var(--amber)'}">${a.status}</span>${a.note?` <span style="color:var(--ink2);font-size:12px">${esc(a.note)}</span>`:''}</td>
+        <td style="color:var(--ink2)">${fmtDateTime(a.created_at)}</td>
+        <td style="text-align:right;white-space:nowrap">
+          ${a.request_id? `<button class="btn btn-ghost btn-sm" onclick="openRequest('${a.request_id}')">View</button>`:''}
+          ${a.status==='pending'&&a.approver_id===S.me.id? `<button class="btn btn-green btn-sm" onclick="decideApproval('${a.id}','approved')">Approve</button>
+          <button class="btn btn-danger btn-sm" onclick="decideApproval('${a.id}','rejected')">Reject</button>`:''}</td>
+      </tr>`).join('')}</tbody></table>`
+      : `<div class="empty"><div class="big">✅</div>Nothing here — all clear</div>`}</div>`;
+}
+async function decideApproval(id, status, reqIdToRefresh){
+  let note = '';
+  if(status==='rejected'){ note = prompt('Reason for rejection (optional):')||''; }
+  const {data:a, error} = await db.from('approvals').update({status, note, decided_at:new Date().toISOString()}).eq('id',id).select().single();
+  if(error) return toast(error.message, true);
+  // reflect on the request if linked and staff
+  if(a?.request_id){
+    try{ await db.from('requests').update({status: status==='approved'?'approved':'rejected', decided_by:S.me.id, decided_at:new Date().toISOString(), decision_note:note}).eq('id',a.request_id).in('status',['submitted','in_review']); }catch(e){}
+  }
+  toast(status==='approved'? 'Approved ✅':'Rejected'); logActivity('approval', id, status, {});
+  updateApprovalBadge();
+  closeModals();
+  if(S.route.view==='approvals') renderApprovals(); else if(S.route.view==='home') renderHome(); else if(reqIdToRefresh) openRequest(reqIdToRefresh);
+}
+</script>
+<script>
+/* ================= DASHBOARD ================= */
+async function renderDashboard(){
+  if(!isStaff()){ location.hash='#/home'; return; }
+  setTopbar('📊 Dashboard');
+  const C=$('#content'); C.innerHTML='<div class="empty">Loading…</div>';
+  const [tks, reqs, apprs] = await Promise.all([
+    db.from('tasks').select('id,project_id,title,status,priority,assignee_id,due_date,completed_at,created_at'),
+    db.from('requests').select('id,status,sla_due_at,completed_at,created_at,request_type_id,decided_at'),
+    db.from('approvals').select('id,status'),
+  ]);
+  const tasks=tks.data||[], requests=reqs.data||[], approvals=apprs.data||[];
+  const open = tasks.filter(t=>t.status!=='done');
+  const overdue = open.filter(t=>t.due_date && daysDiff(t.due_date)<0);
+  const dueWeek = open.filter(t=>t.due_date && daysDiff(t.due_date)>=0 && daysDiff(t.due_date)<=7);
+  const doneTasks = tasks.filter(t=>t.status==='done');
+  const onTime = doneTasks.filter(t=>!t.due_date || (t.completed_at && new Date(t.completed_at) <= new Date(t.due_date+'T23:59:59')));
+  const onTimePct = doneTasks.length? Math.round(onTime.length/doneTasks.length*100) : null;
+  const openReqs = requests.filter(r=>['submitted','in_review','approved','in_progress'].includes(r.status));
+  const slaBreach = openReqs.filter(r=>r.sla_due_at && new Date(r.sla_due_at)<Date.now());
+  const pendingAppr = approvals.filter(a=>a.status==='pending').length;
+
+  // by workspace
+  const byWs = S.workspaces.map(w=>{
+    const pids = new Set(S.projects.filter(p=>p.workspace_id===w.id).map(p=>p.id));
+    return {label:`${w.icon} ${w.name}`, color:w.color, n:open.filter(t=>pids.has(t.project_id)).length};
+  }).filter(x=>x.n>0).sort((a,b)=>b.n-a.n);
+  // by status
+  const byStatus = STATUSES.map(s=>({label:s.label, color:s.color, n:tasks.filter(t=>t.status===s.k).length})).filter(x=>x.n>0);
+  // by assignee (top 8)
+  const byAssignee = S.profiles.map(p=>({label:p.full_name, color:p.avatar_color, n:open.filter(t=>t.assignee_id===p.id).length}))
+    .filter(x=>x.n>0).sort((a,b)=>b.n-a.n).slice(0,8);
+  // requests by type
+  const byType = S.requestTypes.map(rt=>({label:`${rt.icon} ${rt.name}`, color:'#5B5BD6', n:requests.filter(r=>r.request_type_id===rt.id).length})).filter(x=>x.n>0).sort((a,b)=>b.n-a.n);
+
+  C.innerHTML = `
+    <div class="page-head"><div><h1>Operations Dashboard</h1><div class="sub">Live view across all workspaces</div></div></div>
+    <div class="stat-row">
+      <div class="stat"><div class="n accent">${open.length}</div><div class="l">Open tasks</div></div>
+      <div class="stat"><div class="n ${overdue.length?'red':''}">${overdue.length}</div><div class="l">Overdue</div></div>
+      <div class="stat"><div class="n amber">${dueWeek.length}</div><div class="l">Due within 7 days</div></div>
+      <div class="stat"><div class="n ${onTimePct===null?'':onTimePct>=80?'green':onTimePct>=50?'amber':'red'}">${onTimePct===null?'—':onTimePct+'%'}</div><div class="l">On-time completion</div></div>
+      <div class="stat"><div class="n">${openReqs.length}</div><div class="l">Open requests</div></div>
+      <div class="stat"><div class="n ${slaBreach.length?'red':'green'}">${slaBreach.length}</div><div class="l">SLA breached</div></div>
+      <div class="stat"><div class="n ${pendingAppr?'amber':''}">${pendingAppr}</div><div class="l">Pending approvals</div></div>
+    </div>
+    <div class="grid-2">
+      <div class="card chart-card"><h3>Open tasks by workspace</h3>${hbars(byWs)}</div>
+      <div class="card chart-card"><h3>Tasks by status</h3>${hbars(byStatus)}</div>
+      <div class="card chart-card"><h3>Open workload by person</h3>${hbars(byAssignee)}</div>
+      <div class="card chart-card"><h3>Requests by type (all time)</h3>${hbars(byType)}</div>
+    </div>
+    ${overdue.length? `<div class="section-title" style="margin-top:22px">🔥 Overdue tasks <span class="count">${overdue.length}</span></div>
+      <div class="card">${taskTable(overdue)}</div>`:''}`;
+}
+function hbars(rows){
+  if(!rows.length) return '<div style="color:var(--ink3);font-size:13px;padding:8px 0">No data yet</div>';
+  const max = Math.max(...rows.map(r=>r.n));
+  return rows.map(r=>`<div class="hbar-row">
+    <div class="hbar-label" title="${esc(r.label)}">${esc(r.label)}</div>
+    <div class="hbar-track"><div class="hbar-fill" style="width:${Math.round(r.n/max*100)}%;background:${r.color}"></div></div>
+    <div class="hbar-val">${r.n}</div></div>`).join('');
+}
+/* ================= ADMIN ================= */
+let adminTab='users';
+async function renderAdmin(){
+  if(!isAdmin()){ location.hash='#/home'; return; }
+  setTopbar('⚙️ Admin');
+  const C=$('#content'); C.innerHTML='<div class="empty">Loading…</div>';
+  await refreshCore();
+  C.innerHTML = `
+    <div class="page-head"><h1>Admin</h1>
+      <div class="tabs">
+        <button class="tab ${adminTab==='users'?'active':''}" onclick="adminTab='users';renderAdmin()">Users</button>
+        <button class="tab ${adminTab==='workspaces'?'active':''}" onclick="adminTab='workspaces';renderAdmin()">Workspaces</button>
+        <button class="tab ${adminTab==='types'?'active':''}" onclick="adminTab='types';renderAdmin()">Request types</button>
+      </div>
+      <div class="actions">${adminTab==='users'? '<button class="btn btn-primary" onclick="inviteUserModal()">＋ Add user</button>':''}
+        ${adminTab==='workspaces'? '<button class="btn btn-primary" onclick="newWorkspaceModal()">＋ Add workspace</button>':''}</div></div>
+    <div id="admin-body"></div>`;
+  const B=$('#admin-body');
+  if(adminTab==='users'){
+    B.innerHTML = `<div class="card"><table class="tbl"><thead><tr><th>User</th><th>Email</th><th>Role</th><th>Status</th><th></th></tr></thead><tbody>
+      ${S.profiles.map(p=>`<tr>
+        <td style="font-weight:600">${avatar(p,true)} ${esc(p.full_name)}${p.id===S.me.id?' <span style="color:var(--ink3)">(you)</span>':''}</td>
+        <td style="color:var(--ink2)">${esc(p.email)}</td>
+        <td><select onchange="setRole('${p.id}', this.value)" style="width:auto;padding:5px 8px" ${p.id===S.me.id?'disabled':''}>
+          ${['admin','internal','management','partner','freelancer'].map(r=>`<option ${r===p.role?'selected':''}>${r}</option>`).join('')}</select></td>
+        <td><span class="chip" style="background:${p.active?'var(--green-soft);color:var(--green)':'var(--gray-soft);color:var(--ink3)'}">${p.active?'active':'inactive'}</span></td>
+        <td style="text-align:right;white-space:nowrap">
+          <button class="btn btn-ghost btn-sm" onclick="resetPassword('${p.id}','${esc(p.full_name).replace(/'/g,"\\'")}')">Reset password</button>
+          ${p.id!==S.me.id? `<button class="btn btn-ghost btn-sm" onclick="toggleActive('${p.id}', ${!p.active})">${p.active?'Deactivate':'Activate'}</button>`:''}</td>
+      </tr>`).join('')}</tbody></table></div>
+      <p style="margin-top:12px;font-size:12.5px;color:var(--ink2)">Roles — <b>admin</b>: everything · <b>internal</b>: all workspaces & requests · <b>management</b>: same as internal, meant for dashboard-first use · <b>partner / freelancer</b>: only projects they're added to + their own requests.</p>`;
+  }
+  if(adminTab==='workspaces'){
+    B.innerHTML = `<div class="card"><table class="tbl"><thead><tr><th>Workspace</th><th>Description</th><th>Projects</th></tr></thead><tbody>
+      ${S.workspaces.map(w=>`<tr><td style="font-weight:600"><span class="ws-dot" style="display:inline-block;background:${w.color}"></span> ${w.icon} ${esc(w.name)}</td>
+        <td style="color:var(--ink2)">${esc(w.description)}</td>
+        <td>${S.projects.filter(p=>p.workspace_id===w.id).length}</td></tr>`).join('')}</tbody></table></div>`;
+  }
+  if(adminTab==='types'){
+    B.innerHTML = `<div class="card"><table class="tbl"><thead><tr><th>Type</th><th>SLA</th><th>Approval</th><th>Fields</th><th>Active</th></tr></thead><tbody>
+      ${S.requestTypes.map(rt=>`<tr><td style="font-weight:600">${rt.icon} ${esc(rt.name)}</td>
+        <td>${rt.sla_hours}h</td><td>${rt.approval_required?'Required':'—'}</td>
+        <td style="color:var(--ink2)">${(rt.fields||[]).map(f=>esc(f.label)).join(', ')}</td>
+        <td><span class="chip" style="background:var(--green-soft);color:var(--green)">active</span></td></tr>`).join('')}</tbody></table></div>
+      <p style="margin-top:12px;font-size:12.5px;color:var(--ink2)">Need a new request type or different fields/SLAs? Ask your workspace admin (or Claude 😉) to add it.</p>`;
+  }
+}
+function inviteUserModal(){
+  const m = modal(`<div class="modal-head"><h2>Add user</h2><button class="x" onclick="closeModals()">✕</button></div>
+    <div class="modal-body">
+      <label>Full name <span class="req">*</span></label><input id="iu-name" placeholder="e.g. Somchai P.">
+      <label>Email <span class="req">*</span></label><input id="iu-email" type="email" placeholder="name@crea.asia or partner email">
+      <div class="field-grid">
+        <div><label>Role</label><select id="iu-role">
+          <option value="internal">Internal staff</option><option value="management">Management</option>
+          <option value="partner">Partner (external)</option><option value="freelancer">Freelancer (external)</option>
+          <option value="admin">Admin</option></select></div>
+        <div><label>Temporary password <span class="req">*</span></label><input id="iu-pass" value="${'Crea'+Math.random().toString(36).slice(2,8)+'!'}"></div>
+      </div>
+      <p style="margin-top:12px;font-size:12.5px;color:var(--ink2)">Share the email + temporary password with them directly. They can change it after signing in (🔑 in the sidebar).</p>
+    </div>
+    <div class="modal-foot"><button class="btn btn-ghost" onclick="closeModals()">Cancel</button><button class="btn btn-primary" id="iu-save">Create account</button></div>`);
+  m.querySelector('#iu-save').onclick = async ()=>{
+    const full_name=m.querySelector('#iu-name').value.trim(), email=m.querySelector('#iu-email').value.trim(),
+          role=m.querySelector('#iu-role').value, password=m.querySelector('#iu-pass').value;
+    if(!full_name||!email||password.length<8) return toast('Fill name, email, and a password of 8+ chars', true);
+    const btn=m.querySelector('#iu-save'); btn.disabled=true; btn.textContent='Creating…';
+    try{
+      const res = await fetch(ADMIN_API+'/create-user', {method:'POST',
+        headers:{'Content-Type':'application/json','Authorization':'Bearer '+S.session.access_token, 'apikey':SUPABASE_ANON},
+        body:JSON.stringify({email, password, full_name, role})});
+      const out = await res.json();
+      if(!res.ok) throw new Error(out.error||'Failed');
+      closeModals(); toast('User created ✅'); await refreshCore(); renderAdmin();
+    }catch(e){ toast(e.message, true); btn.disabled=false; btn.textContent='Create account'; }
+  };
+}
+async function setRole(uid, role){
+  const {error} = await db.from('profiles').update({role}).eq('id',uid);
+  if(error) return toast(error.message, true);
+  toast('Role updated'); await refreshCore();
+}
+async function toggleActive(uid, active){
+  const {error} = await db.from('profiles').update({active}).eq('id',uid);
+  if(error) return toast(error.message, true);
+  toast(active?'User activated':'User deactivated'); await refreshCore(); renderAdmin();
+}
+async function resetPassword(uid, name){
+  const p = prompt(`New temporary password for ${name}:`, 'Crea'+Math.random().toString(36).slice(2,8)+'!');
+  if(!p || p.length<8) return;
+  try{
+    const res = await fetch(ADMIN_API+'/reset-password', {method:'POST',
+      headers:{'Content-Type':'application/json','Authorization':'Bearer '+S.session.access_token, 'apikey':SUPABASE_ANON},
+      body:JSON.stringify({user_id:uid, password:p})});
+    const out = await res.json();
+    if(!res.ok) throw new Error(out.error||'Failed');
+    toast('Password reset — share it with them');
+  }catch(e){ toast(e.message, true); }
+}
+function newWorkspaceModal(){
+  const m = modal(`<div class="modal-head"><h2>New workspace</h2><button class="x" onclick="closeModals()">✕</button></div>
+    <div class="modal-body">
+      <label>Name <span class="req">*</span></label><input id="nw-name">
+      <label>Icon (emoji)</label><input id="nw-icon" value="📁" maxlength="4">
+      <label>Description</label><input id="nw-desc">
+    </div>
+    <div class="modal-foot"><button class="btn btn-ghost" onclick="closeModals()">Cancel</button><button class="btn btn-primary" id="nw-save">Create</button></div>`);
+  m.querySelector('#nw-save').onclick = async ()=>{
+    const name=m.querySelector('#nw-name').value.trim(); if(!name) return toast('Name required', true);
+    const colors=['#6C5CE7','#0984E3','#D63031','#E84393','#E17055','#00B894','#FDCB6E'];
+    const {error} = await db.from('workspaces').insert({name, icon:m.querySelector('#nw-icon').value||'📁',
+      description:m.querySelector('#nw-desc').value.trim(), color:colors[Math.floor(Math.random()*colors.length)],
+      position:S.workspaces.length+1});
+    if(error) return toast(error.message, true);
+    closeModals(); toast('Workspace created'); await refreshCore(); renderAdmin(); renderSidebar();
+  };
+}
+
+/* ================= INIT ================= */
+(async ()=>{
+  const {data:{session}} = await db.auth.getSession();
+  S.session = session;
+  if(session) await boot();
+  else $('#login-screen').classList.remove('hidden');
+})();
+</script>
+</body>
+</html>
