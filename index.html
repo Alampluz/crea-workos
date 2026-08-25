@@ -99,20 +99,21 @@ table.tbl{width:100%;border-collapse:collapse;font-size:13.5px}
 /* table view (spreadsheet grid) */
 .tv-wrap{overflow-x:auto;background:#fff;border:1px solid var(--line);border-radius:12px}
 table.tv{border-collapse:separate;border-spacing:0;font-size:13.5px;min-width:100%}
-.tv th{white-space:nowrap;text-align:left;font-size:11.5px;text-transform:uppercase;letter-spacing:.5px;color:var(--ink3);font-weight:700;padding:10px 12px;border-bottom:1px solid var(--line);border-right:1px solid var(--line);background:#FBFBF8;position:sticky;top:0;z-index:2}
+.tv th{white-space:nowrap;text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:var(--ink3);font-weight:700;padding:9px 14px;border-bottom:1px solid var(--line);background:#FBFBF8;position:sticky;top:0;z-index:2}
 .tv th.col-edit{cursor:pointer}
 .tv th.col-edit:hover{color:var(--accent)}
-.tv td{padding:0;border-bottom:1px solid var(--line);border-right:1px solid var(--line);vertical-align:middle;min-width:130px}
-.tv td.tv-name{min-width:240px}
-.tv tr:last-child td{border-bottom:none}
-.tv th:last-child,.tv td:last-child{border-right:none}
-.tv td input,.tv td select{width:100%;border:none;background:transparent;padding:10px 12px;font:inherit;color:var(--ink);border-radius:0}
-.tv td input:focus,.tv td select:focus{outline:2px solid var(--accent);outline-offset:-2px;background:#fff}
-.tv td input[type=checkbox]{width:auto;margin:12px;accent-color:var(--accent)}
-.tv td .tv-open{padding:10px 12px;cursor:pointer;font-weight:600}
+.tv td{padding:0;border-top:1px solid #F1F1EC;vertical-align:middle;min-width:132px;background:#fff}
+.tv td+td{border-left:1px solid #F6F6F1}
+.tv tbody tr:first-child td{border-top:none}
+.tv tbody tr:hover td{background:#FBFBF7}
+.tv td.tv-name{min-width:260px}
+.tv td input{width:100%;border:none;background:transparent;padding:11px 14px;font:inherit;color:var(--ink)}
+.tv td input:focus{outline:2px solid var(--accent);outline-offset:-2px;background:#fff;border-radius:6px}
+.tv td input[type=checkbox]{width:auto;margin:13px 14px;accent-color:var(--accent)}
+.tv td .tv-open{padding:11px 14px;cursor:pointer;font-weight:600;display:flex;align-items:center}
 .tv td .tv-open:hover{color:var(--accent)}
-.tv-addcol{padding:6px 12px;font-weight:700;color:var(--ink3);cursor:pointer;white-space:nowrap}
-.tv-addcol:hover{color:var(--accent)}
+.tv-addcol{padding:4px 10px;font-weight:700;color:var(--ink3);cursor:pointer;white-space:nowrap;border:1px dashed var(--line);border-radius:7px;font-size:11px;letter-spacing:.4px}
+.tv-addcol:hover{color:var(--accent);border-color:var(--accent)}
 
 /* grouped table view (monday-style sections) */
 .tv-group{margin-bottom:22px}
@@ -131,10 +132,28 @@ table.tv{border-collapse:separate;border-spacing:0;font-size:13.5px;min-width:10
 .tv-addgroup{margin-top:4px;padding:9px 14px;font-weight:700;font-size:13.5px;color:var(--ink3);cursor:pointer;border:1px dashed var(--line);border-radius:10px;display:inline-block;background:#fff}
 .tv-addgroup:hover{color:var(--accent);border-color:var(--accent)}
 .tv .subchip{font-size:11.5px;font-weight:700;color:var(--ink3);background:var(--gray-soft);border-radius:6px;padding:2px 7px;margin-left:8px;white-space:nowrap}
-.tv-pickv{padding:10px 12px;cursor:pointer;white-space:nowrap;font-size:13px;min-height:38px}
-.tv-pickv:hover{background:#F6F6F1}
-.tv-pickv select{width:100%;border:none;background:#fff;font:inherit;padding:0;outline:2px solid var(--accent);border-radius:4px}
-.tv-empty{color:var(--ink3)}
+.tv-pickv{padding:8px 14px;cursor:pointer;white-space:nowrap;font-size:13px;min-height:40px;display:flex;align-items:center;gap:8px}
+.tv-pickv:hover{box-shadow:inset 0 0 0 1px var(--line);border-radius:8px}
+.tv-empty{color:#C9CCD6;font-weight:600}
+.tv-chip{display:inline-flex;align-items:center;gap:7px;padding:4px 11px;border-radius:999px;font-size:12.5px;font-weight:700;white-space:nowrap}
+.tv-chip .cdot{width:7px;height:7px;border-radius:50%;flex:none}
+.tv-link{color:var(--accent);font-weight:600;text-decoration:none;border-bottom:1px solid var(--accent-soft)}
+.tv-link:hover{border-bottom-color:var(--accent)}
+.tv-num{width:100%;text-align:left;font-variant-numeric:tabular-nums}
+
+/* dropdown picker menu */
+#tvmenu{position:fixed;z-index:400;background:#fff;border:1px solid var(--line);border-radius:12px;box-shadow:0 12px 40px rgba(20,22,40,.16);min-width:220px;max-width:300px;overflow:hidden;animation:pop .12s ease}
+#tvmenu .search{padding:8px;border-bottom:1px solid var(--line)}
+#tvmenu .search input{width:100%;padding:7px 10px;font-size:13px;border:1px solid var(--line);border-radius:8px}
+#tvmenu .opts{max-height:264px;overflow-y:auto;padding:6px}
+#tvmenu .opt{display:flex;align-items:center;gap:8px;padding:7px 10px;border-radius:8px;cursor:pointer;font-size:13px;font-weight:600}
+#tvmenu .opt:hover{background:var(--gray-soft)}
+#tvmenu .opt.clear{color:var(--ink3);font-weight:600}
+
+/* collapsible groups */
+.tv-group-head .caret{font-size:11px;color:var(--ink3);cursor:pointer;width:18px;text-align:center;user-select:none}
+.tv-group-head h3{cursor:pointer}
+.tv-group.collapsed .tv-wrap{display:none}
 
 /* subtasks in task modal */
 .strow{display:grid;grid-template-columns:118px 1fr 110px 140px 128px 26px;gap:6px;align-items:center;margin-top:6px}
@@ -864,46 +883,98 @@ function tvBuildOpts(flds){
   };
   (flds||[]).forEach(f=>{ if(f.ftype==='select') TVO['f_'+f.id]=(f.options||[]).map(o=>({v:o, l:o})); });
 }
-function tvDisplay(kind, val){
+function tvFmtDate(v){
+  if(!v) return '';
+  const d = new Date(v+'T00:00:00'); if(isNaN(d)) return v;
+  const s = d.toLocaleDateString('en-GB',{day:'numeric',month:'short'});
+  return d.getFullYear()===new Date().getFullYear()? s : s+' '+d.getFullYear();
+}
+function tvChip(label, color){
+  return `<span class="tv-chip" style="background:${color}1C;color:${color}"><span class="cdot" style="background:${color}"></span>${esc(label)}</span>`;
+}
+function tvDisplay(kind, val, t){
   if(val===undefined||val===null||val==='') return `<span class="tv-empty">—</span>`;
-  if(kind==='status'){ const s=STATUSES.find(x=>x.k===val); return s? `<span class="dot" style="background:${s.color};display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:7px"></span>${esc(s.label)}` : esc(val); }
-  if(kind==='priority'){ const p=PRIORITIES.find(x=>x.k===val); return p? esc(p.label): esc(val); }
-  if(kind==='people'){ return esc(prof(val)?.full_name || '—'); }
+  if(kind==='status'){ const s=STATUSES.find(x=>x.k===val); return s? tvChip(s.label, s.color) : esc(val); }
+  if(kind==='priority') return prioChip(val) || `<span class="tv-empty">—</span>`;
+  if(kind==='people'){ const p=prof(val); return p? `${avatar(p,true)}<span>${esc(p.full_name)}</span>` : `<span class="tv-empty">—</span>`; }
+  if(kind==='due') return dueBadge(val, t?.status==='done') || esc(tvFmtDate(val));
+  if(kind==='date') return esc(tvFmtDate(val));
+  if(kind==='number') return `<span class="tv-num">${esc(val)}</span>`;
+  if(kind==='text' && /^https?:\/\//.test(val)){
+    let host=''; try{ host=new URL(val).hostname.replace('www.','').split('.')[0]; }catch(e){ host='link'; }
+    return `<a class="tv-link" href="${esc(val)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">Open ${esc(host)}</a>`;
+  }
+  if(kind==='brand'||kind.startsWith('f_')) return `<span class="tv-chip" style="background:var(--gray-soft);color:var(--ink)">${esc(val)}</span>`;
   return esc(val);
 }
-function tvPickHTML(kind, tid, field, isCustom, val){
-  return `<div class="tv-pickv" data-kind="${kind}" data-tid="${tid}" data-field="${esc(field)}" data-cust="${isCustom?1:0}" onclick="tvEdit(this)">${tvDisplay(kind, val)}</div>`;
+function tvPickHTML(kind, tid, field, isCustom, val, t){
+  return `<div class="tv-pickv" data-kind="${kind}" data-tid="${tid}" data-field="${esc(field)}" data-cust="${isCustom?1:0}" onclick="tvEdit(this,event)">${tvDisplay(kind, val, t)}</div>`;
 }
-function tvEdit(el){
-  if(el.querySelector('select')) return;
+/* ---- dropdown picker (chip cells open a menu, like monday) ---- */
+function tvCloseMenu(){ document.getElementById('tvmenu')?.remove(); document.removeEventListener('mousedown', tvMenuOutside); }
+function tvMenuOutside(e){ if(!document.getElementById('tvmenu')?.contains(e.target)) tvCloseMenu(); }
+function tvEdit(el, ev){
   const {kind, tid, field, cust} = el.dataset;
   const t = S._tasks.find(x=>x.id===tid); if(!t) return;
   const cur = cust==='1' ? (t.custom||{})[field] : t[field];
-  const opts = TVO[kind]||[];
-  const sel = document.createElement('select');
-  sel.innerHTML = `<option value=""></option>` + opts.map(o=>`<option value="${esc(o.v)}" ${o.v===cur?'selected':''}>${esc(o.l)}</option>`).join('');
-  el.textContent=''; el.appendChild(sel); sel.focus();
-  let saved=false;
-  const finish = (val)=>{ el.innerHTML = tvDisplay(kind, val); };
-  sel.onchange = async ()=>{
-    saved=true; const val = sel.value||null;
-    if(cust!=='1' && (field==='status'||field==='priority') && val===null){ finish(cur); return; }
+  const save = async (val)=>{
+    if(cust!=='1' && (field==='status'||field==='priority') && (val===null||val==='')) return;
     if(cust==='1') await tvCustom(tid, field, val===null? '' : val);
     else await tvCore(tid, field, val);
-    finish(cust==='1'? (t.custom||{})[field] : t[field]);
+    el.innerHTML = tvDisplay(kind, cust==='1'? (t.custom||{})[field] : t[field], t);
   };
-  sel.onblur = ()=>{ if(!saved) finish(cur); };
+  // inline editors for free-form types
+  if(kind==='text'||kind==='number'||kind==='date'||kind==='due'){
+    if(el.querySelector('input')) return;
+    const inp=document.createElement('input');
+    inp.type = kind==='number'?'number':(kind==='date'||kind==='due')?'date':'text';
+    inp.value = cur??'';
+    el.textContent=''; el.appendChild(inp); inp.focus();
+    let cancelled=false;
+    inp.onkeydown=e=>{ if(e.key==='Enter') inp.blur(); if(e.key==='Escape'){ cancelled=true; inp.blur(); } };
+    inp.onblur=async ()=>{
+      if(cancelled){ el.innerHTML=tvDisplay(kind, cur, t); return; }
+      const val=inp.value.trim();
+      if(val===(cur??'')) { el.innerHTML=tvDisplay(kind, cur, t); return; }
+      await save(val===''? null : val);
+    };
+    return;
+  }
+  // popover menu for choice types
+  tvCloseMenu();
+  const opts = TVO[kind]||[];
+  const m = document.createElement('div'); m.id='tvmenu';
+  const withSearch = opts.length>8;
+  m.innerHTML = `${withSearch? `<div class="search"><input placeholder="Search…"></div>`:''}<div class="opts">
+    <div class="opt clear" data-v="">Clear</div>
+    ${opts.map(o=>`<div class="opt" data-v="${esc(o.v)}">${
+      kind==='status'? tvChip(o.l, STATUSES.find(s=>s.k===o.v)?.color||'#8E93A8') :
+      kind==='priority'? (prioChip(o.v)||esc(o.l)) :
+      kind==='people'? `${avatar(prof(o.v),true)}<span>${esc(o.l)}</span>` : esc(o.l)
+    }</div>`).join('')}
+  </div>`;
+  document.body.appendChild(m);
+  const r = el.getBoundingClientRect();
+  const mw = m.offsetWidth, mh = m.offsetHeight;
+  let x = Math.min(r.left, window.innerWidth-mw-12);
+  let y = (r.bottom+mh+12 > window.innerHeight && r.top-mh-6 > 0)? r.top-mh-6 : r.bottom+4;
+  m.style.left=x+'px'; m.style.top=y+'px';
+  m.querySelectorAll('.opt').forEach(o=>o.onmousedown=async e=>{ e.preventDefault(); tvCloseMenu(); await save(o.dataset.v||null); });
+  if(withSearch){
+    const si=m.querySelector('.search input'); si.focus();
+    si.oninput=()=>{ const q=si.value.toLowerCase(); m.querySelectorAll('.opt:not(.clear)').forEach(o=>{ o.style.display = o.textContent.toLowerCase().includes(q)?'flex':'none'; }); };
+  }
+  setTimeout(()=>document.addEventListener('mousedown', tvMenuOutside),0);
 }
 function tvCell(t, f){
   const v = (t.custom||{})[f.id];
-  const h = `onchange="tvCustom('${t.id}','${f.id}', this.type==='checkbox'? this.checked : this.value)"`;
-  if(f.ftype==='number')   return `<input type="number" value="${v??''}" ${h}>`;
-  if(f.ftype==='date')     return `<input type="date" value="${esc(v||'')}" ${h}>`;
-  if(f.ftype==='checkbox') return `<input type="checkbox" ${v?'checked':''} ${h}>`;
+  if(f.ftype==='checkbox') return `<input type="checkbox" ${v?'checked':''} onchange="tvCustom('${t.id}','${f.id}', this.checked)">`;
+  if(f.ftype==='number')   return tvPickHTML('number', t.id, f.id, true, v);
+  if(f.ftype==='date')     return tvPickHTML('date', t.id, f.id, true, v);
   if(f.ftype==='select')   return tvPickHTML('f_'+f.id, t.id, f.id, true, v);
   if(f.ftype==='person')   return tvPickHTML('people', t.id, f.id, true, v);
   if(f.ftype==='brand')    return tvPickHTML('brand', t.id, f.id, true, v);
-  return `<input type="text" value="${esc(v||'')}" ${h}>`;
+  return tvPickHTML('text', t.id, f.id, true, v);
 }
 function tvHeadHTML(id, flds, showAddCol){
   return `<tr>
@@ -916,10 +987,10 @@ function tvRowHTML(t, flds){
   const sc = (S._subs||{})[t.id];
   return `<tr class="tv-row" data-tid="${t.id}">
     <td class="tv-name"><div class="tv-open" draggable="true" ondragstart="tvDragStart(event,'${t.id}')" ondragend="tvDragEnd(event)" onclick="openTask('${t.id}')">${esc(t.title)}${sc&&sc.total? `<span class="subchip">${sc.done}/${sc.total}</span>`:''}</div></td>
-    <td>${tvPickHTML('status', t.id, 'status', false, t.status)}</td>
-    <td>${tvPickHTML('people', t.id, 'assignee_id', false, t.assignee_id)}</td>
-    <td><input type="date" value="${t.due_date||''}" onchange="tvCore('${t.id}','due_date',this.value||null)"></td>
-    <td>${tvPickHTML('priority', t.id, 'priority', false, t.priority)}</td>
+    <td>${tvPickHTML('status', t.id, 'status', false, t.status, t)}</td>
+    <td>${tvPickHTML('people', t.id, 'assignee_id', false, t.assignee_id, t)}</td>
+    <td>${tvPickHTML('due', t.id, 'due_date', false, t.due_date, t)}</td>
+    <td>${tvPickHTML('priority', t.id, 'priority', false, t.priority, t)}</td>
     ${flds.map(f=>`<td>${tvCell(t,f)}</td>`).join('')}
     ${isStaff()? '<td></td>':''}
   </tr>`;
@@ -946,9 +1017,10 @@ function renderProjectTableView(id){
   const ungrouped = S._tasks.filter(t=>!t.group_id || !gids.has(t.group_id)).sort(byPos);
   C.innerHTML = groups.map((g,i)=>{
     const rows = S._tasks.filter(t=>t.group_id===g.id).sort(byPos);
-    return `<div class="tv-group">
-      <div class="tv-group-head"><span class="bar" style="background:${g.color}"></span>
-        <h3 style="color:${g.color}">${esc(g.name)}</h3><span class="cnt">${rows.length} task${rows.length===1?'':'s'}</span>
+    const closed = tvCollapsed.has(g.id);
+    return `<div class="tv-group ${closed?'collapsed':''}" id="tvg-${g.id}">
+      <div class="tv-group-head"><span class="caret" onclick="tvToggleGroup('${g.id}')">${closed?'▸':'▾'}</span><span class="bar" style="background:${g.color}"></span>
+        <h3 style="color:${g.color}" onclick="tvToggleGroup('${g.id}')">${esc(g.name)}</h3><span class="cnt">${rows.length} task${rows.length===1?'':'s'}</span>
         ${isStaff()? `<span class="g-edit" onclick="editGroupModal('${g.id}','${id}')">Edit</span>`:''}
       </div>${tableFor(rows, g.id, i===0)}</div>`;
   }).join('')
@@ -956,6 +1028,13 @@ function renderProjectTableView(id){
       <div class="tv-group-head"><span class="bar" style="background:#C6C9D8"></span><h3 style="color:var(--ink3)">No group</h3><span class="cnt">${ungrouped.length}</span></div>
       ${tableFor(ungrouped, null, false)}</div>`:'')
   + (isStaff()? `<div class="tv-addgroup" onclick="addGroupModal('${id}')">＋ Add group</div>`:'');
+}
+const tvCollapsed = new Set();
+function tvToggleGroup(gid){
+  const box = document.getElementById('tvg-'+gid); if(!box) return;
+  if(tvCollapsed.has(gid)) tvCollapsed.delete(gid); else tvCollapsed.add(gid);
+  box.classList.toggle('collapsed', tvCollapsed.has(gid));
+  const caret = box.querySelector('.caret'); if(caret) caret.textContent = tvCollapsed.has(gid)?'▸':'▾';
 }
 let tvDragId=null;
 function tvDragStart(e, tid){ tvDragId=tid; e.currentTarget.closest('tr')?.classList.add('dragging'); e.dataTransfer.effectAllowed='move'; }
