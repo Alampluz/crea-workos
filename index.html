@@ -141,7 +141,8 @@ table.tv{border-collapse:separate;border-spacing:0;font-size:13.5px;min-width:10
 .tv-fill-empty{background:#EDEDE7;color:#A9ADBD}
 .tv-fill.mini{min-height:0;padding:7px 10px;border-radius:7px;width:100%}
 .tv td.tv-check,.tv th.tv-check{min-width:38px;width:38px;text-align:center}
-.tv td.tv-check input{width:auto;margin:0;accent-color:var(--accent);cursor:pointer}
+.tv td.tv-check input,.tv th.tv-check input{width:auto;margin:0;accent-color:var(--accent);cursor:pointer}
+.tv tbody tr.rowsel td{background:var(--accent-soft)}
 .tv tr.tv-row td:first-child{border-left:3px solid var(--gcol, transparent)}
 .tv-quickadd{border-top:1px solid #F1F1EC}
 .tv-quickadd input{width:100%;border:none;background:transparent;padding:11px 14px 11px 52px;font:inherit;color:var(--ink)}
@@ -1000,16 +1001,16 @@ function tvCell(t, f){
   if(f.ftype==='brand')    return tvPickHTML('brand', t.id, f.id, true, v);
   return tvPickHTML('text', t.id, f.id, true, v);
 }
-function tvHeadHTML(id, flds, showAddCol){
+function tvHeadHTML(id, flds, showAddCol, gid){
   return `<tr>
-    <th class="tv-check"></th><th>Task</th><th>Status</th><th>Assignee</th><th>Due date</th><th>Priority</th>
+    <th class="tv-check"><input type="checkbox" title="Select all" onchange="tvSelGroup(this,'${gid}')"></th><th>Task</th><th>Status</th><th>Assignee</th><th>Due date</th><th>Priority</th>
     ${flds.map(f=>`<th class="${isStaff()?'col-edit':''}" ${isStaff()?`onclick="editColumnModal('${f.id}','${id}')" title="Edit column"`:''}>${esc(f.label)}</th>`).join('')}
     ${isStaff()? (showAddCol? `<th><span class="tv-addcol" onclick="addColumnModal('${id}')">＋ Column</span></th>`:'<th></th>'):''}
   </tr>`;
 }
 function tvRowHTML(t, flds, gc){
   const sc = (S._subs||{})[t.id];
-  return `<tr class="tv-row" data-tid="${t.id}" ${gc?`style="--gcol:${gc}"`:''}>
+  return `<tr class="tv-row${tvSel.has(t.id)?' rowsel':''}" data-tid="${t.id}" ${gc?`style="--gcol:${gc}"`:''}>
     <td class="tv-check"><input type="checkbox" ${tvSel.has(t.id)?'checked':''} onchange="tvSelToggle('${t.id}',this.checked)"></td>
     <td class="tv-name"><div class="tv-open" draggable="true" ondragstart="tvDragStart(event,'${t.id}')" ondragend="tvDragEnd(event)" onclick="openTask('${t.id}')">${esc(t.title)}${sc&&sc.total? `<span class="subchip">${sc.done}/${sc.total}</span>`:''}</div></td>
     <td>${tvPickHTML('status', t.id, 'status', false, t.status, t)}</td>
@@ -1028,7 +1029,7 @@ function renderProjectTableView(id){
   const cols = 6+flds.length+(isStaff()?1:0);
   const byPos = (a,b)=> (a.position||0)-(b.position||0);
   const tableFor = (rows, gid, first, gc)=> `<div class="tv-wrap" data-gid="${gid||''}" ondragover="tvDragOver(event)" ondragleave="tvDragLeave(event)" ondrop="tvDrop(event,'${id}')">
-    <table class="tv"><thead>${tvHeadHTML(id, flds, first)}</thead><tbody>
+    <table class="tv"><thead>${tvHeadHTML(id, flds, first, gid||(groups.length?'':'__all__'))}</thead><tbody>
       ${rows.length? rows.map(t=>tvRowHTML(t,flds,gc)).join('') : `<tr><td colspan="${cols}"><div style="padding:14px;color:var(--ink3);font-size:13px">Drop tasks here, or add one below</div></td></tr>`}
     </tbody></table>
     <div class="tv-quickadd"><input placeholder="＋ Add task" onkeydown="tvQuickAdd(event,'${id}',${gid?`'${gid}'`:'null'})"></div>
@@ -1058,7 +1059,21 @@ function renderProjectTableView(id){
 const tvCollapsed = new Set();
 let tvPid = null;
 const tvSel = new Set();
-function tvSelToggle(id, on){ if(on) tvSel.add(id); else tvSel.delete(id); tvBulkBar(); }
+function tvSelToggle(id, on){
+  if(on) tvSel.add(id); else tvSel.delete(id);
+  document.querySelector(`tr[data-tid="${id}"]`)?.classList.toggle('rowsel', on);
+  tvBulkBar();
+}
+function tvSelGroup(el, gid){
+  const inGroups = new Set((S._groups||[]).map(g=>g.id));
+  const rows = gid==='__all__' ? (S._tasks||[])
+    : gid==='' ? (S._tasks||[]).filter(t=>!t.group_id || !inGroups.has(t.group_id))
+    : (S._tasks||[]).filter(t=>t.group_id===gid);
+  rows.forEach(t=>{ if(el.checked) tvSel.add(t.id); else tvSel.delete(t.id); });
+  const wrap = el.closest('.tv-wrap');
+  if(wrap) wrap.querySelectorAll('tbody .tv-check input').forEach(cb=>{ cb.checked=el.checked; cb.closest('tr')?.classList.toggle('rowsel', el.checked); });
+  tvBulkBar();
+}
 function tvSelClear(){ tvSel.clear(); tvBulkBar(); const y=scrollY; renderProjectTableView(tvPid); scrollTo(0,y); }
 function tvBulkBar(){
   document.getElementById('tvbulk')?.remove();
