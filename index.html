@@ -131,6 +131,10 @@ table.tv{border-collapse:separate;border-spacing:0;font-size:13.5px;min-width:10
 .tv-addgroup{margin-top:4px;padding:9px 14px;font-weight:700;font-size:13.5px;color:var(--ink3);cursor:pointer;border:1px dashed var(--line);border-radius:10px;display:inline-block;background:#fff}
 .tv-addgroup:hover{color:var(--accent);border-color:var(--accent)}
 .tv .subchip{font-size:11.5px;font-weight:700;color:var(--ink3);background:var(--gray-soft);border-radius:6px;padding:2px 7px;margin-left:8px;white-space:nowrap}
+.tv-pickv{padding:10px 12px;cursor:pointer;white-space:nowrap;font-size:13px;min-height:38px}
+.tv-pickv:hover{background:#F6F6F1}
+.tv-pickv select{width:100%;border:none;background:#fff;font:inherit;padding:0;outline:2px solid var(--accent);border-radius:4px}
+.tv-empty{color:var(--ink3)}
 
 /* subtasks in task modal */
 .strow{display:grid;grid-template-columns:118px 1fr 110px 140px 128px 26px;gap:6px;align-items:center;margin-top:6px}
@@ -772,21 +776,18 @@ async function renderProject(id){
      ${isStaff()? `<button class="btn btn-ghost btn-sm" onclick="projectMembersModal('${id}')">Partner access</button>`:''}
      <button class="btn btn-primary btn-sm" onclick="newTaskModal('${id}')">＋ New task</button>`);
   const C=$('#content'); C.innerHTML='<div class="empty">Loading…</div>';
-  const {data:tasks, error} = await db.from('tasks').select('*').eq('project_id',id).order('position');
+  const [{data:tasks, error},{data:sc},{data:fields},{data:groups}] = await Promise.all([
+    db.from('tasks').select('*').eq('project_id',id).order('position'),
+    db.from('subtasks').select('task_id,status,tasks!inner(project_id)').eq('tasks.project_id', id),
+    db.from('project_fields').select('*').eq('project_id',id).order('position').order('created_at'),
+    db.from('project_groups').select('*').eq('project_id',id).order('position').order('created_at'),
+  ]);
   if(error){ C.innerHTML=`<div class="card empty">${esc(error.message)}</div>`; return; }
   S._tasks = tasks||[];
+  S._fields = fields||[]; S._groups = groups||[];
   S._subs = {};
-  if(S._tasks.length){
-    const {data:sc} = await db.from('subtasks').select('task_id,status').in('task_id', S._tasks.map(t=>t.id));
-    (sc||[]).forEach(s=>{ const o=S._subs[s.task_id]||(S._subs[s.task_id]={done:0,total:0}); o.total++; if(s.status==='done') o.done++; });
-  }
+  (sc||[]).forEach(s=>{ const o=S._subs[s.task_id]||(S._subs[s.task_id]={done:0,total:0}); o.total++; if(s.status==='done') o.done++; });
   if(boardMode==='table'){
-    const [{data:fields, error:fe},{data:groups}] = await Promise.all([
-      db.from('project_fields').select('*').eq('project_id',id).order('position').order('created_at'),
-      db.from('project_groups').select('*').eq('project_id',id).order('position').order('created_at'),
-    ]);
-    if(fe){ C.innerHTML=`<div class="card empty">${esc(fe.message)}</div>`; return; }
-    S._fields = fields||[]; S._groups = groups||[];
     renderProjectTableView(id);
     return;
   }
@@ -850,15 +851,58 @@ function renderProjectFromCache(id){
 function tvPeople(){
   return S.profiles.filter(p=> p.active!==false && !(p.email||'').startsWith('forms+'));
 }
+/* Option registries for click-to-edit dropdown cells (rendering a <select> with all
+   options in every cell made large projects extremely slow — cells are now plain text
+   until clicked). */
+let TVO = {};
+function tvBuildOpts(flds){
+  TVO = {
+    status: STATUSES.map(s=>({v:s.k, l:s.label})),
+    priority: PRIORITIES.map(p=>({v:p.k, l:p.label})),
+    people: tvPeople().map(p=>({v:p.id, l:p.full_name})),
+    brand: (S.brandsList||[]).filter(b=>b.active!==false).map(b=>({v:b.name, l:b.name})),
+  };
+  (flds||[]).forEach(f=>{ if(f.ftype==='select') TVO['f_'+f.id]=(f.options||[]).map(o=>({v:o, l:o})); });
+}
+function tvDisplay(kind, val){
+  if(val===undefined||val===null||val==='') return `<span class="tv-empty">—</span>`;
+  if(kind==='status'){ const s=STATUSES.find(x=>x.k===val); return s? `<span class="dot" style="background:${s.color};display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:7px"></span>${esc(s.label)}` : esc(val); }
+  if(kind==='priority'){ const p=PRIORITIES.find(x=>x.k===val); return p? esc(p.label): esc(val); }
+  if(kind==='people'){ return esc(prof(val)?.full_name || '—'); }
+  return esc(val);
+}
+function tvPickHTML(kind, tid, field, isCustom, val){
+  return `<div class="tv-pickv" data-kind="${kind}" data-tid="${tid}" data-field="${esc(field)}" data-cust="${isCustom?1:0}" onclick="tvEdit(this)">${tvDisplay(kind, val)}</div>`;
+}
+function tvEdit(el){
+  if(el.querySelector('select')) return;
+  const {kind, tid, field, cust} = el.dataset;
+  const t = S._tasks.find(x=>x.id===tid); if(!t) return;
+  const cur = cust==='1' ? (t.custom||{})[field] : t[field];
+  const opts = TVO[kind]||[];
+  const sel = document.createElement('select');
+  sel.innerHTML = `<option value=""></option>` + opts.map(o=>`<option value="${esc(o.v)}" ${o.v===cur?'selected':''}>${esc(o.l)}</option>`).join('');
+  el.textContent=''; el.appendChild(sel); sel.focus();
+  let saved=false;
+  const finish = (val)=>{ el.innerHTML = tvDisplay(kind, val); };
+  sel.onchange = async ()=>{
+    saved=true; const val = sel.value||null;
+    if(cust!=='1' && (field==='status'||field==='priority') && val===null){ finish(cur); return; }
+    if(cust==='1') await tvCustom(tid, field, val===null? '' : val);
+    else await tvCore(tid, field, val);
+    finish(cust==='1'? (t.custom||{})[field] : t[field]);
+  };
+  sel.onblur = ()=>{ if(!saved) finish(cur); };
+}
 function tvCell(t, f){
   const v = (t.custom||{})[f.id];
   const h = `onchange="tvCustom('${t.id}','${f.id}', this.type==='checkbox'? this.checked : this.value)"`;
   if(f.ftype==='number')   return `<input type="number" value="${v??''}" ${h}>`;
   if(f.ftype==='date')     return `<input type="date" value="${esc(v||'')}" ${h}>`;
   if(f.ftype==='checkbox') return `<input type="checkbox" ${v?'checked':''} ${h}>`;
-  if(f.ftype==='select')   return `<select ${h}><option value=""></option>${(f.options||[]).map(o=>`<option ${v===o?'selected':''}>${esc(o)}</option>`).join('')}</select>`;
-  if(f.ftype==='person')   return `<select ${h}><option value=""></option>${tvPeople().map(p=>`<option value="${p.id}" ${v===p.id?'selected':''}>${esc(p.full_name)}</option>`).join('')}</select>`;
-  if(f.ftype==='brand')    return `<select ${h}><option value=""></option>${(S.brandsList||[]).filter(b=>b.active!==false).map(b=>`<option ${v===b.name?'selected':''}>${esc(b.name)}</option>`).join('')}</select>`;
+  if(f.ftype==='select')   return tvPickHTML('f_'+f.id, t.id, f.id, true, v);
+  if(f.ftype==='person')   return tvPickHTML('people', t.id, f.id, true, v);
+  if(f.ftype==='brand')    return tvPickHTML('brand', t.id, f.id, true, v);
   return `<input type="text" value="${esc(v||'')}" ${h}>`;
 }
 function tvHeadHTML(id, flds, showAddCol){
@@ -872,10 +916,10 @@ function tvRowHTML(t, flds){
   const sc = (S._subs||{})[t.id];
   return `<tr class="tv-row" data-tid="${t.id}">
     <td class="tv-name"><div class="tv-open" draggable="true" ondragstart="tvDragStart(event,'${t.id}')" ondragend="tvDragEnd(event)" onclick="openTask('${t.id}')">${esc(t.title)}${sc&&sc.total? `<span class="subchip">${sc.done}/${sc.total}</span>`:''}</div></td>
-    <td><select onchange="tvCore('${t.id}','status',this.value)">${STATUSES.map(s=>`<option value="${s.k}" ${t.status===s.k?'selected':''}>${s.label}</option>`).join('')}</select></td>
-    <td><select onchange="tvCore('${t.id}','assignee_id',this.value||null)"><option value="">Unassigned</option>${tvPeople().map(p=>`<option value="${p.id}" ${t.assignee_id===p.id?'selected':''}>${esc(p.full_name)}</option>`).join('')}</select></td>
+    <td>${tvPickHTML('status', t.id, 'status', false, t.status)}</td>
+    <td>${tvPickHTML('people', t.id, 'assignee_id', false, t.assignee_id)}</td>
     <td><input type="date" value="${t.due_date||''}" onchange="tvCore('${t.id}','due_date',this.value||null)"></td>
-    <td><select onchange="tvCore('${t.id}','priority',this.value)">${PRIORITIES.map(p=>`<option value="${p.k}" ${t.priority===p.k?'selected':''}>${p.label}</option>`).join('')}</select></td>
+    <td>${tvPickHTML('priority', t.id, 'priority', false, t.priority)}</td>
     ${flds.map(f=>`<td>${tvCell(t,f)}</td>`).join('')}
     ${isStaff()? '<td></td>':''}
   </tr>`;
@@ -883,6 +927,7 @@ function tvRowHTML(t, flds){
 function renderProjectTableView(id){
   const C=$('#content');
   const flds = S._fields||[], groups = S._groups||[];
+  tvBuildOpts(flds);
   const cols = 5+flds.length+(isStaff()?1:0);
   const byPos = (a,b)=> (a.position||0)-(b.position||0);
   const tableFor = (rows, gid, first)=> `<div class="tv-wrap" data-gid="${gid||''}" ondragover="tvDragOver(event)" ondragleave="tvDragLeave(event)" ondrop="tvDrop(event,'${id}')">
