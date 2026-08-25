@@ -134,7 +134,24 @@ table.tv{border-collapse:separate;border-spacing:0;font-size:13.5px;min-width:10
 .tv .subchip{font-size:11.5px;font-weight:700;color:var(--ink3);background:var(--gray-soft);border-radius:6px;padding:2px 7px;margin-left:8px;white-space:nowrap}
 .tv-pickv{padding:8px 14px;cursor:pointer;white-space:nowrap;font-size:13px;min-height:40px;display:flex;align-items:center;gap:8px}
 .tv-pickv:hover{box-shadow:inset 0 0 0 1px var(--line);border-radius:8px}
+.tv-pickv.fillcell{padding:0;border-radius:0}
+.tv-pickv.fillcell:hover{box-shadow:inset 0 0 0 2px rgba(255,255,255,.55);border-radius:0}
 .tv-empty{color:#C9CCD6;font-weight:600}
+.tv-fill{display:flex;align-items:center;justify-content:center;width:100%;min-height:40px;color:#fff;font-weight:700;font-size:12.5px;letter-spacing:.2px;text-align:center}
+.tv-fill-empty{background:#EDEDE7;color:#A9ADBD}
+.tv-fill.mini{min-height:0;padding:7px 10px;border-radius:7px;width:100%}
+.tv td.tv-check,.tv th.tv-check{min-width:38px;width:38px;text-align:center}
+.tv td.tv-check input{width:auto;margin:0;accent-color:var(--accent);cursor:pointer}
+.tv tr.tv-row td:first-child{border-left:3px solid var(--gcol, transparent)}
+.tv-quickadd{border-top:1px solid #F1F1EC}
+.tv-quickadd input{width:100%;border:none;background:transparent;padding:11px 14px 11px 52px;font:inherit;color:var(--ink)}
+.tv-quickadd input::placeholder{color:var(--ink3);font-weight:600}
+.tv-quickadd input:focus{outline:none;background:#FBFBF7}
+#tvbulk{position:fixed;left:50%;transform:translateX(-50%);bottom:22px;z-index:350;background:#16181D;color:#fff;border-radius:12px;box-shadow:0 12px 40px rgba(0,0,0,.35);display:flex;align-items:center;gap:6px;padding:10px 14px;animation:pop .15s ease}
+#tvbulk b{font-size:13px;margin-right:8px;white-space:nowrap}
+#tvbulk button{color:#fff;font-weight:600;font-size:12.5px;padding:6px 11px;border-radius:8px;background:rgba(255,255,255,.12);white-space:nowrap}
+#tvbulk button:hover{background:rgba(255,255,255,.24)}
+#tvbulk button.danger{background:rgba(214,69,91,.4)}
 .tv-chip{display:inline-flex;align-items:center;gap:7px;padding:4px 11px;border-radius:999px;font-size:12.5px;font-weight:700;white-space:nowrap}
 .tv-chip .cdot{width:7px;height:7px;border-radius:50%;flex:none}
 .tv-link{color:var(--accent);font-weight:600;text-decoration:none;border-bottom:1px solid var(--accent-soft)}
@@ -893,9 +910,12 @@ function tvChip(label, color){
   return `<span class="tv-chip" style="background:${color}1C;color:${color}"><span class="cdot" style="background:${color}"></span>${esc(label)}</span>`;
 }
 function tvDisplay(kind, val, t){
-  if(val===undefined||val===null||val==='') return `<span class="tv-empty">—</span>`;
-  if(kind==='status'){ const s=STATUSES.find(x=>x.k===val); return s? tvChip(s.label, s.color) : esc(val); }
-  if(kind==='priority') return prioChip(val) || `<span class="tv-empty">—</span>`;
+  if(val===undefined||val===null||val===''){
+    if(kind==='status'||kind==='priority') return `<span class="tv-fill tv-fill-empty">—</span>`;
+    return `<span class="tv-empty">—</span>`;
+  }
+  if(kind==='status'){ const s=STATUSES.find(x=>x.k===val); return s? `<span class="tv-fill" style="background:${s.color}">${esc(s.label)}</span>` : esc(val); }
+  if(kind==='priority'){ const p=PRIORITIES.find(x=>x.k===val); return p? `<span class="tv-fill" style="background:${p.color}">${esc(p.label)}</span>` : esc(val); }
   if(kind==='people'){ const p=prof(val); return p? `${avatar(p,true)}<span>${esc(p.full_name)}</span>` : `<span class="tv-empty">—</span>`; }
   if(kind==='due') return dueBadge(val, t?.status==='done') || esc(tvFmtDate(val));
   if(kind==='date') return esc(tvFmtDate(val));
@@ -908,7 +928,8 @@ function tvDisplay(kind, val, t){
   return esc(val);
 }
 function tvPickHTML(kind, tid, field, isCustom, val, t){
-  return `<div class="tv-pickv" data-kind="${kind}" data-tid="${tid}" data-field="${esc(field)}" data-cust="${isCustom?1:0}" onclick="tvEdit(this,event)">${tvDisplay(kind, val, t)}</div>`;
+  const fill = (kind==='status'||kind==='priority')? ' fillcell':'';
+  return `<div class="tv-pickv${fill}" data-kind="${kind}" data-tid="${tid}" data-field="${esc(field)}" data-cust="${isCustom?1:0}" onclick="tvEdit(this,event)">${tvDisplay(kind, val, t)}</div>`;
 }
 /* ---- dropdown picker (chip cells open a menu, like monday) ---- */
 function tvCloseMenu(){ document.getElementById('tvmenu')?.remove(); document.removeEventListener('mousedown', tvMenuOutside); }
@@ -941,25 +962,28 @@ function tvEdit(el, ev){
     return;
   }
   // popover menu for choice types
-  tvCloseMenu();
   const opts = TVO[kind]||[];
+  const renderOpt = o=>
+    kind==='status'? `<span class="tv-fill mini" style="background:${STATUSES.find(s=>s.k===o.v)?.color||'#8E93A8'}">${esc(o.l)}</span>` :
+    kind==='priority'? `<span class="tv-fill mini" style="background:${PRIORITIES.find(p=>p.k===o.v)?.color||'#8E93A8'}">${esc(o.l)}</span>` :
+    kind==='people'? `${avatar(prof(o.v),true)}<span>${esc(o.l)}</span>` : esc(o.l);
+  const canClear = !(cust!=='1' && (field==='status'||field==='priority'));
+  tvShowMenu(el, opts, renderOpt, save, opts.length>8, canClear);
+}
+function tvShowMenu(anchor, opts, renderOpt, onPick, withSearch, includeClear){
+  tvCloseMenu();
   const m = document.createElement('div'); m.id='tvmenu';
-  const withSearch = opts.length>8;
   m.innerHTML = `${withSearch? `<div class="search"><input placeholder="Search…"></div>`:''}<div class="opts">
-    <div class="opt clear" data-v="">Clear</div>
-    ${opts.map(o=>`<div class="opt" data-v="${esc(o.v)}">${
-      kind==='status'? tvChip(o.l, STATUSES.find(s=>s.k===o.v)?.color||'#8E93A8') :
-      kind==='priority'? (prioChip(o.v)||esc(o.l)) :
-      kind==='people'? `${avatar(prof(o.v),true)}<span>${esc(o.l)}</span>` : esc(o.l)
-    }</div>`).join('')}
+    ${includeClear? `<div class="opt clear" data-v="">Clear</div>`:''}
+    ${opts.map(o=>`<div class="opt" data-v="${esc(o.v)}">${renderOpt(o)}</div>`).join('')}
   </div>`;
   document.body.appendChild(m);
-  const r = el.getBoundingClientRect();
+  const r = anchor.getBoundingClientRect();
   const mw = m.offsetWidth, mh = m.offsetHeight;
   let x = Math.min(r.left, window.innerWidth-mw-12);
   let y = (r.bottom+mh+12 > window.innerHeight && r.top-mh-6 > 0)? r.top-mh-6 : r.bottom+4;
-  m.style.left=x+'px'; m.style.top=y+'px';
-  m.querySelectorAll('.opt').forEach(o=>o.onmousedown=async e=>{ e.preventDefault(); tvCloseMenu(); await save(o.dataset.v||null); });
+  m.style.left=Math.max(8,x)+'px'; m.style.top=Math.max(8,y)+'px';
+  m.querySelectorAll('.opt').forEach(o=>o.onmousedown=async e=>{ e.preventDefault(); tvCloseMenu(); await onPick(o.dataset.v||null); });
   if(withSearch){
     const si=m.querySelector('.search input'); si.focus();
     si.oninput=()=>{ const q=si.value.toLowerCase(); m.querySelectorAll('.opt:not(.clear)').forEach(o=>{ o.style.display = o.textContent.toLowerCase().includes(q)?'flex':'none'; }); };
@@ -978,14 +1002,15 @@ function tvCell(t, f){
 }
 function tvHeadHTML(id, flds, showAddCol){
   return `<tr>
-    <th>Task</th><th>Status</th><th>Assignee</th><th>Due date</th><th>Priority</th>
+    <th class="tv-check"></th><th>Task</th><th>Status</th><th>Assignee</th><th>Due date</th><th>Priority</th>
     ${flds.map(f=>`<th class="${isStaff()?'col-edit':''}" ${isStaff()?`onclick="editColumnModal('${f.id}','${id}')" title="Edit column"`:''}>${esc(f.label)}</th>`).join('')}
     ${isStaff()? (showAddCol? `<th><span class="tv-addcol" onclick="addColumnModal('${id}')">＋ Column</span></th>`:'<th></th>'):''}
   </tr>`;
 }
-function tvRowHTML(t, flds){
+function tvRowHTML(t, flds, gc){
   const sc = (S._subs||{})[t.id];
-  return `<tr class="tv-row" data-tid="${t.id}">
+  return `<tr class="tv-row" data-tid="${t.id}" ${gc?`style="--gcol:${gc}"`:''}>
+    <td class="tv-check"><input type="checkbox" ${tvSel.has(t.id)?'checked':''} onchange="tvSelToggle('${t.id}',this.checked)"></td>
     <td class="tv-name"><div class="tv-open" draggable="true" ondragstart="tvDragStart(event,'${t.id}')" ondragend="tvDragEnd(event)" onclick="openTask('${t.id}')">${esc(t.title)}${sc&&sc.total? `<span class="subchip">${sc.done}/${sc.total}</span>`:''}</div></td>
     <td>${tvPickHTML('status', t.id, 'status', false, t.status, t)}</td>
     <td>${tvPickHTML('people', t.id, 'assignee_id', false, t.assignee_id, t)}</td>
@@ -997,15 +1022,16 @@ function tvRowHTML(t, flds){
 }
 function renderProjectTableView(id){
   const C=$('#content');
+  tvPid = id;
   const flds = S._fields||[], groups = S._groups||[];
   tvBuildOpts(flds);
-  const cols = 5+flds.length+(isStaff()?1:0);
+  const cols = 6+flds.length+(isStaff()?1:0);
   const byPos = (a,b)=> (a.position||0)-(b.position||0);
-  const tableFor = (rows, gid, first)=> `<div class="tv-wrap" data-gid="${gid||''}" ondragover="tvDragOver(event)" ondragleave="tvDragLeave(event)" ondrop="tvDrop(event,'${id}')">
+  const tableFor = (rows, gid, first, gc)=> `<div class="tv-wrap" data-gid="${gid||''}" ondragover="tvDragOver(event)" ondragleave="tvDragLeave(event)" ondrop="tvDrop(event,'${id}')">
     <table class="tv"><thead>${tvHeadHTML(id, flds, first)}</thead><tbody>
-      ${rows.length? rows.map(t=>tvRowHTML(t,flds)).join('') : `<tr><td colspan="${cols}"><div style="padding:14px;color:var(--ink3);font-size:13px">Drop tasks here, or add one below</div></td></tr>`}
+      ${rows.length? rows.map(t=>tvRowHTML(t,flds,gc)).join('') : `<tr><td colspan="${cols}"><div style="padding:14px;color:var(--ink3);font-size:13px">Drop tasks here, or add one below</div></td></tr>`}
     </tbody></table>
-    <div class="tv-addtask" onclick="newTaskModal('${id}','todo',${gid?`'${gid}'`:'null'})">＋ Add task</div>
+    <div class="tv-quickadd"><input placeholder="＋ Add task" onkeydown="tvQuickAdd(event,'${id}',${gid?`'${gid}'`:'null'})"></div>
   </div>`;
   if(!groups.length){
     const rows = [...S._tasks].sort(byPos);
@@ -1022,7 +1048,7 @@ function renderProjectTableView(id){
       <div class="tv-group-head"><span class="caret" onclick="tvToggleGroup('${g.id}')">${closed?'▸':'▾'}</span><span class="bar" style="background:${g.color}"></span>
         <h3 style="color:${g.color}" onclick="tvToggleGroup('${g.id}')">${esc(g.name)}</h3><span class="cnt">${rows.length} task${rows.length===1?'':'s'}</span>
         ${isStaff()? `<span class="g-edit" onclick="editGroupModal('${g.id}','${id}')">Edit</span>`:''}
-      </div>${tableFor(rows, g.id, i===0)}</div>`;
+      </div>${tableFor(rows, g.id, i===0, g.color)}</div>`;
   }).join('')
   + (ungrouped.length? `<div class="tv-group">
       <div class="tv-group-head"><span class="bar" style="background:#C6C9D8"></span><h3 style="color:var(--ink3)">No group</h3><span class="cnt">${ungrouped.length}</span></div>
@@ -1030,6 +1056,56 @@ function renderProjectTableView(id){
   + (isStaff()? `<div class="tv-addgroup" onclick="addGroupModal('${id}')">＋ Add group</div>`:'');
 }
 const tvCollapsed = new Set();
+let tvPid = null;
+const tvSel = new Set();
+function tvSelToggle(id, on){ if(on) tvSel.add(id); else tvSel.delete(id); tvBulkBar(); }
+function tvSelClear(){ tvSel.clear(); tvBulkBar(); const y=scrollY; renderProjectTableView(tvPid); scrollTo(0,y); }
+function tvBulkBar(){
+  document.getElementById('tvbulk')?.remove();
+  if(!tvSel.size) return;
+  const b=document.createElement('div'); b.id='tvbulk';
+  b.innerHTML=`<b>${tvSel.size} selected</b>
+    <button onclick="tvBulkPick(this,'status')">Status</button>
+    <button onclick="tvBulkPick(this,'group')">Group</button>
+    <button onclick="tvBulkPick(this,'assignee')">Assignee</button>
+    ${isStaff()? `<button class="danger" onclick="tvBulkDelete()">Delete</button>`:''}
+    <button onclick="tvSelClear()">Clear</button>`;
+  document.body.appendChild(b);
+}
+function tvBulkPick(btn, which){
+  if(which==='status') tvShowMenu(btn, TVO.status, o=>`<span class="tv-fill mini" style="background:${STATUSES.find(s=>s.k===o.v)?.color}">${esc(o.l)}</span>`, v=>{ if(v) tvBulkApply('status',v); }, false, false);
+  else if(which==='assignee') tvShowMenu(btn, TVO.people, o=>`${avatar(prof(o.v),true)}<span>${esc(o.l)}</span>`, v=>tvBulkApply('assignee_id',v), (TVO.people||[]).length>8, true);
+  else if(which==='group') tvShowMenu(btn, (S._groups||[]).map(g=>({v:g.id,l:g.name})), o=>esc(o.l), v=>tvBulkApply('group_id',v), false, true);
+}
+async function tvBulkApply(field, value){
+  const ids=[...tvSel]; if(!ids.length) return;
+  const {error}=await db.from('tasks').update({[field]:value}).in('id',ids);
+  if(error) return toast(error.message, true);
+  S._tasks.forEach(t=>{ if(tvSel.has(t.id)) t[field]=value; });
+  toast(ids.length+' task'+(ids.length>1?'s':'')+' updated');
+  const y=scrollY; renderProjectTableView(tvPid); scrollTo(0,y);
+}
+async function tvBulkDelete(){
+  if(!confirm('Delete '+tvSel.size+' task(s) permanently?')) return;
+  const ids=[...tvSel];
+  const {error}=await db.from('tasks').delete().in('id',ids);
+  if(error) return toast(error.message, true);
+  S._tasks = S._tasks.filter(t=>!tvSel.has(t.id));
+  tvSel.clear(); tvBulkBar(); toast('Deleted');
+  const y=scrollY; renderProjectTableView(tvPid); scrollTo(0,y);
+}
+function tvQuickAdd(e, pid, gid){
+  if(e.key!=='Enter') return;
+  const inp=e.target, title=inp.value.trim(); if(!title) return;
+  inp.disabled=true;
+  const maxPos=Math.max(0,...(S._tasks||[]).map(t=>t.position||0));
+  db.from('tasks').insert({project_id:pid, title, group_id:gid, status:'todo', priority:'normal', created_by:S.me.id, position:maxPos+1}).select().single().then(({data,error})=>{
+    if(error){ toast(error.message, true); inp.disabled=false; return; }
+    S._tasks.push(data);
+    const y=scrollY; renderProjectTableView(pid); scrollTo(0,y);
+  });
+}
+window.addEventListener('hashchange', ()=>{ tvSel.clear(); document.getElementById('tvbulk')?.remove(); document.getElementById('tvmenu')?.remove(); });
 function tvToggleGroup(gid){
   const box = document.getElementById('tvg-'+gid); if(!box) return;
   if(tvCollapsed.has(gid)) tvCollapsed.delete(gid); else tvCollapsed.add(gid);
