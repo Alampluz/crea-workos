@@ -218,7 +218,7 @@ table.tbl{width:100%;border-collapse:collapse;font-size:13.5px}
   <div id="sidebar">
     <div class="logo"><div class="logo-mark">W</div><div><b>WorkOS</b><span id="logo-co">Operations</span></div></div>
     <div id="nav-main"></div>
-    <div class="nav-section" id="ws-section-title" style="display:flex;align-items:center;justify-content:space-between">Teams</div>
+    <div class="nav-section" id="ws-section-title" style="display:flex;align-items:center;justify-content:space-between">Workspaces</div>
     <div id="nav-ws"></div>
     <div id="sidebar-user"></div>
   </div>
@@ -477,11 +477,11 @@ function renderSidebar(){
   }
   const tt = $('#ws-section-title');
   tt.style.display = (wss.length || isStaff())? 'flex' : 'none';
-  tt.innerHTML = 'Teams' + (isStaff()? '<button onclick="newWorkspaceModal()" title="New team" style="color:var(--ink3);font-size:15px;line-height:1;padding:0 2px;border-radius:5px">+</button>':'');
+  tt.innerHTML = 'Workspaces' + (isAdmin()? '<button onclick="newWorkspaceModal()" title="New workspace" style="color:var(--ink3);font-size:15px;line-height:1;padding:0 2px;border-radius:5px">+</button>':'');
   $('#nav-ws').innerHTML = wss.map(w=>
     `<div class="ws-item ${v==='ws'&&id===w.id?'active':''}" onclick="location.hash='#/ws/${w.id}'">
       <span class="ws-dot" style="background:${w.color}"></span><span class="ws-name">${esc(w.name)}</span>
-    </div>`).join('') || (isStaff()? '<div style="padding:4px 22px;font-size:12px;color:var(--ink3)">No teams yet — press +</div>':'');
+    </div>`).join('') || (isAdmin()? '<div style="padding:4px 22px;font-size:12px;color:var(--ink3)">No workspaces yet — press +</div>':'');
 
   const lc = $('#logo-co'); if(lc && S.company) lc.textContent = S.company.name;
   const icoKey = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="7.5" cy="15.5" r="4.5"/><path d="m21 2-9.6 9.6"/><path d="m15.5 7.5 3 3L22 7l-3-3"/></svg>';
@@ -618,15 +618,15 @@ async function renderWorkspace(id){
             ${p.due_date? dueBadge(p.due_date,false):''}
           </div></div>`;
       }).join('')}</div>`
-    : `<div class="card empty">No projects yet in this team${isStaff()? ' — create the first one.':''}</div>`}`;
+    : `<div class="card empty">No projects yet in this workspace${isStaff()? ' — create the first one.':''}</div>`}`;
 }
 async function teamMembersModal(wsId){
   const {data:members} = await db.from('workspace_members').select('*').eq('workspace_id',wsId);
   const memberIds = new Set((members||[]).map(m=>m.user_id));
   const internals = S.profiles.filter(p=>p.active && p.role==='internal');
-  const m = modal(`<div class="modal-head"><h2>Team members</h2><button class="x" onclick="closeModals()">✕</button></div>
+  const m = modal(`<div class="modal-head"><h2>Workspace members</h2><button class="x" onclick="closeModals()">✕</button></div>
     <div class="modal-body">
-      <p style="color:var(--ink2);font-size:13px;margin-top:8px">Internal staff only see the teams they belong to. Admin and Management see every team. Partners get access per-project via project members.</p>
+      <p style="color:var(--ink2);font-size:13px;margin-top:8px">Internal staff only see the workspaces they belong to. Admin and Management see every workspace. Partners get access per-project via project members.</p>
       ${internals.length? internals.map(p=>`
         <div class="chk"><input type="checkbox" data-uid="${p.id}" ${memberIds.has(p.id)?'checked':''}>
         ${avatar(p,true)} <span>${esc(p.full_name)} <span style="color:var(--ink3)">· ${esc(p.email)}</span></span></div>`).join('')
@@ -639,7 +639,7 @@ async function teamMembersModal(wsId){
     const rm=[...memberIds].filter(u=>!want.has(u) && internals.some(p=>p.id===u));
     if(add.length){ const {error} = await db.from('workspace_members').insert(add); if(error) return toast(error.message, true); }
     if(rm.length){ const {error} = await db.from('workspace_members').delete().eq('workspace_id',wsId).in('user_id',rm); if(error) return toast(error.message, true); }
-    closeModals(); toast('Team members updated');
+    closeModals(); toast('Workspace members updated');
   };
 }
 function newProjectModal(wsId){
@@ -648,7 +648,7 @@ function newProjectModal(wsId){
       <label>Project name <span class="req">*</span></label><input id="pj-name" placeholder="e.g. 9.9 Mega Sale — Brand X">
       <label>Description</label><textarea id="pj-desc" rows="2"></textarea>
       <div class="field-grid">
-        <div><label>Team</label><select id="pj-ws">${S.workspaces.map(w=>`<option value="${w.id}" ${w.id===wsId?'selected':''}>${esc(w.name)}</option>`).join('')}</select></div>
+        <div><label>Workspace</label><select id="pj-ws">${S.workspaces.map(w=>`<option value="${w.id}" ${w.id===wsId?'selected':''}>${esc(w.name)}</option>`).join('')}</select></div>
         <div><label>Due date</label><input id="pj-due" type="date"></div>
       </div></div>
     <div class="modal-foot"><button class="btn btn-ghost" onclick="closeModals()">Cancel</button><button class="btn btn-primary" id="pj-save">Create project</button></div>`);
@@ -1197,7 +1197,7 @@ async function renderDashboard(){
       <div class="stat"><div class="n ${pendingAppr?'amber':''}">${pendingAppr}</div><div class="l">Pending approvals</div></div>
     </div>
     <div class="grid-2">
-      <div class="card chart-card"><h3>Open tasks by team</h3>${hbars(byWs)}</div>
+      <div class="card chart-card"><h3>Open tasks by workspace</h3>${hbars(byWs)}</div>
       <div class="card chart-card"><h3>Tasks by status</h3>${hbars(byStatus)}</div>
       <div class="card chart-card"><h3>Open workload by person</h3>${hbars(byAssignee)}</div>
       <div class="card chart-card"><h3>Requests by type (all time)</h3>${hbars(byType)}</div>
@@ -1224,12 +1224,12 @@ async function renderAdmin(){
     <div class="page-head"><h1>Admin</h1>
       <div class="tabs">
         <button class="tab ${adminTab==='users'?'active':''}" onclick="adminTab='users';renderAdmin()">Users</button>
-        <button class="tab ${adminTab==='workspaces'?'active':''}" onclick="adminTab='workspaces';renderAdmin()">Teams</button>
+        <button class="tab ${adminTab==='workspaces'?'active':''}" onclick="adminTab='workspaces';renderAdmin()">Workspaces</button>
         <button class="tab ${adminTab==='brands'?'active':''}" onclick="adminTab='brands';renderAdmin()">Brands</button>
         <button class="tab ${adminTab==='types'?'active':''}" onclick="adminTab='types';renderAdmin()">Request types</button>
       </div>
       <div class="actions">${adminTab==='users'? '<button class="btn btn-primary" onclick="inviteUserModal()">＋ Add user</button>':''}
-        ${adminTab==='workspaces'? '<button class="btn btn-primary" onclick="newWorkspaceModal()">＋ Add team</button>':''}</div></div>
+        ${adminTab==='workspaces'? '<button class="btn btn-primary" onclick="newWorkspaceModal()">＋ Add workspace</button>':''}</div></div>
     <div id="admin-body"></div>`;
   const B=$('#admin-body');
   if(adminTab==='users'){
@@ -1244,15 +1244,15 @@ async function renderAdmin(){
           <button class="btn btn-ghost btn-sm" onclick="resetPassword('${p.id}','${esc(p.full_name).replace(/'/g,"\\'")}')">Reset password</button>
           ${p.id!==S.me.id? `<button class="btn btn-ghost btn-sm" onclick="toggleActive('${p.id}', ${!p.active})">${p.active?'Deactivate':'Activate'}</button>`:''}</td>
       </tr>`).join('')}</tbody></table></div>
-      <p style="margin-top:12px;font-size:12.5px;color:var(--ink2)">Roles — <b>admin</b>: everything · <b>management</b>: sees all teams · <b>internal</b>: only the teams they are members of · <b>partner / freelancer</b>: only projects they're added to + their own requests.</p>`;
+      <p style="margin-top:12px;font-size:12.5px;color:var(--ink2)">Roles — <b>admin</b>: everything · <b>management</b>: sees all workspaces · <b>internal</b>: only the workspaces they are members of · <b>partner / freelancer</b>: only projects they're added to + their own requests.</p>`;
   }
   if(adminTab==='workspaces'){
-    B.innerHTML = `<div class="card"><table class="tbl"><thead><tr><th>Team</th><th>Description</th><th>Projects</th><th></th></tr></thead><tbody>
+    B.innerHTML = `<div class="card"><table class="tbl"><thead><tr><th>Workspace</th><th>Description</th><th>Projects</th><th></th></tr></thead><tbody>
       ${S.workspaces.map(w=>`<tr><td style="font-weight:600"><span class="ws-dot" style="display:inline-block;background:${w.color}"></span> ${esc(w.name)}</td>
         <td style="color:var(--ink2)">${esc(w.description)}</td>
         <td>${S.projects.filter(p=>p.workspace_id===w.id).length}</td>
         <td style="text-align:right"><button class="btn btn-ghost btn-sm" onclick="teamMembersModal('${w.id}')">Members</button></td></tr>`).join('')}</tbody></table></div>
-      <p style="margin-top:12px;font-size:12.5px;color:var(--ink2)">Internal staff only see teams they are members of. Admin and Management see everything.</p>`;
+      <p style="margin-top:12px;font-size:12.5px;color:var(--ink2)">Internal staff only see workspaces they are members of. Admin and Management see everything.</p>`;
   }
   if(adminTab==='brands'){
     const brs = S.brandsList||[];
@@ -1343,13 +1343,13 @@ async function resetPassword(uid, name){
   }catch(e){ toast(e.message, true); }
 }
 function newWorkspaceModal(){
-  const m = modal(`<div class="modal-head"><h2>New team</h2><button class="x" onclick="closeModals()">✕</button></div>
+  const m = modal(`<div class="modal-head"><h2>New workspace</h2><button class="x" onclick="closeModals()">✕</button></div>
     <div class="modal-body">
-      <label>Team name <span class="req">*</span></label><input id="nw-name" placeholder="e.g. Livestream Squad">
+      <label>Workspace name <span class="req">*</span></label><input id="nw-name" placeholder="e.g. Livestream Squad">
       <label>Description</label><input id="nw-desc">
-      <p style="margin-top:12px;font-size:12.5px;color:var(--ink2)">You'll be added as a member automatically. Add colleagues from the team page → Members.</p>
+      <p style="margin-top:12px;font-size:12.5px;color:var(--ink2)">You'll be added as a member automatically. Add colleagues from the workspace page → Members.</p>
     </div>
-    <div class="modal-foot"><button class="btn btn-ghost" onclick="closeModals()">Cancel</button><button class="btn btn-primary" id="nw-save">Create team</button></div>`);
+    <div class="modal-foot"><button class="btn btn-ghost" onclick="closeModals()">Cancel</button><button class="btn btn-primary" id="nw-save">Create workspace</button></div>`);
   m.querySelector('#nw-save').onclick = async ()=>{
     const name=m.querySelector('#nw-name').value.trim(); if(!name) return toast('Name required', true);
     const colors=['#0F766E','#3E5C95','#8C5A3B','#5A6B4F','#6E56B8','#A8770E','#7D3C55'];
@@ -1357,7 +1357,7 @@ function newWorkspaceModal(){
       description:m.querySelector('#nw-desc').value.trim(), color:colors[Math.floor(Math.random()*colors.length)],
       position:S.workspaces.length+1}).select().single();
     if(error) return toast(error.message, true);
-    closeModals(); toast('Team created'); await refreshCore(); renderSidebar();
+    closeModals(); toast('Workspace created'); await refreshCore(); renderSidebar();
     if(S.route.view==='admin') renderAdmin(); else if(data) location.hash='#/ws/'+data.id;
   };
 }
