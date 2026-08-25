@@ -359,13 +359,31 @@ async function _boot(){
   navigate(location.hash || '#/home');
 }
 async function refreshCore(){
-  const [pr, ws, pj, rt] = await Promise.all([
+  const [pr, ws, pj, rt, br] = await Promise.all([
     db.from('profiles').select('*').order('full_name'),
     db.from('workspaces').select('*').order('position'),
     db.from('projects').select('*').order('created_at'),
     db.from('request_types').select('*').eq('active', true).order('position'),
+    db.from('brands').select('*').order('name'),
   ]);
   S.profiles = pr.data||[]; S.workspaces = ws.data||[]; S.projects = pj.data||[]; S.requestTypes = rt.data||[];
+  S.brandsList = br.data||[];
+}
+async function uploadAttachments(entity_type, entity_id, fileInput){
+  const files = fileInput && fileInput.files ? [...fileInput.files] : [];
+  let ok = 0;
+  for(const f of files){
+    const path = entity_type + '/' + entity_id + '/' + Date.now() + '_' + f.name.replace(/[^\w.\-]+/g,'_');
+    const {error} = await db.storage.from('attachments').upload(path, f);
+    if(error){ toast('Upload failed: ' + error.message, true); continue; }
+    await db.from('attachments').insert({entity_type, entity_id, file_name:f.name, storage_path:path, size_bytes:f.size, uploaded_by:S.me.id});
+    ok++;
+  }
+  return ok;
+}
+function attLink(a){
+  const {data} = db.storage.from('attachments').getPublicUrl(a.storage_path);
+  return `<a href="${data.publicUrl}" target="_blank" rel="noopener" style="display:inline-flex;align-items:center;gap:5px;margin:2px 10px 2px 0;font-size:12.5px">📎 ${esc(a.file_name)}</a>`;
 }
 
 /* ================= ROUTER ================= */
@@ -487,7 +505,7 @@ function requestTable(reqs){
     ${reqs.map(r=>{
       const rt=S.requestTypes.find(x=>x.id===r.request_type_id);
       return `<tr class="rowlink" onclick="openRequest('${r.id}')">
-        <td style="font-weight:600">${esc(r.title)}</td>
+        <td style="font-weight:600">${r.ticket_no? `<span style="color:var(--ink3);font-weight:700;font-size:11.5px;margin-right:6px">WO-${r.ticket_no}</span>`:''}${esc(r.title)}</td>
         <td style="color:var(--ink2)">${rt? rt.icon+' '+esc(rt.name):'—'}</td>
         <td>${reqStatusChip(r.status)}</td>
         <td>${slaBadge(r.sla_due_at, r.status)}</td>
@@ -702,10 +720,11 @@ function assigneeOptions(projectId, selected){
     `<option value="${p.id}" ${p.id===selected?'selected':''}>${esc(p.full_name)} (${p.role})</option>`).join('');
 }
 async function openTask(id){
-  const [{data:t}, {data:chk}, {data:comments}] = await Promise.all([
+  const [{data:t}, {data:chk}, {data:comments}, {data:atts}] = await Promise.all([
     db.from('tasks').select('*').eq('id',id).single(),
     db.from('task_checklist').select('*').eq('task_id',id).order('position'),
     db.from('comments').select('*').eq('entity_type','task').eq('entity_id',id).order('created_at'),
+    db.from('attachments').select('*').eq('entity_type','task').eq('entity_id',id).order('created_at'),
   ]);
   if(!t) return toast('Task not found', true);
   const p = projById(t.project_id);
@@ -726,6 +745,10 @@ async function openTask(id){
       <div id="tv-chk">${(chk||[]).map(c=>chkRow(c)).join('')}</div>
       <div style="display:flex;gap:8px;margin-top:6px"><input id="tv-chk-new" placeholder="Add checklist item…" style="flex:1">
         <button class="btn btn-ghost btn-sm" id="tv-chk-add">Add</button></div>
+      <label>Attachments</label>
+      <div id="tv-atts">${(atts||[]).length? atts.map(attLink).join('') : '<span style="color:var(--ink3);font-size:13px">No files attached</span>'}</div>
+      <div style="display:flex;gap:8px;margin-top:8px;align-items:center"><input id="tv-files" type="file" multiple style="flex:1">
+        <button class="btn btn-ghost btn-sm" id="tv-files-add">Upload</button></div>
       <label>Comments</label>
       <div id="tv-comments">${(comments||[]).map(commentRow).join('')||'<div style="color:var(--ink3);font-size:13px">No comments yet</div>'}</div>
       <div style="display:flex;gap:8px;margin-top:10px"><input id="tv-comment" placeholder="Write a comment…" style="flex:1">
@@ -752,6 +775,11 @@ async function openTask(id){
     if(error) return toast(error.message, true);
     m.querySelector('#tv-chk').insertAdjacentHTML('beforeend', chkRow(data));
     m.querySelector('#tv-chk-new').value='';
+  };
+  m.querySelector('#tv-files-add').onclick = async ()=>{
+    const n = await uploadAttachments('task', t.id, m.querySelector('#tv-files'));
+    if(n){ toast(n + ' file' + (n>1?'s':'') + ' uploaded'); const {data:na} = await db.from('attachments').select('*').eq('entity_type','task').eq('entity_id',t.id).order('created_at');
+      m.querySelector('#tv-atts').innerHTML = (na||[]).map(attLink).join(''); m.querySelector('#tv-files').value=''; }
   };
   m.querySelector('#tv-comment-add').onclick = async ()=>{
     const body = m.querySelector('#tv-comment').value.trim(); if(!body) return;
@@ -823,7 +851,13 @@ function fieldInput(f){
   const req = f.required? '<span class="req">*</span>':'';
   if(f.type==='textarea') return `<label>${esc(f.label)} ${req}</label><textarea data-fk="${f.key}" rows="3"></textarea>`;
   if(f.type==='select') return `<label>${esc(f.label)} ${req}</label><select data-fk="${f.key}"><option value="">— select —</option>${(f.options||[]).map(o=>`<option>${esc(o)}</option>`).join('')}</select>`;
+  if(f.type==='brand') return `<label>${esc(f.label)} ${req}</label><select data-fk="${f.key}"><option value="">— select brand —</option>${(S.brandsList||[]).filter(b=>b.active).map(b=>`<option>${esc(b.name)}</option>`).join('')}</select>`;
+  if(f.type==='multiselect') return `<label>${esc(f.label)} ${req}</label><div style="display:flex;flex-wrap:wrap;gap:4px 16px;border:1px solid var(--line);border-radius:8px;padding:9px 11px;background:#fff">${(f.options||[]).map(o=>`<label style="display:inline-flex;align-items:center;gap:6px;margin:0;font-weight:500;color:var(--ink);cursor:pointer"><input type="checkbox" data-fkm="${f.key}" value="${esc(o)}" style="width:15px;height:15px;accent-color:var(--accent)">${esc(o)}</label>`).join('')}</div>`;
   return `<label>${esc(f.label)} ${req}</label><input data-fk="${f.key}" type="${f.type==='number'?'number':f.type==='date'?'date':'text'}">`;
+}
+function readField(m, f){
+  if(f.type==='multiselect') return [...m.querySelectorAll(`input[data-fkm="${f.key}"]:checked`)].map(i=>i.value).join(', ');
+  return m.querySelector(`[data-fk="${f.key}"]`)?.value?.trim()||'';
 }
 function newRequestForm(rtId){
   closeModals();
@@ -833,6 +867,7 @@ function newRequestForm(rtId){
       <label>Request title <span class="req">*</span></label><input id="rq-title" placeholder="Short summary of this request">
       ${(rt.fields||[]).map(fieldInput).join('')}
       <label>Priority</label><select id="rq-prio">${PRIORITIES.map(x=>`<option value="${x.k}" ${x.k==='normal'?'selected':''}>${x.label}</option>`).join('')}</select>
+      <label>Attachments (price lists, approvals, briefs…)</label><input id="rq-files" type="file" multiple>
       <p style="margin-top:14px;font-size:12px;color:var(--ink3)">Response SLA: ${rt.sla_hours} hours${rt.approval_required? ' · This request requires approval before work starts.':''}</p>
     </div>
     <div class="modal-foot"><button class="btn btn-ghost" onclick="closeModals()">Cancel</button><button class="btn btn-primary" id="rq-save">Submit request</button></div>`, true);
@@ -840,29 +875,32 @@ function newRequestForm(rtId){
     const title = m.querySelector('#rq-title').value.trim(); if(!title) return toast('Title is required', true);
     const data = {};
     for(const f of (rt.fields||[])){
-      const v = m.querySelector(`[data-fk="${f.key}"]`)?.value?.trim()||'';
+      const v = readField(m, f);
       if(f.required && !v) return toast(`"${f.label}" is required`, true);
       data[f.key]=v;
     }
+    const btn = m.querySelector('#rq-save'); btn.disabled = true; btn.textContent = 'Submitting…';
     const {data:req, error} = await db.from('requests').insert({
       request_type_id:rt.id, title, data, priority:m.querySelector('#rq-prio').value, submitted_by:S.me.id
     }).select().single();
-    if(error) return toast(error.message, true);
-    closeModals(); toast('Request submitted 🎉'); logActivity('request', req.id, 'submitted', {title});
+    if(error){ btn.disabled=false; btn.textContent='Submit request'; return toast(error.message, true); }
+    const nUp = await uploadAttachments('request', req.id, m.querySelector('#rq-files'));
+    closeModals(); toast('Request WO-' + (req.ticket_no||'') + ' submitted 🎉' + (nUp? ' ('+nUp+' file'+(nUp>1?'s':'')+' attached)':'')); logActivity('request', req.id, 'submitted', {title});
     if(S.route.view==='requests') renderRequests(); else renderHome();
   };
 }
 async function openRequest(id){
-  const [{data:r}, {data:comments}, {data:apprs}] = await Promise.all([
+  const [{data:r}, {data:comments}, {data:apprs}, {data:atts}] = await Promise.all([
     db.from('requests').select('*').eq('id',id).single(),
     db.from('comments').select('*').eq('entity_type','request').eq('entity_id',id).order('created_at'),
     db.from('approvals').select('*').eq('request_id',id).order('created_at'),
+    db.from('attachments').select('*').eq('entity_type','request').eq('entity_id',id).order('created_at'),
   ]);
   if(!r) return toast('Request not found', true);
   const rt = S.requestTypes.find(x=>x.id===r.request_type_id);
   const staff = isStaff();
   const canEditStatus = staff || r.assigned_to===S.me.id;
-  const m = modal(`<div class="modal-head"><h2>${rt? rt.icon:''} ${esc(r.title)}</h2>${reqStatusChip(r.status)}<button class="x" onclick="closeModals()">✕</button></div>
+  const m = modal(`<div class="modal-head"><h2>${rt? rt.icon:''} ${r.ticket_no? `<span style="color:var(--ink3);font-size:13px;font-weight:700">WO-${r.ticket_no}</span> `:''}${esc(r.title)}</h2>${reqStatusChip(r.status)}<button class="x" onclick="closeModals()">✕</button></div>
     <div class="modal-body">
       <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">
         ${prioChip(r.priority)} ${slaBadge(r.sla_due_at, r.status)}
@@ -890,6 +928,10 @@ async function openRequest(id){
         <button class="btn btn-ghost btn-sm" onclick="requestApprovalModal('${r.id}','${esc(r.title).replace(/'/g,"\\'")}')">🙋 Ask approval</button>
         ${!r.project_id? `<button class="btn btn-ghost btn-sm" onclick="convertToTask('${r.id}')">📌 Convert to task</button>`:'<span class="chip" style="background:var(--green-soft);color:var(--green)">Linked to project task</span>'}
       </div>`:''}
+      <label>Attachments</label>
+      <div id="rv-atts">${(atts||[]).length? atts.map(attLink).join('') : '<span style="color:var(--ink3);font-size:13px">No files attached</span>'}</div>
+      <div style="display:flex;gap:8px;margin-top:8px;align-items:center"><input id="rv-files" type="file" multiple style="flex:1">
+        <button class="btn btn-ghost btn-sm" id="rv-files-add">Upload</button></div>
       <label>Comments</label>
       <div id="rv-comments">${(comments||[]).map(commentRow).join('')||'<div style="color:var(--ink3);font-size:13px">No comments yet</div>'}</div>
       <div style="display:flex;gap:8px;margin-top:10px"><input id="rv-comment" placeholder="Write a comment…" style="flex:1">
@@ -915,6 +957,11 @@ async function openRequest(id){
     closeModals(); toast('Request cancelled');
     if(S.route.view==='requests') renderRequests(); else renderHome();
   });
+  m.querySelector('#rv-files-add').onclick = async ()=>{
+    const n = await uploadAttachments('request', r.id, m.querySelector('#rv-files'));
+    if(n){ toast(n + ' file' + (n>1?'s':'') + ' uploaded'); const {data:na} = await db.from('attachments').select('*').eq('entity_type','request').eq('entity_id',r.id).order('created_at');
+      m.querySelector('#rv-atts').innerHTML = (na||[]).map(attLink).join(''); m.querySelector('#rv-files').value=''; }
+  };
   m.querySelector('#rv-comment-add').onclick = async ()=>{
     const body = m.querySelector('#rv-comment').value.trim(); if(!body) return;
     const {data, error} = await db.from('comments').insert({entity_type:'request', entity_id:r.id, author_id:S.me.id, body}).select().single();
@@ -1094,6 +1141,7 @@ async function renderAdmin(){
       <div class="tabs">
         <button class="tab ${adminTab==='users'?'active':''}" onclick="adminTab='users';renderAdmin()">Users</button>
         <button class="tab ${adminTab==='workspaces'?'active':''}" onclick="adminTab='workspaces';renderAdmin()">Workspaces</button>
+        <button class="tab ${adminTab==='brands'?'active':''}" onclick="adminTab='brands';renderAdmin()">Brands</button>
         <button class="tab ${adminTab==='types'?'active':''}" onclick="adminTab='types';renderAdmin()">Request types</button>
       </div>
       <div class="actions">${adminTab==='users'? '<button class="btn btn-primary" onclick="inviteUserModal()">＋ Add user</button>':''}
@@ -1119,6 +1167,28 @@ async function renderAdmin(){
       ${S.workspaces.map(w=>`<tr><td style="font-weight:600"><span class="ws-dot" style="display:inline-block;background:${w.color}"></span> ${w.icon} ${esc(w.name)}</td>
         <td style="color:var(--ink2)">${esc(w.description)}</td>
         <td>${S.projects.filter(p=>p.workspace_id===w.id).length}</td></tr>`).join('')}</tbody></table></div>`;
+  }
+  if(adminTab==='brands'){
+    const brs = S.brandsList||[];
+    B.innerHTML = `<div style="display:flex;gap:8px;margin-bottom:14px;max-width:520px">
+        <input id="nb-name" placeholder="New brand name" style="flex:1">
+        <input id="nb-group" placeholder="Group (optional)" style="width:140px">
+        <button class="btn btn-primary btn-sm" id="nb-add">Add</button></div>
+      <div class="card"><table class="tbl"><thead><tr><th>Brand</th><th>Group</th><th>Platforms</th><th>Status</th><th></th></tr></thead><tbody>
+      ${brs.map(b=>`<tr>
+        <td style="font-weight:600">${esc(b.name)}</td>
+        <td style="color:var(--ink2)">${esc(b.brand_group||'')}</td>
+        <td style="color:var(--ink2)">${(b.platforms||[]).map(esc).join(', ')}</td>
+        <td><span class="chip" style="background:${b.active?'var(--green-soft);color:var(--green)':'var(--gray-soft);color:var(--ink3)'}">${b.active?'active':'offboarded'}</span></td>
+        <td style="text-align:right"><button class="btn btn-ghost btn-sm" onclick="toggleBrand('${b.id}', ${!b.active})">${b.active?'Offboard':'Reactivate'}</button></td>
+      </tr>`).join('')}</tbody></table></div>
+      <p style="margin-top:12px;font-size:12.5px;color:var(--ink2)">${brs.filter(b=>b.active).length} active · ${brs.filter(b=>!b.active).length} offboarded. Seeded from the CS brand master list. Only active brands appear in request forms.</p>`;
+    B.querySelector('#nb-add').onclick = async ()=>{
+      const name = B.querySelector('#nb-name').value.trim(); if(!name) return toast('Brand name required', true);
+      const {error} = await db.from('brands').insert({name, brand_group:B.querySelector('#nb-group').value.trim()});
+      if(error) return toast(error.message, true);
+      toast('Brand added'); await refreshCore(); renderAdmin();
+    };
   }
   if(adminTab==='types'){
     B.innerHTML = `<div class="card"><table class="tbl"><thead><tr><th>Type</th><th>SLA</th><th>Approval</th><th>Fields</th><th>Active</th></tr></thead><tbody>
@@ -1158,6 +1228,11 @@ function inviteUserModal(){
       closeModals(); toast('User created ✅'); await refreshCore(); renderAdmin();
     }catch(e){ toast(e.message, true); btn.disabled=false; btn.textContent='Create account'; }
   };
+}
+async function toggleBrand(id, active){
+  const {error} = await db.from('brands').update({active}).eq('id',id);
+  if(error) return toast(error.message, true);
+  toast(active?'Brand reactivated':'Brand offboarded'); await refreshCore(); renderAdmin();
 }
 async function setRole(uid, role){
   const {error} = await db.from('profiles').update({role}).eq('id',uid);
