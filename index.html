@@ -194,21 +194,29 @@ table.tbl{width:100%;border-collapse:collapse;font-size:13.5px}
 <div id="login-screen">
   <div class="login-card">
     <div class="logo-mark">C</div>
-    <h1>CREA WorkOS</h1>
-    <p>Sign in with your CREA account</p>
+    <h1 id="li-title">WorkOS</h1>
+    <p id="li-sub">Sign in to your workspace</p>
+    <div id="su-fields" class="hidden">
+      <label>Company name</label>
+      <input id="su-company" placeholder="Your company">
+      <label>Your name</label>
+      <input id="su-name" placeholder="Full name">
+    </div>
     <label>Email</label>
-    <input id="li-email" type="email" placeholder="you@crea.asia" autocomplete="username">
+    <input id="li-email" type="email" placeholder="you@company.com" autocomplete="username">
     <label>Password</label>
     <input id="li-pass" type="password" placeholder="••••••••" autocomplete="current-password">
     <div class="login-err" id="li-err"></div>
     <button class="btn btn-primary" id="li-btn" style="width:100%;justify-content:center;margin-top:18px;padding:11px">Sign in</button>
-    <p style="margin-top:16px;font-size:12px;color:var(--ink3)">No account? Ask your CREA admin for an invite.</p>
+    <p style="margin-top:16px;font-size:12.5px;color:var(--ink3);text-align:center">
+      <span id="li-toggle-wrap">New company? <a href="#" id="li-toggle">Start a free 14-day trial</a></span>
+    </p>
   </div>
 </div>
 
 <div id="app" class="hidden">
   <div id="sidebar">
-    <div class="logo"><div class="logo-mark">C</div><div><b>CREA WorkOS</b><span>Operations</span></div></div>
+    <div class="logo"><div class="logo-mark">W</div><div><b>WorkOS</b><span id="logo-co">Operations</span></div></div>
     <div id="nav-main"></div>
     <div class="nav-section" id="ws-section-title" style="display:flex;align-items:center;justify-content:space-between">Teams</div>
     <div id="nav-ws"></div>
@@ -219,6 +227,7 @@ table.tbl{width:100%;border-collapse:collapse;font-size:13.5px}
       <div class="crumb" id="crumb">Home</div>
       <div class="topbar-right" id="topbar-actions"></div>
     </div>
+    <div id="ten-banner" class="hidden" style="padding:8px 24px;font-size:12.5px;font-weight:600;background:var(--amber-soft);color:var(--amber);border-bottom:1px solid var(--line)"></div>
     <div id="content"></div>
   </div>
 </div>
@@ -325,15 +334,41 @@ async function logActivity(entity_type, entity_id, action, detail={}){
 }
 
 /* ================= AUTH ================= */
+let signupMode = false;
+function setAuthMode(su){
+  signupMode = su;
+  $('#su-fields').classList.toggle('hidden', !su);
+  $('#li-title').textContent = su? 'Start your trial' : 'WorkOS';
+  $('#li-sub').textContent = su? '14 days free · no card required' : 'Sign in to your workspace';
+  $('#li-btn').textContent = su? 'Create company' : 'Sign in';
+  $('#li-toggle-wrap').innerHTML = su? 'Already have an account? <a href="#" id="li-toggle">Sign in</a>'
+                                     : 'New company? <a href="#" id="li-toggle">Start a free 14-day trial</a>';
+  $('#li-toggle').addEventListener('click', e=>{ e.preventDefault(); setAuthMode(!signupMode); });
+}
 async function signIn(){
   const email=$('#li-email').value.trim(), pass=$('#li-pass').value;
   const errBox=$('#li-err'); errBox.style.display='none';
   if(!email||!pass) return;
-  $('#li-btn').disabled=true; $('#li-btn').textContent='Signing in…';
-  const {error} = await db.auth.signInWithPassword({email, password:pass});
-  $('#li-btn').disabled=false; $('#li-btn').textContent='Sign in';
-  if(error){ errBox.textContent = error.message==='Invalid login credentials' ? 'Wrong email or password.' : error.message; errBox.style.display='block'; }
+  const btn=$('#li-btn'); btn.disabled=true;
+  try{
+    if(signupMode){
+      const company_name=$('#su-company').value.trim(), full_name=$('#su-name').value.trim();
+      if(!company_name||!full_name) throw new Error('Company name and your name are required');
+      if(pass.length<8) throw new Error('Password must be at least 8 characters');
+      btn.textContent='Creating your workspace…';
+      const res = await fetch(ADMIN_API+'/signup', {method:'POST',
+        headers:{'Content-Type':'application/json','apikey':SUPABASE_ANON,'Authorization':'Bearer '+SUPABASE_ANON},
+        body:JSON.stringify({company_name, full_name, email, password:pass})});
+      const out = await res.json();
+      if(!res.ok) throw new Error(out.error||'Signup failed');
+    }
+    btn.textContent='Signing in…';
+    const {error} = await db.auth.signInWithPassword({email, password:pass});
+    if(error) throw new Error(error.message==='Invalid login credentials' ? 'Wrong email or password.' : error.message);
+  }catch(e){ errBox.textContent=e.message; errBox.style.display='block'; }
+  btn.disabled=false; btn.textContent = signupMode? 'Create company':'Sign in';
 }
+$('#li-toggle').addEventListener('click', e=>{ e.preventDefault(); setAuthMode(!signupMode); });
 $('#li-btn').addEventListener('click', signIn);
 $('#li-pass').addEventListener('keydown', e=>{ if(e.key==='Enter') signIn(); });
 $('#li-email').addEventListener('keydown', e=>{ if(e.key==='Enter') signIn(); });
@@ -352,24 +387,41 @@ async function boot(){
 async function _boot(){
   const {data:me, error} = await db.from('profiles').select('*').eq('id', S.session.user.id).single();
   if(error || !me){ toast('Could not load your profile', true); return; }
-  if(!me.active){ await db.auth.signOut(); toast('Your account is awaiting activation by a CREA admin.', true); return; }
+  if(!me.active || !me.company_id){ await db.auth.signOut(); toast('Your account is awaiting activation by an admin.', true); return; }
   S.me = me;
   await refreshCore();
+  if(S.company && ['suspended','cancelled'].includes(S.company.status) && !me.platform_admin){
+    await db.auth.signOut();
+    toast('This company subscription is inactive. Contact support to reactivate.', true);
+    return;
+  }
   $('#login-screen').classList.add('hidden');
   $('#app').classList.remove('hidden');
+  const b = $('#ten-banner');
+  if(S.company && S.company.status==='trial' && S.company.trial_ends_at){
+    const left = Math.max(0, Math.ceil((new Date(S.company.trial_ends_at)-Date.now())/86400000));
+    b.textContent = 'Free trial — ' + left + ' day' + (left===1?'':'s') + ' left';
+    b.classList.remove('hidden');
+  } else if(S.company && S.company.status==='past_due'){
+    b.textContent = 'Payment past due — please settle the subscription to avoid interruption';
+    b.classList.remove('hidden');
+  } else b.classList.add('hidden');
   renderSidebar();
   navigate(location.hash || '#/home');
 }
 async function refreshCore(){
-  const [pr, ws, pj, rt, br] = await Promise.all([
+  const [pr, ws, pj, rt, br, co] = await Promise.all([
     db.from('profiles').select('*').order('full_name'),
     db.from('workspaces').select('*').order('position'),
     db.from('projects').select('*').order('created_at'),
     db.from('request_types').select('*').eq('active', true).order('position'),
     db.from('brands').select('*').order('name'),
+    db.from('companies').select('*').order('created_at'),
   ]);
   S.profiles = pr.data||[]; S.workspaces = ws.data||[]; S.projects = pj.data||[]; S.requestTypes = rt.data||[];
   S.brandsList = br.data||[];
+  S.allCompanies = co.data||[];
+  S.company = S.allCompanies.find(c=>c.id===S.me?.company_id) || null;
 }
 async function uploadAttachments(entity_type, entity_id, fileInput){
   const files = fileInput && fileInput.files ? [...fileInput.files] : [];
@@ -398,7 +450,7 @@ function navigate(hash){
   S.route = {view, id:parts[1]};
   renderSidebar();
   const C = $('#content'); C.scrollTop=0;
-  const map = {home:renderHome, ws:renderWorkspace, project:renderProject, requests:renderRequests, approvals:renderApprovals, dashboard:renderDashboard, admin:renderAdmin};
+  const map = {home:renderHome, ws:renderWorkspace, project:renderProject, requests:renderRequests, approvals:renderApprovals, dashboard:renderDashboard, admin:renderAdmin, platform:renderPlatform};
   (map[view]||renderHome)(parts[1]);
 }
 
@@ -411,6 +463,7 @@ function renderSidebar(){
     {h:'#/approvals', label:'Approvals', show:true, badge:'appr'},
     {h:'#/dashboard', label:'Dashboard', show:isStaff()},
     {h:'#/admin', label:'Admin', show:isAdmin()},
+    {h:'#/platform', label:'Platform', show:!!(S.me&&S.me.platform_admin)},
   ];
   $('#nav-main').innerHTML = '<div class="nav-section">Menu</div>' + items.filter(i=>i.show).map(i=>
     `<div class="nav-item ${('#/'+v)===i.h?'active':''}" onclick="location.hash='${i.h}'">${i.label}<span class="count hidden" id="badge-${i.badge||''}"></span></div>`).join('');
@@ -430,6 +483,7 @@ function renderSidebar(){
       <span class="ws-dot" style="background:${w.color}"></span><span class="ws-name">${esc(w.name)}</span>
     </div>`).join('') || (isStaff()? '<div style="padding:4px 22px;font-size:12px;color:var(--ink3)">No teams yet — press +</div>':'');
 
+  const lc = $('#logo-co'); if(lc && S.company) lc.textContent = S.company.name;
   const icoKey = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="7.5" cy="15.5" r="4.5"/><path d="m21 2-9.6 9.6"/><path d="m15.5 7.5 3 3L22 7l-3-3"/></svg>';
   const icoOut = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>';
   $('#sidebar-user').innerHTML = `${avatar(S.me)}
@@ -1306,6 +1360,49 @@ function newWorkspaceModal(){
     closeModals(); toast('Team created'); await refreshCore(); renderSidebar();
     if(S.route.view==='admin') renderAdmin(); else if(data) location.hash='#/ws/'+data.id;
   };
+}
+
+/* ================= PLATFORM (SaaS console) ================= */
+async function renderPlatform(){
+  if(!S.me.platform_admin){ location.hash='#/home'; return; }
+  setTopbar('Platform');
+  const C=$('#content'); C.innerHTML='<div class="empty">Loading…</div>';
+  const [{data:cos}, {data:pf}] = await Promise.all([
+    db.from('companies').select('*').order('created_at'),
+    db.from('profiles').select('id, company_id, active'),
+  ]);
+  const counts = {};
+  (pf||[]).forEach(p=>{ if(p.company_id && p.active){ counts[p.company_id]=(counts[p.company_id]||0)+1; } });
+  const PLANS=['internal','trial','starter','pro','enterprise'];
+  const STATS=['trial','active','past_due','suspended','cancelled'];
+  C.innerHTML = `
+    <div class="page-head"><div><h1>Platform</h1><div class="sub">Customer companies, plans and subscription status</div></div></div>
+    <div class="stat-row">
+      <div class="stat"><div class="n accent">${(cos||[]).length}</div><div class="l">Companies</div></div>
+      <div class="stat"><div class="n green">${(cos||[]).filter(c=>c.status==='active').length}</div><div class="l">Active subscriptions</div></div>
+      <div class="stat"><div class="n amber">${(cos||[]).filter(c=>c.status==='trial').length}</div><div class="l">On trial</div></div>
+      <div class="stat"><div class="n">${(pf||[]).filter(p=>p.active).length}</div><div class="l">Total active users</div></div>
+    </div>
+    <div class="card"><table class="tbl"><thead><tr><th>Company</th><th>Plan</th><th>Status</th><th>Seats</th><th>Users</th><th>Trial ends</th><th></th></tr></thead><tbody>
+    ${(cos||[]).map(c=>`<tr id="co-${c.id}">
+      <td style="font-weight:600">${esc(c.name)}<div style="font-size:11px;color:var(--ink3)">${esc(c.slug||'')} · since ${fmtDate(c.created_at)}</div></td>
+      <td><select data-k="plan" style="width:auto;padding:5px 8px">${PLANS.map(p=>`<option ${p===c.plan?'selected':''}>${p}</option>`).join('')}</select></td>
+      <td><select data-k="status" style="width:auto;padding:5px 8px">${STATS.map(s=>`<option ${s===c.status?'selected':''}>${s}</option>`).join('')}</select></td>
+      <td><input data-k="seats" type="number" value="${c.seats}" style="width:70px;padding:5px 8px"></td>
+      <td>${counts[c.id]||0}</td>
+      <td style="color:var(--ink2)">${c.trial_ends_at? fmtDate(c.trial_ends_at):'—'}</td>
+      <td style="text-align:right"><button class="btn btn-ghost btn-sm" onclick="savePlatformCo('${c.id}')">Save</button></td>
+    </tr>`).join('')}</tbody></table></div>
+    <p style="margin-top:12px;font-size:12.5px;color:var(--ink2)">Billing is manual for now — set plan/status here when a customer pays (or stops paying). Suspended and cancelled companies are locked out at sign-in. Stripe checkout can be wired in later.</p>`;
+}
+async function savePlatformCo(id){
+  const row = document.getElementById('co-'+id); if(!row) return;
+  const plan = row.querySelector('select[data-k=plan]').value;
+  const status = row.querySelector('select[data-k=status]').value;
+  const seats = parseInt(row.querySelector('input[data-k=seats]').value)||10;
+  const {error} = await db.from('companies').update({plan, status, seats}).eq('id',id);
+  if(error) return toast(error.message, true);
+  toast('Company updated');
 }
 
 /* ================= INIT ================= */
