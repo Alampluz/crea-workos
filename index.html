@@ -114,6 +114,34 @@ table.tv{border-collapse:separate;border-spacing:0;font-size:13.5px;min-width:10
 .tv-addcol{padding:6px 12px;font-weight:700;color:var(--ink3);cursor:pointer;white-space:nowrap}
 .tv-addcol:hover{color:var(--accent)}
 
+/* grouped table view (monday-style sections) */
+.tv-group{margin-bottom:22px}
+.tv-group-head{display:flex;align-items:center;gap:10px;margin-bottom:8px}
+.tv-group-head .bar{width:4px;height:18px;border-radius:2px}
+.tv-group-head h3{font-size:14.5px;font-weight:700}
+.tv-group-head .cnt{font-size:12px;color:var(--ink3);font-weight:600}
+.tv-group-head .g-edit{font-size:12px;color:var(--ink3);cursor:pointer;font-weight:600;opacity:0;transition:opacity .12s}
+.tv-group-head:hover .g-edit{opacity:1}
+.tv-group-head .g-edit:hover{color:var(--accent)}
+.tv tr.tv-row{cursor:grab}
+.tv tr.tv-row.dragging{opacity:.4}
+.tv-wrap.dragover{outline:2px solid var(--accent);outline-offset:-2px}
+.tv-addtask{padding:9px 12px;font-size:13px;font-weight:600;color:var(--ink3);cursor:pointer}
+.tv-addtask:hover{color:var(--accent)}
+.tv-addgroup{margin-top:4px;padding:9px 14px;font-weight:700;font-size:13.5px;color:var(--ink3);cursor:pointer;border:1px dashed var(--line);border-radius:10px;display:inline-block;background:#fff}
+.tv-addgroup:hover{color:var(--accent);border-color:var(--accent)}
+.tv .subchip{font-size:11.5px;font-weight:700;color:var(--ink3);background:var(--gray-soft);border-radius:6px;padding:2px 7px;margin-left:8px;white-space:nowrap}
+
+/* subtasks in task modal */
+.strow{display:grid;grid-template-columns:118px 1fr 110px 140px 128px 26px;gap:6px;align-items:center;margin-top:6px}
+.strow select,.strow input{padding:7px 9px;font-size:12.5px}
+.strow .del{color:var(--ink3);font-size:13px;padding:4px;border-radius:6px;cursor:pointer}
+.strow .del:hover{color:var(--red)}
+.prog{display:flex;align-items:center;gap:10px;margin:6px 0 2px}
+.prog-bar{flex:1;height:6px;background:var(--gray-soft);border-radius:3px;overflow:hidden}
+.prog-fill{height:100%;background:var(--accent);border-radius:3px;transition:width .2s}
+.prog-lbl{font-size:11.5px;font-weight:700;color:var(--ink3);white-space:nowrap}
+
 /* toast */
 #toasts{position:fixed;bottom:20px;right:20px;z-index:300;display:flex;flex-direction:column;gap:8px}
 .toast{background:#22242F;color:#fff;padding:11px 16px;border-radius:10px;font-size:13.5px;box-shadow:0 8px 30px rgba(0,0,0,.25);animation:pop .18s ease;max-width:340px}
@@ -747,10 +775,18 @@ async function renderProject(id){
   const {data:tasks, error} = await db.from('tasks').select('*').eq('project_id',id).order('position');
   if(error){ C.innerHTML=`<div class="card empty">${esc(error.message)}</div>`; return; }
   S._tasks = tasks||[];
+  S._subs = {};
+  if(S._tasks.length){
+    const {data:sc} = await db.from('subtasks').select('task_id,status').in('task_id', S._tasks.map(t=>t.id));
+    (sc||[]).forEach(s=>{ const o=S._subs[s.task_id]||(S._subs[s.task_id]={done:0,total:0}); o.total++; if(s.status==='done') o.done++; });
+  }
   if(boardMode==='table'){
-    const {data:fields, error:fe} = await db.from('project_fields').select('*').eq('project_id',id).order('position').order('created_at');
+    const [{data:fields, error:fe},{data:groups}] = await Promise.all([
+      db.from('project_fields').select('*').eq('project_id',id).order('position').order('created_at'),
+      db.from('project_groups').select('*').eq('project_id',id).order('position').order('created_at'),
+    ]);
     if(fe){ C.innerHTML=`<div class="card empty">${esc(fe.message)}</div>`; return; }
-    S._fields = fields||[];
+    S._fields = fields||[]; S._groups = groups||[];
     renderProjectTableView(id);
     return;
   }
@@ -774,6 +810,7 @@ function taskCard(t){
   return `<div class="tcard" draggable="true" data-id="${t.id}" onclick="openTask('${t.id}')">
     <div class="t">${esc(t.title)}</div>
     <div class="meta">${prioChip(t.priority)}${dueBadge(t.due_date, done)}
+      ${(S._subs||{})[t.id]?.total? `<span class="subchip" style="font-size:11px;font-weight:700;color:var(--ink3);background:var(--gray-soft);border-radius:6px;padding:1px 6px">${S._subs[t.id].done}/${S._subs[t.id].total}</span>`:''}
       ${t.tags?.length? t.tags.slice(0,2).map(g=>`<span class="chip" style="background:var(--purple-soft);color:var(--purple)">${esc(g)}</span>`).join(''):''}
       <span style="margin-left:auto">${avatar(prof(t.assignee_id), true)}</span></div></div>`;
 }
@@ -821,29 +858,110 @@ function tvCell(t, f){
   if(f.ftype==='checkbox') return `<input type="checkbox" ${v?'checked':''} ${h}>`;
   if(f.ftype==='select')   return `<select ${h}><option value=""></option>${(f.options||[]).map(o=>`<option ${v===o?'selected':''}>${esc(o)}</option>`).join('')}</select>`;
   if(f.ftype==='person')   return `<select ${h}><option value=""></option>${tvPeople().map(p=>`<option value="${p.id}" ${v===p.id?'selected':''}>${esc(p.full_name)}</option>`).join('')}</select>`;
+  if(f.ftype==='brand')    return `<select ${h}><option value=""></option>${(S.brandsList||[]).filter(b=>b.active!==false).map(b=>`<option ${v===b.name?'selected':''}>${esc(b.name)}</option>`).join('')}</select>`;
   return `<input type="text" value="${esc(v||'')}" ${h}>`;
 }
-function renderProjectTableView(id){
-  const C=$('#content');
-  const flds = S._fields||[];
-  const rows = [...S._tasks].sort((a,b)=> (a.position||0)-(b.position||0));
-  const head = `<tr>
+function tvHeadHTML(id, flds, showAddCol){
+  return `<tr>
     <th>Task</th><th>Status</th><th>Assignee</th><th>Due date</th><th>Priority</th>
     ${flds.map(f=>`<th class="${isStaff()?'col-edit':''}" ${isStaff()?`onclick="editColumnModal('${f.id}','${id}')" title="Edit column"`:''}>${esc(f.label)}</th>`).join('')}
-    ${isStaff()? `<th><span class="tv-addcol" onclick="addColumnModal('${id}')">＋ Column</span></th>`:''}
+    ${isStaff()? (showAddCol? `<th><span class="tv-addcol" onclick="addColumnModal('${id}')">＋ Column</span></th>`:'<th></th>'):''}
   </tr>`;
-  const body = rows.map(t=>`<tr>
-    <td class="tv-name"><div class="tv-open" onclick="openTask('${t.id}')">${esc(t.title)}</div></td>
+}
+function tvRowHTML(t, flds){
+  const sc = (S._subs||{})[t.id];
+  return `<tr class="tv-row" data-tid="${t.id}">
+    <td class="tv-name"><div class="tv-open" draggable="true" ondragstart="tvDragStart(event,'${t.id}')" ondragend="tvDragEnd(event)" onclick="openTask('${t.id}')">${esc(t.title)}${sc&&sc.total? `<span class="subchip">${sc.done}/${sc.total}</span>`:''}</div></td>
     <td><select onchange="tvCore('${t.id}','status',this.value)">${STATUSES.map(s=>`<option value="${s.k}" ${t.status===s.k?'selected':''}>${s.label}</option>`).join('')}</select></td>
     <td><select onchange="tvCore('${t.id}','assignee_id',this.value||null)"><option value="">Unassigned</option>${tvPeople().map(p=>`<option value="${p.id}" ${t.assignee_id===p.id?'selected':''}>${esc(p.full_name)}</option>`).join('')}</select></td>
     <td><input type="date" value="${t.due_date||''}" onchange="tvCore('${t.id}','due_date',this.value||null)"></td>
     <td><select onchange="tvCore('${t.id}','priority',this.value)">${PRIORITIES.map(p=>`<option value="${p.k}" ${t.priority===p.k?'selected':''}>${p.label}</option>`).join('')}</select></td>
     ${flds.map(f=>`<td>${tvCell(t,f)}</td>`).join('')}
     ${isStaff()? '<td></td>':''}
-  </tr>`).join('');
-  C.innerHTML = `<div class="tv-wrap"><table class="tv"><thead>${head}</thead><tbody>${
-    rows.length? body : `<tr><td colspan="${5+flds.length+(isStaff()?1:0)}"><div class="empty">No tasks yet</div></td></tr>`
-  }</tbody></table></div>`;
+  </tr>`;
+}
+function renderProjectTableView(id){
+  const C=$('#content');
+  const flds = S._fields||[], groups = S._groups||[];
+  const cols = 5+flds.length+(isStaff()?1:0);
+  const byPos = (a,b)=> (a.position||0)-(b.position||0);
+  const tableFor = (rows, gid, first)=> `<div class="tv-wrap" data-gid="${gid||''}" ondragover="tvDragOver(event)" ondragleave="tvDragLeave(event)" ondrop="tvDrop(event,'${id}')">
+    <table class="tv"><thead>${tvHeadHTML(id, flds, first)}</thead><tbody>
+      ${rows.length? rows.map(t=>tvRowHTML(t,flds)).join('') : `<tr><td colspan="${cols}"><div style="padding:14px;color:var(--ink3);font-size:13px">Drop tasks here, or add one below</div></td></tr>`}
+    </tbody></table>
+    <div class="tv-addtask" onclick="newTaskModal('${id}','todo',${gid?`'${gid}'`:'null'})">＋ Add task</div>
+  </div>`;
+  if(!groups.length){
+    const rows = [...S._tasks].sort(byPos);
+    C.innerHTML = tableFor(rows, null, true)
+      + (isStaff()? `<div class="tv-addgroup" onclick="addGroupModal('${id}')" style="margin-top:14px">＋ Add group</div>`:'');
+    return;
+  }
+  const gids = new Set(groups.map(g=>g.id));
+  const ungrouped = S._tasks.filter(t=>!t.group_id || !gids.has(t.group_id)).sort(byPos);
+  C.innerHTML = groups.map((g,i)=>{
+    const rows = S._tasks.filter(t=>t.group_id===g.id).sort(byPos);
+    return `<div class="tv-group">
+      <div class="tv-group-head"><span class="bar" style="background:${g.color}"></span>
+        <h3 style="color:${g.color}">${esc(g.name)}</h3><span class="cnt">${rows.length} task${rows.length===1?'':'s'}</span>
+        ${isStaff()? `<span class="g-edit" onclick="editGroupModal('${g.id}','${id}')">Edit</span>`:''}
+      </div>${tableFor(rows, g.id, i===0)}</div>`;
+  }).join('')
+  + (ungrouped.length? `<div class="tv-group">
+      <div class="tv-group-head"><span class="bar" style="background:#C6C9D8"></span><h3 style="color:var(--ink3)">No group</h3><span class="cnt">${ungrouped.length}</span></div>
+      ${tableFor(ungrouped, null, false)}</div>`:'')
+  + (isStaff()? `<div class="tv-addgroup" onclick="addGroupModal('${id}')">＋ Add group</div>`:'');
+}
+let tvDragId=null;
+function tvDragStart(e, tid){ tvDragId=tid; e.currentTarget.closest('tr')?.classList.add('dragging'); e.dataTransfer.effectAllowed='move'; }
+function tvDragEnd(e){ e.currentTarget.closest('tr')?.classList.remove('dragging'); }
+function tvDragOver(e){ e.preventDefault(); e.currentTarget.classList.add('dragover'); }
+function tvDragLeave(e){ e.currentTarget.classList.remove('dragover'); }
+async function tvDrop(e, pid){
+  e.preventDefault(); const wrap=e.currentTarget; wrap.classList.remove('dragover');
+  const gid = wrap.dataset.gid||null; if(!tvDragId) return;
+  const t=S._tasks.find(x=>x.id===tvDragId); tvDragId=null;
+  if(!t || (t.group_id||null)===gid) return;
+  const old=t.group_id||null; t.group_id=gid;
+  renderProjectTableView(pid);
+  const {error}=await db.from('tasks').update({group_id:gid}).eq('id',t.id);
+  if(error){ t.group_id=old; renderProjectTableView(pid); toast(error.message, true); }
+}
+function addGroupModal(pid){ groupModal(pid, null); }
+function editGroupModal(gid, pid){ const g=(S._groups||[]).find(x=>x.id===gid); if(g) groupModal(pid, g); }
+function groupModal(pid, g){
+  const palette=['#0F766E','#2273C9','#B97A08','#D6455B','#6C5CE7','#12915E','#E17055','#8E93A8'];
+  const cur = g? g.color : palette[(S._groups||[]).length % palette.length];
+  const m = modal(`<div class="modal-head"><h2>${g?'Edit group':'New group'}</h2><button class="x" onclick="closeModals()">✕</button></div>
+    <div class="modal-body">
+      <label>Group name <span class="req">*</span></label><input id="gr-name" value="${g? esc(g.name):''}" placeholder="e.g. In progress">
+      <label>Color</label>
+      <div id="gr-colors" style="display:flex;gap:8px;margin-top:4px">${palette.map(c=>
+        `<span data-c="${c}" onclick="[...this.parentNode.children].forEach(x=>x.style.outline='none');this.style.outline='2px solid var(--ink)';this.parentNode.dataset.sel=this.dataset.c"
+          style="width:22px;height:22px;border-radius:50%;background:${c};cursor:pointer;outline:${c===cur?'2px solid var(--ink)':'none'};outline-offset:2px"></span>`).join('')}</div>
+    </div>
+    <div class="modal-foot">
+      ${g? `<button class="btn btn-ghost" id="gr-del" style="color:var(--red)">Delete group</button>`:''}
+      <button class="btn btn-ghost" onclick="closeModals()">Cancel</button>
+      <button class="btn btn-primary" id="gr-save">${g?'Save':'Add group'}</button>
+    </div>`);
+  m.querySelector('#gr-colors').dataset.sel = cur;
+  if(g){
+    m.querySelector('#gr-del').onclick = async ()=>{
+      const {error}=await db.from('project_groups').delete().eq('id',g.id);
+      if(error) return toast(error.message, true);
+      closeModals(); toast('Group deleted (tasks kept)'); renderProject(pid);
+    };
+  }
+  m.querySelector('#gr-save').onclick = async ()=>{
+    const name=m.querySelector('#gr-name').value.trim(); if(!name) return toast('Group name is required', true);
+    const color=m.querySelector('#gr-colors').dataset.sel;
+    let error;
+    if(g){ ({error} = await db.from('project_groups').update({name, color}).eq('id',g.id)); }
+    else { ({error} = await db.from('project_groups').insert({project_id:pid, name, color, position:(S._groups||[]).length})); }
+    if(error) return toast(error.message, true);
+    closeModals(); toast(g?'Group updated':'Group added'); renderProject(pid);
+  };
 }
 async function tvCore(tid, field, val){
   const t=S._tasks.find(x=>x.id===tid); if(!t) return;
@@ -862,7 +980,7 @@ async function tvCustom(tid, fid, val){
 function addColumnModal(pid){ columnModal(pid, null); }
 function editColumnModal(fid, pid){ const f=(S._fields||[]).find(x=>x.id===fid); if(f) columnModal(pid, f); }
 function columnModal(pid, f){
-  const types=[['text','Text'],['number','Number'],['date','Date'],['select','Dropdown'],['checkbox','Checkbox'],['person','Person']];
+  const types=[['text','Text'],['number','Number'],['date','Date'],['select','Dropdown'],['checkbox','Checkbox'],['person','Person'],['brand','Brand']];
   const m = modal(`<div class="modal-head"><h2>${f?'Edit column':'New column'}</h2><button class="x" onclick="closeModals()">✕</button></div>
     <div class="modal-body">
       <label>Column name <span class="req">*</span></label><input id="cf-label" value="${f? esc(f.label):''}" placeholder="e.g. Store Location">
@@ -923,7 +1041,7 @@ async function projectMembersModal(pid){
 </script>
 <script>
 /* ================= TASK MODAL ================= */
-function newTaskModal(projectId, status='todo'){
+function newTaskModal(projectId, status='todo', groupId=null){
   const p = projById(projectId);
   const m = modal(`<div class="modal-head"><h2>New task</h2><button class="x" onclick="closeModals()">✕</button></div>
     <div class="modal-body">
@@ -947,7 +1065,7 @@ function newTaskModal(projectId, status='todo'){
       status:m.querySelector('#tk-status').value, priority:m.querySelector('#tk-prio').value,
       assignee_id:m.querySelector('#tk-assignee').value||null, due_date:m.querySelector('#tk-due').value||null,
       tags:m.querySelector('#tk-tags').value.split(',').map(s=>s.trim()).filter(Boolean),
-      created_by:S.me.id, position:maxPos+1
+      created_by:S.me.id, position:maxPos+1, group_id:groupId
     }).select().single();
     if(error) return toast(error.message, true);
     closeModals(); toast('Task created'); logActivity('task', data.id, 'created', {title});
@@ -960,11 +1078,12 @@ function assigneeOptions(projectId, selected){
     `<option value="${p.id}" ${p.id===selected?'selected':''}>${esc(p.full_name)} (${p.role})</option>`).join('');
 }
 async function openTask(id){
-  const [{data:t}, {data:chk}, {data:comments}, {data:atts}] = await Promise.all([
+  const [{data:t}, {data:chk}, {data:comments}, {data:atts}, {data:subs}] = await Promise.all([
     db.from('tasks').select('*').eq('id',id).single(),
     db.from('task_checklist').select('*').eq('task_id',id).order('position'),
     db.from('comments').select('*').eq('entity_type','task').eq('entity_id',id).order('created_at'),
     db.from('attachments').select('*').eq('entity_type','task').eq('entity_id',id).order('created_at'),
+    db.from('subtasks').select('*').eq('task_id',id).order('position').order('created_at'),
   ]);
   if(!t) return toast('Task not found', true);
   const p = projById(t.project_id);
@@ -981,6 +1100,11 @@ async function openTask(id){
       </div>
       <label>Title</label><input id="tv-title" value="${esc(t.title)}">
       <label>Description</label><textarea id="tv-desc" rows="3">${esc(t.description)}</textarea>
+      <label>Subtasks</label>
+      <div id="tv-subprog">${subProgressBar(subs||[])}</div>
+      <div id="tv-subs">${(subs||[]).map(stRow).join('')}</div>
+      <div style="display:flex;gap:8px;margin-top:6px"><input id="tv-sub-new" placeholder="Add a subtask…" style="flex:1">
+        <button class="btn btn-ghost btn-sm" id="tv-sub-add">Add</button></div>
       <label>Checklist</label>
       <div id="tv-chk">${(chk||[]).map(c=>chkRow(c)).join('')}</div>
       <div style="display:flex;gap:8px;margin-top:6px"><input id="tv-chk-new" placeholder="Add checklist item…" style="flex:1">
@@ -1009,6 +1133,13 @@ async function openTask(id){
     closeModals(); toast('Task saved'); logActivity('task', t.id, 'updated', {});
     if(S.route.view==='project') renderProject(t.project_id); else if(S.route.view==='home') renderHome();
   };
+  m.querySelector('#tv-sub-add').onclick = async ()=>{
+    const title = m.querySelector('#tv-sub-new').value.trim(); if(!title) return;
+    const {data, error} = await db.from('subtasks').insert({task_id:t.id, title, created_by:S.me.id, position:(m.querySelectorAll('.strow').length)+1}).select().single();
+    if(error) return toast(error.message, true);
+    m.querySelector('#tv-subs').insertAdjacentHTML('beforeend', stRow(data));
+    m.querySelector('#tv-sub-new').value=''; refreshSubProg(t.id);
+  };
   m.querySelector('#tv-chk-add').onclick = async ()=>{
     const label = m.querySelector('#tv-chk-new').value.trim(); if(!label) return;
     const {data, error} = await db.from('task_checklist').insert({task_id:t.id, label, position:(chk?.length||0)+1}).select().single();
@@ -1030,6 +1161,35 @@ async function openTask(id){
     box.insertAdjacentHTML('beforeend', commentRow(data));
     m.querySelector('#tv-comment').value='';
   };
+}
+function subProgressBar(subs){
+  const total=subs.length, done=subs.filter(s=>s.status==='done').length;
+  if(!total) return '';
+  const pct = Math.round(done/total*100);
+  return `<div class="prog"><div class="prog-bar"><div class="prog-fill" style="width:${pct}%"></div></div><span class="prog-lbl">${done}/${total} done</span></div>`;
+}
+async function refreshSubProg(taskId){
+  const {data:subs} = await db.from('subtasks').select('status').eq('task_id',taskId);
+  const box = document.getElementById('tv-subprog'); if(box) box.innerHTML = subProgressBar(subs||[]);
+}
+function stRow(s){
+  return `<div class="strow" id="st-${s.id}" data-task="${s.task_id}">
+    <select onchange="stUpd('${s.id}','status',this.value,'${s.task_id}')">${STATUSES.map(x=>`<option value="${x.k}" ${x.k===s.status?'selected':''}>${x.label}</option>`).join('')}</select>
+    <input type="text" value="${esc(s.title)}" onchange="stUpd('${s.id}','title',this.value.trim(),'${s.task_id}')">
+    <input type="text" value="${esc(s.stype||'')}" placeholder="Type" onchange="stUpd('${s.id}','stype',this.value.trim()||null,'${s.task_id}')">
+    <select onchange="stUpd('${s.id}','assignee_id',this.value||null,'${s.task_id}')"><option value="">Unassigned</option>${S.profiles.filter(p=>p.active && !(p.email||'').startsWith('forms+')).map(p=>`<option value="${p.id}" ${p.id===s.assignee_id?'selected':''}>${esc(p.full_name)}</option>`).join('')}</select>
+    <input type="date" value="${s.due_date||''}" onchange="stUpd('${s.id}','due_date',this.value||null,'${s.task_id}')">
+    <button class="del" onclick="delSubtask('${s.id}','${s.task_id}')">✕</button></div>`;
+}
+async function stUpd(id, field, val, taskId){
+  const {error} = await db.from('subtasks').update({[field]:val}).eq('id',id);
+  if(error) return toast(error.message, true);
+  if(field==='status') refreshSubProg(taskId);
+}
+async function delSubtask(id, taskId){
+  const {error} = await db.from('subtasks').delete().eq('id',id);
+  if(error) return toast(error.message, true);
+  document.getElementById('st-'+id)?.remove(); refreshSubProg(taskId);
 }
 function chkRow(c){
   return `<div class="chk ${c.done?'done':''}" id="chk-${c.id}">
