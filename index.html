@@ -648,7 +648,7 @@ async function renderPublicForm(token){
       <p style="color:var(--ink2);font-size:13.5px">${esc(def.description||'')}</p>
       <label>Your name <span class="req">*</span></label><input id="pf-name">
       <label>Your email <span class="req">*</span></label><input id="pf-email" type="email">
-      <label>Subject</label><input id="pf-title" placeholder="Short summary (optional)">
+      <label>${esc(def.title_label||'Subject')}${def.title_label?' <span class="req">*</span>':''}</label><input id="pf-title" placeholder="${esc(def.title_hint||'Short summary (optional)')}">
       ${(def.fields||[]).map(fieldInput).join('')}
       <button class="btn btn-primary" id="pf-send" style="width:100%;justify-content:center;margin-top:22px;padding:12px">Submit request</button>
       <p style="margin-top:14px;font-size:11.5px;color:var(--ink3);text-align:center">Response SLA: ${def.sla_hours} hours · Powered by WorkOS</p>`;
@@ -1517,7 +1517,7 @@ function newRequestForm(rtId){
   const rt = S.requestTypes.find(x=>x.id===rtId); if(!rt) return;
   const m = modal(`<div class="modal-head"><h2>${esc(rt.name)}</h2><button class="x" onclick="closeModals()">✕</button></div>
     <div class="modal-body">
-      <label>Request title <span class="req">*</span></label><input id="rq-title" placeholder="Short summary of this request">
+      <label>${esc(rt.title_label||'Request title')} <span class="req">*</span></label><input id="rq-title" placeholder="${esc(rt.title_hint||'Short summary of this request')}">
       ${(rt.fields||[]).map(fieldInput).join('')}
       <label>Priority</label><select id="rq-prio">${PRIORITIES.map(x=>`<option value="${x.k}" ${x.k==='normal'?'selected':''}>${x.label}</option>`).join('')}</select>
       <label>Attachments (price lists, approvals, briefs…)</label><input id="rq-files" type="file" multiple>
@@ -2034,9 +2034,11 @@ function inviteUserModal(){
       <label>Email <span class="req">*</span></label><input id="iu-email" type="email" placeholder="name@crea.asia or partner email">
       <div class="field-grid">
         <div><label>Role</label><select id="iu-role">
-          <option value="internal">Internal staff</option><option value="management">Management</option>
+          <option value="internal">Internal staff — full edit in their workspaces</option>
+          <option value="requester">Requester — view, raise tasks/tickets &amp; comment only</option>
+          <option value="management">Management — sees all workspaces</option>
           <option value="partner">Partner (external)</option><option value="freelancer">Freelancer (external)</option>
-          <option value="admin">Admin</option></select></div>
+          <option value="admin">Admin — everything</option></select></div>
         <div><label>Temporary password <span class="req">*</span></label><input id="iu-pass" value="${'Crea'+Math.random().toString(36).slice(2,8)+'!'}"></div>
       </div>
       <p style="margin-top:12px;font-size:12.5px;color:var(--ink2)">Share the email + temporary password with them directly. They can change it after signing in with the key button in the sidebar.</p>
@@ -2053,6 +2055,8 @@ function inviteUserModal(){
         body:JSON.stringify({email, password, full_name, role})});
       const out = await res.json();
       if(!res.ok) throw new Error(out.error||'Failed');
+      // roles the server does not yet know about are applied straight to the profile
+      if(out.user_id && role==='requester') await db.from('profiles').update({role:'requester'}).eq('id', out.user_id);
       closeModals(); toast('User created'); await refreshCore(); renderAdmin();
     }catch(e){ toast(e.message, true); btn.disabled=false; btn.textContent='Create account'; }
   };
