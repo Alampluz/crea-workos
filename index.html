@@ -387,6 +387,10 @@ const isStaff = ()=> S.me && ['admin','internal','management'].includes(S.me.rol
 const isAdmin = ()=> S.me && S.me.role==='admin';
 const isMgmt  = ()=> S.me && S.me.role==='management';
 const isExternal = ()=> S.me && ['partner','freelancer'].includes(S.me.role);
+/* requester = read-only + can raise tickets/tasks and comment */
+const isRequester = ()=> S.me && S.me.role==='requester';
+const canEdit = ()=> isStaff() && !isRequester();
+const canCreate = ()=> isStaff() || isRequester();
 
 /* ================= HELPERS ================= */
 const $ = s=>document.querySelector(s);
@@ -574,7 +578,7 @@ function renderSidebar(){
     {h:'#/home', label:'My Work', show:true},
     {h:'#/requests', label:'Requests', show:true},
     {h:'#/approvals', label:'Approvals', show:true, badge:'appr'},
-    {h:'#/dashboard', label:'Dashboard', show:isStaff()},
+    {h:'#/dashboard', label:'Dashboard', show:isStaff()||isRequester()},
     {h:'#/admin', label:'Admin', show:isAdmin()},
     {h:'#/platform', label:'Platform', show:!!(S.me&&S.me.platform_admin)},
   ];
@@ -956,6 +960,7 @@ function tvDisplay(kind, val, t){
 }
 function tvPickHTML(kind, tid, field, isCustom, val, t){
   const fill = (kind==='status'||kind==='priority')? ' fillcell':'';
+  if(!canEdit()) return `<div class="tv-pickv${fill} ro">${tvDisplay(kind, val, t)}</div>`;
   return `<div class="tv-pickv${fill}" data-kind="${kind}" data-tid="${tid}" data-field="${esc(field)}" data-cust="${isCustom?1:0}" onclick="tvEdit(this,event)">${tvDisplay(kind, val, t)}</div>`;
 }
 /* ---- dropdown picker (chip cells open a menu, like monday) ---- */
@@ -1019,7 +1024,7 @@ function tvShowMenu(anchor, opts, renderOpt, onPick, withSearch, includeClear){
 }
 function tvCell(t, f){
   const v = (t.custom||{})[f.id];
-  if(f.ftype==='checkbox') return `<input type="checkbox" ${v?'checked':''} onchange="tvCustom('${t.id}','${f.id}', this.checked)">`;
+  if(f.ftype==='checkbox') return `<input type="checkbox" ${v?'checked':''} ${canEdit()?`onchange="tvCustom('${t.id}','${f.id}', this.checked)"`:'disabled'}>`;
   if(f.ftype==='number')   return tvPickHTML('number', t.id, f.id, true, v);
   if(f.ftype==='date')     return tvPickHTML('date', t.id, f.id, true, v);
   if(f.ftype==='select')   return tvPickHTML('f_'+f.id, t.id, f.id, true, v);
@@ -1029,7 +1034,7 @@ function tvCell(t, f){
 }
 function tvHeadHTML(id, flds, showAddCol, gid){
   return `<tr>
-    <th class="tv-check"><input type="checkbox" title="Select all" onchange="tvSelGroup(this,'${gid}')"></th><th>Task</th><th>Status</th><th>Assignee</th><th>Due date</th><th>Priority</th>
+    ${canEdit()?`<th class="tv-check"><input type="checkbox" title="Select all" onchange="tvSelGroup(this,'${gid}')"></th>`:''}<th>Task</th><th>Status</th><th>Assignee</th><th>Due date</th><th>Priority</th>
     ${flds.map(f=>`<th class="${isStaff()?'col-edit':''}" ${isStaff()?`onclick="editColumnModal('${f.id}','${id}')" title="Edit column"`:''}>${esc(f.label)}</th>`).join('')}
     ${isStaff()? (showAddCol? `<th><span class="tv-addcol" onclick="addColumnModal('${id}')">＋ Column</span></th>`:'<th></th>'):''}
   </tr>`;
@@ -1037,8 +1042,8 @@ function tvHeadHTML(id, flds, showAddCol, gid){
 function tvRowHTML(t, flds, gc){
   const sc = (S._subs||{})[t.id];
   return `<tr class="tv-row${tvSel.has(t.id)?' rowsel':''}" data-tid="${t.id}" ${gc?`style="--gcol:${gc}"`:''}>
-    <td class="tv-check"><input type="checkbox" ${tvSel.has(t.id)?'checked':''} onchange="tvSelToggle('${t.id}',this.checked)"></td>
-    <td class="tv-name"><div class="tv-open" draggable="true" ondragstart="tvDragStart(event,'${t.id}')" ondragend="tvDragEnd(event)" onclick="openTask('${t.id}')">${esc(t.title)}${sc&&sc.total? `<span class="subchip">${sc.done}/${sc.total}</span>`:''}</div></td>
+    ${canEdit()?`<td class="tv-check"><input type="checkbox" ${tvSel.has(t.id)?'checked':''} onchange="tvSelToggle('${t.id}',this.checked)"></td>`:''}
+    <td class="tv-name"><div class="tv-open" draggable="${canEdit()}" ondragstart="tvDragStart(event,'${t.id}')" ondragend="tvDragEnd(event)" onclick="openTask('${t.id}')">${esc(t.title)}${sc&&sc.total? `<span class="subchip">${sc.done}/${sc.total}</span>`:''}</div></td>
     <td>${tvPickHTML('status', t.id, 'status', false, t.status, t)}</td>
     <td>${tvPickHTML('people', t.id, 'assignee_id', false, t.assignee_id, t)}</td>
     <td>${tvPickHTML('due', t.id, 'due_date', false, t.due_date, t)}</td>
@@ -1052,13 +1057,13 @@ function renderProjectTableView(id){
   tvPid = id;
   const flds = S._fields||[], groups = S._groups||[];
   tvBuildOpts(flds);
-  const cols = 6+flds.length+(isStaff()?1:0);
+  const cols = 5+(canEdit()?1:0)+flds.length+(isStaff()?1:0);
   const byPos = (a,b)=> (a.position||0)-(b.position||0);
   const tableFor = (rows, gid, first, gc)=> `<div class="tv-wrap" data-gid="${gid||''}" ondragover="tvDragOver(event)" ondragleave="tvDragLeave(event)" ondrop="tvDrop(event,'${id}')">
     <table class="tv"><thead>${tvHeadHTML(id, flds, first, gid||(groups.length?'':'__all__'))}</thead><tbody>
       ${rows.length? rows.map(t=>tvRowHTML(t,flds,gc)).join('') : `<tr><td colspan="${cols}"><div style="padding:14px;color:var(--ink3);font-size:13px">Drop tasks here, or add one below</div></td></tr>`}
     </tbody></table>
-    <div class="tv-quickadd"><input placeholder="＋ Add task" onkeydown="tvQuickAdd(event,'${id}',${gid?`'${gid}'`:'null'})"></div>
+    ${canCreate()?`<div class="tv-quickadd"><input placeholder="＋ Add task" onkeydown="tvQuickAdd(event,'${id}',${gid?`'${gid}'`:'null'})"></div>`:''}
   </div>`;
   if(!groups.length){
     const rows = [...S._tasks].sort(byPos);
@@ -1334,22 +1339,22 @@ async function openTask(id){
       <button class="x" onclick="closeModals()">✕</button></div>
     <div class="modal-body">
       <div class="field-grid">
-        <div><label>Status</label><select id="tv-status">${STATUSES.map(s=>`<option value="${s.k}" ${s.k===t.status?'selected':''}>${s.label}</option>`).join('')}</select></div>
-        <div><label>Priority</label><select id="tv-prio">${PRIORITIES.map(x=>`<option value="${x.k}" ${x.k===t.priority?'selected':''}>${x.label}</option>`).join('')}</select></div>
-        <div><label>Assignee</label><select id="tv-assignee"><option value="">Unassigned</option>${assigneeOptions(t.project_id, t.assignee_id)}</select></div>
-        <div><label>Due date</label><input id="tv-due" type="date" value="${t.due_date||''}"></div>
+        <div><label>Status</label><select id="tv-status" ${canEdit()?'':'disabled'}>${STATUSES.map(s=>`<option value="${s.k}" ${s.k===t.status?'selected':''}>${s.label}</option>`).join('')}</select></div>
+        <div><label>Priority</label><select id="tv-prio" ${canEdit()?'':'disabled'}>${PRIORITIES.map(x=>`<option value="${x.k}" ${x.k===t.priority?'selected':''}>${x.label}</option>`).join('')}</select></div>
+        <div><label>Assignee</label><select id="tv-assignee" ${canEdit()?'':'disabled'}><option value="">Unassigned</option>${assigneeOptions(t.project_id, t.assignee_id)}</select></div>
+        <div><label>Due date</label><input id="tv-due" type="date" value="${t.due_date||''}" ${canEdit()?'':'disabled'}></div>
       </div>
-      <label>Title</label><input id="tv-title" value="${esc(t.title)}">
-      <label>Description</label><textarea id="tv-desc" rows="3">${esc(t.description)}</textarea>
+      <label>Title</label><input id="tv-title" value="${esc(t.title)}" ${canEdit()?'':'disabled'}>
+      <label>Description</label><textarea id="tv-desc" rows="3" ${canEdit()?'':'disabled'}>${esc(t.description)}</textarea>
       <label>Subtasks</label>
       <div id="tv-subprog">${subProgressBar(subs||[])}</div>
       <div id="tv-subs">${(subs||[]).map(stRow).join('')}</div>
-      <div style="display:flex;gap:8px;margin-top:6px"><input id="tv-sub-new" placeholder="Add a subtask…" style="flex:1">
-        <button class="btn btn-ghost btn-sm" id="tv-sub-add">Add</button></div>
+      ${canCreate()? `<div style="display:flex;gap:8px;margin-top:6px"><input id="tv-sub-new" placeholder="Add a subtask…" style="flex:1">
+        <button class="btn btn-ghost btn-sm" id="tv-sub-add">Add</button></div>`:''}
       <label>Checklist</label>
       <div id="tv-chk">${(chk||[]).map(c=>chkRow(c)).join('')}</div>
-      <div style="display:flex;gap:8px;margin-top:6px"><input id="tv-chk-new" placeholder="Add checklist item…" style="flex:1">
-        <button class="btn btn-ghost btn-sm" id="tv-chk-add">Add</button></div>
+      ${canEdit()? `<div style="display:flex;gap:8px;margin-top:6px"><input id="tv-chk-new" placeholder="Add checklist item…" style="flex:1">
+        <button class="btn btn-ghost btn-sm" id="tv-chk-add">Add</button></div>`:''}
       <label>Attachments</label>
       <div id="tv-atts">${(atts||[]).length? atts.map(attLink).join('') : '<span style="color:var(--ink3);font-size:13px">No files attached</span>'}</div>
       <div style="display:flex;gap:8px;margin-top:8px;align-items:center"><input id="tv-files" type="file" multiple style="flex:1">
@@ -1360,9 +1365,9 @@ async function openTask(id){
         <button class="btn btn-primary btn-sm" id="tv-comment-add">Send</button></div>
       <div style="margin-top:14px;font-size:11.5px;color:var(--ink3)">Created ${fmtDateTime(t.created_at)} by ${esc(prof(t.created_by)?.full_name||'—')} · in ${esc(p?.name||'')}</div>
     </div>
-    <div class="modal-foot"><button class="btn btn-ghost" onclick="closeModals()">Close</button><button class="btn btn-primary" id="tv-save">Save changes</button></div>`, true);
+    <div class="modal-foot"><button class="btn btn-ghost" onclick="closeModals()">Close</button>${canEdit()? `<button class="btn btn-primary" id="tv-save">Save changes</button>`:''}</div>`, true);
 
-  m.querySelector('#tv-save').onclick = async ()=>{
+  if(m.querySelector('#tv-save')) m.querySelector('#tv-save').onclick = async ()=>{
     const upd = {
       title:m.querySelector('#tv-title').value.trim()||t.title,
       description:m.querySelector('#tv-desc').value,
@@ -1374,14 +1379,14 @@ async function openTask(id){
     closeModals(); toast('Task saved'); logActivity('task', t.id, 'updated', {});
     if(S.route.view==='project') renderProject(t.project_id); else if(S.route.view==='home') renderHome();
   };
-  m.querySelector('#tv-sub-add').onclick = async ()=>{
+  if(m.querySelector('#tv-sub-add')) m.querySelector('#tv-sub-add').onclick = async ()=>{
     const title = m.querySelector('#tv-sub-new').value.trim(); if(!title) return;
     const {data, error} = await db.from('subtasks').insert({task_id:t.id, title, created_by:S.me.id, position:(m.querySelectorAll('.strow').length)+1}).select().single();
     if(error) return toast(error.message, true);
     m.querySelector('#tv-subs').insertAdjacentHTML('beforeend', stRow(data));
     m.querySelector('#tv-sub-new').value=''; refreshSubProg(t.id);
   };
-  m.querySelector('#tv-chk-add').onclick = async ()=>{
+  if(m.querySelector('#tv-chk-add')) m.querySelector('#tv-chk-add').onclick = async ()=>{
     const label = m.querySelector('#tv-chk-new').value.trim(); if(!label) return;
     const {data, error} = await db.from('task_checklist').insert({task_id:t.id, label, position:(chk?.length||0)+1}).select().single();
     if(error) return toast(error.message, true);
@@ -1414,6 +1419,11 @@ async function refreshSubProg(taskId){
   const box = document.getElementById('tv-subprog'); if(box) box.innerHTML = subProgressBar(subs||[]);
 }
 function stRow(s){
+  if(!canEdit()) return `<div class="strow ro" id="st-${s.id}">
+    <span class="tv-fill mini" style="background:${STATUSES.find(x=>x.k===s.status)?.color||'#8E93A8'}">${esc(STATUSES.find(x=>x.k===s.status)?.label||s.status)}</span>
+    <span style="font-size:12.5px">${esc(s.title)}</span><span style="font-size:12px;color:var(--ink3)">${esc(s.stype||'')}</span>
+    <span style="font-size:12px">${s.assignee_id? esc(prof(s.assignee_id)?.full_name||''):''}</span>
+    <span style="font-size:12px;color:var(--ink3)">${s.due_date||''}</span><span></span></div>`;
   return `<div class="strow" id="st-${s.id}" data-task="${s.task_id}">
     <select onchange="stUpd('${s.id}','status',this.value,'${s.task_id}')">${STATUSES.map(x=>`<option value="${x.k}" ${x.k===s.status?'selected':''}>${x.label}</option>`).join('')}</select>
     <input type="text" value="${esc(s.title)}" onchange="stUpd('${s.id}','title',this.value.trim(),'${s.task_id}')">
@@ -1433,6 +1443,8 @@ async function delSubtask(id, taskId){
   document.getElementById('st-'+id)?.remove(); refreshSubProg(taskId);
 }
 function chkRow(c){
+  if(!canEdit()) return `<div class="chk ${c.done?'done':''}" id="chk-${c.id}">
+    <input type="checkbox" ${c.done?'checked':''} disabled><span>${esc(c.label)}</span></div>`;
   return `<div class="chk ${c.done?'done':''}" id="chk-${c.id}">
     <input type="checkbox" ${c.done?'checked':''} onchange="toggleChk('${c.id}', this.checked)">
     <span>${esc(c.label)}</span>
@@ -1712,7 +1724,7 @@ async function decideApproval(id, status, reqIdToRefresh){
 /* ================= DASHBOARD ================= */
 let dashWs = 'all';
 async function renderDashboard(){
-  if(!isStaff()){ location.hash='#/home'; return; }
+  if(!isStaff() && !isRequester()){ location.hash='#/home'; return; }
   setTopbar('Dashboard', `<select id="dash-ws" style="width:auto;min-width:200px" onchange="dashWs=this.value;renderDashboard()">
     <option value="all">All workspaces</option>
     ${S.workspaces.map(w=>`<option value="${w.id}" ${dashWs===w.id?'selected':''}>${esc(w.name)}</option>`).join('')}</select>`);
@@ -1960,13 +1972,13 @@ async function renderAdmin(){
         <td style="font-weight:600">${avatar(p,true)} ${esc(p.full_name)}${p.id===S.me.id?' <span style="color:var(--ink3)">(you)</span>':''}</td>
         <td style="color:var(--ink2)">${esc(p.email)}</td>
         <td><select onchange="setRole('${p.id}', this.value)" style="width:auto;padding:5px 8px" ${p.id===S.me.id?'disabled':''}>
-          ${['admin','internal','management','partner','freelancer'].map(r=>`<option ${r===p.role?'selected':''}>${r}</option>`).join('')}</select></td>
+          ${['admin','management','internal','requester','partner','freelancer'].map(r=>`<option ${r===p.role?'selected':''}>${r}</option>`).join('')}</select></td>
         <td><span class="chip" style="background:${p.active?'var(--green-soft);color:var(--green)':'var(--gray-soft);color:var(--ink3)'}">${p.active?'active':'inactive'}</span></td>
         <td style="text-align:right;white-space:nowrap">
           <button class="btn btn-ghost btn-sm" onclick="resetPassword('${p.id}','${esc(p.full_name).replace(/'/g,"\\'")}')">Reset password</button>
           ${p.id!==S.me.id? `<button class="btn btn-ghost btn-sm" onclick="toggleActive('${p.id}', ${!p.active})">${p.active?'Deactivate':'Activate'}</button>`:''}</td>
       </tr>`).join('')}</tbody></table></div>
-      <p style="margin-top:12px;font-size:12.5px;color:var(--ink2)">Roles — <b>admin</b>: everything · <b>management</b>: sees all workspaces · <b>internal</b>: only the workspaces they are members of · <b>partner / freelancer</b>: only projects they're added to + their own requests.</p>`;
+      <p style="margin-top:12px;font-size:12.5px;color:var(--ink2)">Roles — <b>admin</b>: everything · <b>management</b>: sees all workspaces · <b>internal</b>: only the workspaces they are members of · <b>requester</b>: read-only in their workspaces — can raise tasks &amp; tickets and comment, but cannot edit anything · <b>partner / freelancer</b>: only projects they're added to + their own requests.</p>`;
   }
   if(adminTab==='workspaces'){
     B.innerHTML = `<div class="card"><table class="tbl"><thead><tr><th>Workspace</th><th>Description</th><th>Projects</th><th></th></tr></thead><tbody>
