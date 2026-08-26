@@ -631,6 +631,7 @@ function setTopbar(crumb, actionsHtml=''){
 }
 
 /* ================= PUBLIC FORM (no login) ================= */
+function pfTitleLabel(def){ return def.title_label || (/creative|campaign|artwork/i.test(def.name||'')? 'Campaign Name' : 'Subject'); }
 async function renderPublicForm(token){
   $('#login-screen').classList.add('hidden');
   $('#app').classList.add('hidden');
@@ -648,13 +649,15 @@ async function renderPublicForm(token){
       <p style="color:var(--ink2);font-size:13.5px">${esc(def.description||'')}</p>
       <label>Your name <span class="req">*</span></label><input id="pf-name">
       <label>Your email <span class="req">*</span></label><input id="pf-email" type="email">
-      <label>${esc(def.title_label||'Subject')}${def.title_label?' <span class="req">*</span>':''}</label><input id="pf-title" placeholder="${esc(def.title_hint||'Short summary (optional)')}">
+      <label>${esc(pfTitleLabel(def))}${pfTitleLabel(def)!=='Subject'?' <span class="req">*</span>':''}</label><input id="pf-title" placeholder="${esc(def.title_hint||(pfTitleLabel(def)!=='Subject'?'BRAND x PLATFORM - CAMPAIGN NAME - PERIOD':'Short summary (optional)'))}">
       ${(def.fields||[]).map(fieldInput).join('')}
       <button class="btn btn-primary" id="pf-send" style="width:100%;justify-content:center;margin-top:22px;padding:12px">Submit request</button>
       <p style="margin-top:14px;font-size:11.5px;color:var(--ink3);text-align:center">Response SLA: ${def.sla_hours} hours · Powered by WorkOS</p>`;
     card.querySelector('#pf-send').onclick = async ()=>{
       const guest_name=card.querySelector('#pf-name').value.trim(), guest_email=card.querySelector('#pf-email').value.trim();
       if(!guest_name||!guest_email) return toast('Please fill your name and email', true);
+      const tl = pfTitleLabel(def);
+      if(tl!=='Subject' && !card.querySelector('#pf-title').value.trim()) return toast('"'+tl+'" is required', true);
       const values={};
       for(const f of (def.fields||[])){
         const v = readField(card, f);
