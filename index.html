@@ -143,13 +143,18 @@ tr.tv-arch .tv-name .tv-open{text-decoration:line-through}
 .ws-item .ws-menu:hover{background:rgba(0,0,0,.07);color:var(--ink)}
 .pj-menu{color:var(--ink3);font-weight:700;padding:0 5px;border-radius:5px;line-height:1;cursor:pointer;flex:none}
 .pj-menu:hover{background:var(--gray-soft);color:var(--ink)}
-.vis-chip{background:var(--gray-soft);color:var(--ink2);font-weight:600}
-.vis-pick{display:flex;flex-direction:column;gap:8px;margin-top:4px}
-.vis-opt{border:1.5px solid var(--line);border-radius:10px;padding:10px 12px;cursor:pointer;transition:all .12s;background:#fff}
+.vis-chip{background:var(--gray-soft);color:var(--ink2);font-weight:600;gap:5px}
+.vis-chip .ico{width:12px;height:12px;flex:none;opacity:.75}
+.vis-pick{display:flex;flex-direction:column;gap:7px;margin-top:4px}
+.vis-opt{border:1px solid var(--line);border-radius:11px;padding:11px 13px;cursor:pointer;background:#fff;
+  transition:border-color .14s ease,background .14s ease}
 .vis-opt:hover{border-color:var(--ink3)}
 .vis-opt.on{border-color:var(--accent);background:var(--accent-soft)}
-.vis-opt .vis-t{font-weight:700;font-size:13.5px;color:var(--ink)}
-.vis-opt .vis-b{font-size:12px;color:var(--ink2);margin-top:2px;line-height:1.45}
+.vis-opt .vis-t{display:flex;align-items:center;gap:8px;font-weight:600;font-size:13.5px;color:var(--ink)}
+.vis-opt .vis-t .ico{width:15px;height:15px;flex:none;color:var(--ink3);transition:color .14s ease}
+.vis-opt.on .vis-t{color:var(--accent-ink)}
+.vis-opt.on .vis-t .ico{color:var(--accent)}
+.vis-opt .vis-b{font-size:12px;color:var(--ink2);margin-top:3px;line-height:1.5;padding-left:23px}
 /* ---- @mentions ---- */
 .mention-menu{position:fixed;z-index:600;background:#fff;border:1px solid var(--line);border-radius:11px;box-shadow:0 12px 40px rgba(20,22,40,.18);padding:5px;max-height:230px;overflow-y:auto}
 .mention-menu .mopt{display:flex;align-items:center;gap:8px;padding:7px 9px;border-radius:8px;cursor:pointer;font-size:13px}
@@ -1235,20 +1240,27 @@ async function renderWorkspace(id, tab){
     : `<div class="card empty">No boards yet in this workspace${isStaff()? ' — create the first one.':''}</div>`}`;
 }
 /* ---- Board visibility: private | collaborate | shareable ---- */
+const ico = p => `<svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${p}</svg>`;
 const VIS = {
-  private:     {label:'Private',     icon:'🔒', blurb:'Only the people you add to this board. Nobody else in the workspace sees it.'},
-  collaborate: {label:'Collaborate', icon:'👥', blurb:'Everyone in the workspace can open and work on it. This is the normal setting.'},
-  shareable:   {label:'Shareable',   icon:'🌐', blurb:'Everyone in the workspace, plus outside partners and freelancers you invite to this board.'},
+  private: {label:'Private',
+    icon: ico('<rect x="4.5" y="10.5" width="15" height="10" rx="2.5"/><path d="M8 10.5V7.5a4 4 0 0 1 8 0v3"/>'),
+    blurb:'Only the people you add to this board. Nobody else in the workspace sees it.'},
+  collaborate: {label:'Collaborate',
+    icon: ico('<circle cx="9" cy="8.5" r="3"/><path d="M3.5 19.5a5.5 5.5 0 0 1 11 0"/><path d="M16 6.2a3 3 0 0 1 0 5.6"/><path d="M17.4 14.6a5.2 5.2 0 0 1 3.1 4.9"/>'),
+    blurb:'Everyone in the workspace can open and work on it. This is the normal setting.'},
+  shareable: {label:'Shareable',
+    icon: ico('<circle cx="12" cy="12" r="8.5"/><path d="M3.5 12h17"/><path d="M12 3.5c2.2 2.4 3.4 5.4 3.4 8.5S14.2 18.1 12 20.5c-2.2-2.4-3.4-5.4-3.4-8.5S9.8 5.9 12 3.5Z"/>'),
+    blurb:'Everyone in the workspace, plus outside partners and freelancers you invite to this board.'},
 };
 const visChip = v=>{
   const d = VIS[v] || VIS.collaborate;
   if(v==='collaborate') return '';
-  return `<span class="chip vis-chip" title="${esc(d.blurb)}">${d.icon} ${d.label}</span>`;
+  return `<span class="chip vis-chip" title="${esc(d.blurb)}">${d.icon}${d.label}</span>`;
 };
 function visPickerHTML(id, cur){
   return `<div class="vis-pick" id="${id}" data-sel="${cur||'collaborate'}">
     ${Object.entries(VIS).map(([k,d])=>`<div class="vis-opt ${k===(cur||'collaborate')?'on':''}" data-v="${k}">
-      <div class="vis-t">${d.icon} ${d.label}</div><div class="vis-b">${d.blurb}</div></div>`).join('')}
+      <div class="vis-t">${d.icon}${d.label}</div><div class="vis-b">${d.blurb}</div></div>`).join('')}
   </div>`;
 }
 function wireVisPicker(root, id){
@@ -2002,7 +2014,7 @@ async function projectMembersModal(pid){
     <div class="modal-body">
       <p style="color:var(--ink2);font-size:13px;margin-top:8px">Internal staff already see every board in their workspaces. Add partners or freelancers here to give them access to <b>this board only</b>.</p>
       ${canGuest? '' : `<div style="margin-top:12px;padding:10px 12px;background:var(--gray-soft);border-radius:8px;font-size:12.5px;color:var(--ink2)">
-        This board is <b>${VIS[vis].label}</b>, so outside guests can't be added. Switch it to <b>🌐 Shareable</b> first.
+        This board is <b>${VIS[vis].label}</b>, so outside guests can't be added. Switch it to <b>Shareable</b> first.
         ${canEdit()? `<button class="btn btn-ghost btn-sm" style="margin-left:8px" id="pm-tovis">Make Shareable</button>`:''}</div>`}
       ${externals.length? externals.map(p=>`
         <div class="chk" ${canGuest?'':'style="opacity:.45"'}><input type="checkbox" data-uid="${p.id}" ${memberIds.has(p.id)?'checked':''} ${canGuest?'':'disabled'}>
