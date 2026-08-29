@@ -131,6 +131,18 @@ table.tv{border-collapse:separate;border-spacing:0;font-size:13.5px;min-width:10
 .tv-addtask:hover{color:var(--accent)}
 .tv-addgroup{margin-top:4px;padding:9px 14px;font-weight:700;font-size:13.5px;color:var(--ink3);cursor:pointer;border:1px dashed var(--line);border-radius:10px;display:inline-block;background:#fff}
 .tv-addgroup:hover{color:var(--accent);border-color:var(--accent)}
+.tv-archbar{margin-top:18px;padding:8px 12px;font-size:12.5px;font-weight:600;color:var(--ink3);cursor:pointer;display:inline-block;border-radius:8px}
+.tv-archbar:hover{background:var(--gray-soft);color:var(--ink2)}
+tr.tv-arch{opacity:.55}
+tr.tv-arch .tv-name .tv-open{text-decoration:line-through}
+.tv-restore{margin-left:8px;font-size:11px;font-weight:700;color:var(--accent);cursor:pointer;white-space:nowrap}
+.tv-restore:hover{text-decoration:underline}
+.ws-item{position:relative}
+.ws-item .ws-menu{margin-left:auto;opacity:0;color:var(--ink3);font-weight:700;padding:0 4px;border-radius:5px;line-height:1;flex:none}
+.ws-item:hover .ws-menu,.ws-item .ws-menu.on{opacity:1}
+.ws-item .ws-menu:hover{background:rgba(0,0,0,.07);color:var(--ink)}
+.ws-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.danger-note{background:var(--red-soft);border:1px solid var(--red);border-radius:8px;padding:10px 12px;margin-bottom:12px;font-size:13px;color:var(--red)}
 .tv .subchip{font-size:11.5px;font-weight:700;color:var(--ink3);background:var(--gray-soft);border-radius:6px;padding:2px 7px;margin-left:8px;white-space:nowrap}
 .tv-pickv{padding:8px 14px;cursor:pointer;white-space:nowrap;font-size:13px;min-height:40px;display:flex;align-items:center;gap:8px}
 .tv-pickv:hover{box-shadow:inset 0 0 0 1px var(--line);border-radius:8px}
@@ -446,6 +458,30 @@ function modal(html, wide=false){
   return back;
 }
 function closeModals(){ $('#modal-root').innerHTML=''; }
+/* Generic little popover menu, anchored to an element. items:[{label,danger,fn}|'-'] */
+let _ctxItems = [];
+function ctxMenu(anchor, items){
+  document.getElementById('tvmenu')?.remove();
+  document.querySelectorAll('.ws-menu.on').forEach(x=>x.classList.remove('on'));
+  _ctxItems = items.filter(i=>i!=='-');
+  const m = document.createElement('div'); m.id='tvmenu';
+  m.innerHTML = `<div class="opts">${items.map(i=> i==='-'
+    ? '<div style="height:1px;background:var(--line);margin:5px 6px"></div>'
+    : `<div class="opt" ${i.danger?'style="color:var(--red)"':''} data-i="${_ctxItems.indexOf(i)}">${esc(i.label)}</div>`).join('')}</div>`;
+  document.body.appendChild(m);
+  const r = anchor.getBoundingClientRect(), mb = m.getBoundingClientRect();
+  m.style.left = Math.min(r.left, innerWidth - mb.width - 10) + 'px';
+  m.style.top  = (r.bottom + mb.height > innerHeight ? Math.max(8, r.top - mb.height - 4) : r.bottom + 4) + 'px';
+  anchor.classList.add('on');
+  m.querySelectorAll('.opt').forEach(o=> o.onclick = e=>{
+    e.stopPropagation();
+    const fn = _ctxItems[+o.dataset.i]?.fn;
+    m.remove(); anchor.classList.remove('on');
+    if(fn) fn();
+  });
+  const off = e=>{ if(!m.contains(e.target)){ m.remove(); anchor.classList.remove('on'); document.removeEventListener('mousedown', off); } };
+  setTimeout(()=>document.addEventListener('mousedown', off), 0);
+}
 async function logActivity(entity_type, entity_id, action, detail={}){
   try{ await db.from('activity_log').insert({actor_id:S.me.id, entity_type, entity_id, action, detail}); }catch(e){}
 }
@@ -598,6 +634,7 @@ function renderSidebar(){
   $('#nav-ws').innerHTML = wss.map(w=>
     `<div class="ws-item ${v==='ws'&&id===w.id?'active':''}" onclick="location.hash='#/ws/${w.id}'">
       <span class="ws-dot" style="background:${w.color}"></span><span class="ws-name">${esc(w.name)}</span>
+      ${canEdit()? `<span class="ws-menu" title="Workspace options" onclick="event.stopPropagation();wsMenu(this,'${w.id}')">⋯</span>`:''}
     </div>`).join('') || (isAdmin()? '<div style="padding:4px 22px;font-size:12px;color:var(--ink3)">No workspaces yet — press +</div>':'');
 
   const lc = $('#logo-co'); if(lc && S.company) lc.textContent = S.company.name;
@@ -751,8 +788,9 @@ function approvalTable(apprs){
 /* ================= WORKSPACE ================= */
 async function renderWorkspace(id){
   const w = wsById(id); if(!w){ location.hash='#/home'; return; }
-  setTopbar(esc(w.name), isStaff()? `<button class="btn btn-ghost btn-sm" onclick="teamMembersModal('${w.id}')">Members</button>
-    <button class="btn btn-primary btn-sm" onclick="newProjectModal('${w.id}')">＋ New project</button>`:'');
+  setTopbar(esc(w.name), (canEdit()? `<button class="btn btn-ghost btn-sm" onclick="editWorkspaceModal('${w.id}')">Edit workspace</button>`:'')
+    + (isStaff()? `<button class="btn btn-ghost btn-sm" onclick="teamMembersModal('${w.id}')">Members</button>
+    <button class="btn btn-primary btn-sm" onclick="newProjectModal('${w.id}')">＋ New project</button>`:''));
   const C=$('#content'); C.innerHTML='<div class="empty">Loading…</div>';
   const projects = S.projects.filter(p=>p.workspace_id===id && p.status!=='archived');
   const ids = projects.map(p=>p.id);
@@ -853,7 +891,8 @@ async function renderProject(id){
     db.from('project_groups').select('*').eq('project_id',id).order('position').order('created_at'),
   ]);
   if(error){ C.innerHTML=`<div class="card empty">${esc(error.message)}</div>`; return; }
-  S._tasks = tasks||[];
+  S._tasksAll = tasks||[];
+  S._tasks = tvShowArch ? S._tasksAll : S._tasksAll.filter(t=>!t.archived_at);
   S._fields = fields||[]; S._groups = groups||[];
   S._subs = {};
   (sc||[]).forEach(s=>{ const o=S._subs[s.task_id]||(S._subs[s.task_id]={done:0,total:0}); o.total++; if(s.status==='done') o.done++; });
@@ -1044,9 +1083,10 @@ function tvHeadHTML(id, flds, showAddCol, gid){
 }
 function tvRowHTML(t, flds, gc){
   const sc = (S._subs||{})[t.id];
-  return `<tr class="tv-row${tvSel.has(t.id)?' rowsel':''}" data-tid="${t.id}" ${gc?`style="--gcol:${gc}"`:''}>
+  const arch = !!t.archived_at;
+  return `<tr class="tv-row${tvSel.has(t.id)?' rowsel':''}${arch?' tv-arch':''}" data-tid="${t.id}" ${gc?`style="--gcol:${gc}"`:''}>
     ${canEdit()?`<td class="tv-check"><input type="checkbox" ${tvSel.has(t.id)?'checked':''} onchange="tvSelToggle('${t.id}',this.checked)"></td>`:''}
-    <td class="tv-name"><div class="tv-open" draggable="${canEdit()}" ondragstart="tvDragStart(event,'${t.id}')" ondragend="tvDragEnd(event)" onclick="openTask('${t.id}')">${esc(t.title)}${sc&&sc.total? `<span class="subchip">${sc.done}/${sc.total}</span>`:''}</div></td>
+    <td class="tv-name"><div class="tv-open" draggable="${canEdit()&&!arch}" ondragstart="tvDragStart(event,'${t.id}')" ondragend="tvDragEnd(event)" onclick="openTask('${t.id}')">${esc(t.title)}${sc&&sc.total? `<span class="subchip">${sc.done}/${sc.total}</span>`:''}</div>${arch&&canEdit()?`<span class="tv-restore" onclick="event.stopPropagation();tvUnarchive('${t.id}')">Restore</span>`:''}</td>
     <td>${tvPickHTML('status', t.id, 'status', false, t.status, t)}</td>
     <td>${tvPickHTML('people', t.id, 'assignee_id', false, t.assignee_id, t)}</td>
     <td>${tvPickHTML('due', t.id, 'due_date', false, t.due_date, t)}</td>
@@ -1068,10 +1108,12 @@ function renderProjectTableView(id){
     </tbody></table>
     ${canCreate()?`<div class="tv-quickadd"><input placeholder="＋ Add task" onkeydown="tvQuickAdd(event,'${id}',${gid?`'${gid}'`:'null'})"></div>`:''}
   </div>`;
+  const nArch = (S._tasksAll||[]).filter(t=>t.archived_at).length;
+  const archBar = (nArch||tvShowArch)? `<div class="tv-archbar" onclick="tvToggleArch()">${tvShowArch?'▾':'▸'} ${nArch} archived task${nArch===1?'':'s'} — ${tvShowArch?'hide':'show'}</div>` : '';
   if(!groups.length){
     const rows = [...S._tasks].sort(byPos);
     C.innerHTML = tableFor(rows, null, true)
-      + (isStaff()? `<div class="tv-addgroup" onclick="addGroupModal('${id}')" style="margin-top:14px">＋ Add group</div>`:'');
+      + (isStaff()? `<div class="tv-addgroup" onclick="addGroupModal('${id}')" style="margin-top:14px">＋ Add group</div>`:'') + archBar;
     return;
   }
   const gids = new Set(groups.map(g=>g.id));
@@ -1088,7 +1130,7 @@ function renderProjectTableView(id){
   + (ungrouped.length? `<div class="tv-group">
       <div class="tv-group-head"><span class="bar" style="background:#C6C9D8"></span><h3 style="color:var(--ink3)">No group</h3><span class="cnt">${ungrouped.length}</span></div>
       ${tableFor(ungrouped, null, false)}</div>`:'')
-  + (isStaff()? `<div class="tv-addgroup" onclick="addGroupModal('${id}')">＋ Add group</div>`:'');
+  + (isStaff()? `<div class="tv-addgroup" onclick="addGroupModal('${id}')">＋ Add group</div>`:'') + archBar;
 }
 const tvCollapsed = new Set();
 let tvPid = null;
@@ -1117,7 +1159,8 @@ function tvBulkBar(){
     <button onclick="tvBulkPick(this,'status')">Status</button>
     <button onclick="tvBulkPick(this,'group')">Group</button>
     <button onclick="tvBulkPick(this,'assignee')">Assignee</button>
-    ${isStaff()? `<button class="danger" onclick="tvBulkDelete()">Delete</button>`:''}
+    ${isStaff()? `<button onclick="tvBulkArchive()">Archive</button>`:''}
+    ${isAdmin()? `<button class="danger" onclick="tvBulkDelete()">Delete</button>`:''}
     <button onclick="tvSelClear()">Clear</button>`;
   document.body.appendChild(b);
 }
@@ -1134,14 +1177,61 @@ async function tvBulkApply(field, value){
   toast(ids.length+' task'+(ids.length>1?'s':'')+' updated');
   const y=scrollY; renderProjectTableView(tvPid); scrollTo(0,y);
 }
-async function tvBulkDelete(){
-  if(!confirm('Delete '+tvSel.size+' task(s) permanently?')) return;
-  const ids=[...tvSel];
-  const {error}=await db.from('tasks').delete().in('id',ids);
+/* Archive = reversible. This is the default for removing rows. */
+let tvShowArch = false;
+function tvApplyArch(){ S._tasks = tvShowArch ? (S._tasksAll||[]) : (S._tasksAll||[]).filter(t=>!t.archived_at); }
+function tvToggleArch(){ tvShowArch=!tvShowArch; tvApplyArch(); const y=scrollY; renderProjectTableView(tvPid); scrollTo(0,y); }
+async function tvBulkArchive(){
+  const ids=[...tvSel]; if(!ids.length) return;
+  const at=new Date().toISOString();
+  const {error}=await db.from('tasks').update({archived_at:at}).in('id',ids);
   if(error) return toast(error.message, true);
-  S._tasks = S._tasks.filter(t=>!tvSel.has(t.id));
-  tvSel.clear(); tvBulkBar(); toast('Deleted');
+  (S._tasksAll||[]).forEach(t=>{ if(tvSel.has(t.id)) t.archived_at=at; });
+  tvSel.clear(); tvBulkBar(); tvApplyArch();
+  toast(ids.length+' task'+(ids.length>1?'s':'')+' archived — "Show archived" to restore');
   const y=scrollY; renderProjectTableView(tvPid); scrollTo(0,y);
+}
+async function tvUnarchive(tid){
+  const {error}=await db.from('tasks').update({archived_at:null}).eq('id',tid);
+  if(error) return toast(error.message, true);
+  const t=(S._tasksAll||[]).find(x=>x.id===tid); if(t) t.archived_at=null;
+  tvApplyArch(); toast('Restored');
+  const y=scrollY; renderProjectTableView(tvPid); scrollTo(0,y);
+}
+/* Permanent delete — admin only, typed confirmation, shows what is going. */
+function tvBulkDelete(){
+  const ids=[...tvSel]; if(!ids.length) return;
+  if(!isAdmin()) return toast('Only an admin can permanently delete tasks', true);
+  const rows = (S._tasks||[]).filter(t=>tvSel.has(t.id));
+  const preview = rows.slice(0,8).map(t=>`<li>${esc(t.title||'(untitled)')}</li>`).join('')
+    + (rows.length>8? `<li style="color:var(--ink3)">…and ${rows.length-8} more</li>`:'');
+  const m = modal(`<div class="modal-head"><h2>Delete ${ids.length} task${ids.length>1?'s':''} permanently?</h2><button class="x" onclick="closeModals()">✕</button></div>
+    <div class="modal-body">
+      <div class="danger-note">
+        <b>This cannot be undone.</b> Subtasks, comments and attachments on these tasks go with them.
+        Use <b>Archive</b> instead if you just want them out of the board.
+      </div>
+      <ul style="margin:0 0 14px 18px;font-size:13px;color:var(--ink2);max-height:170px;overflow:auto">${preview}</ul>
+      <label>Type <b>${ids.length}</b> to confirm</label>
+      <input id="bd-confirm" inputmode="numeric" autocomplete="off" placeholder="${ids.length}">
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-ghost" onclick="closeModals()">Cancel</button>
+      <button class="btn btn-ghost" id="bd-archive">Archive instead</button>
+      <button class="btn btn-danger" id="bd-go" disabled>Delete permanently</button>
+    </div>`);
+  const inp=m.querySelector('#bd-confirm'), go=m.querySelector('#bd-go');
+  inp.oninput = ()=>{ go.disabled = inp.value.trim() !== String(ids.length); };
+  m.querySelector('#bd-archive').onclick = ()=>{ closeModals(); tvBulkArchive(); };
+  go.onclick = async ()=>{
+    go.disabled=true; go.textContent='Deleting…';
+    const {error}=await db.from('tasks').delete().in('id',ids);
+    if(error){ go.disabled=false; go.textContent='Delete permanently'; return toast(error.message, true); }
+    S._tasksAll = (S._tasksAll||[]).filter(t=>!tvSel.has(t.id));
+    tvSel.clear(); tvBulkBar(); tvApplyArch(); closeModals(); toast(ids.length+' task'+(ids.length>1?'s':'')+' deleted');
+    const y=scrollY; renderProjectTableView(tvPid); scrollTo(0,y);
+  };
+  setTimeout(()=>inp.focus(), 30);
 }
 function tvQuickAdd(e, pid, gid){
   if(e.key!=='Enter') return;
@@ -1988,8 +2078,11 @@ async function renderAdmin(){
       ${S.workspaces.map(w=>`<tr><td style="font-weight:600"><span class="ws-dot" style="display:inline-block;background:${w.color}"></span> ${esc(w.name)}</td>
         <td style="color:var(--ink2)">${esc(w.description)}</td>
         <td>${S.projects.filter(p=>p.workspace_id===w.id).length}</td>
-        <td style="text-align:right"><button class="btn btn-ghost btn-sm" onclick="teamMembersModal('${w.id}')">Members</button></td></tr>`).join('')}</tbody></table></div>
-      <p style="margin-top:12px;font-size:12.5px;color:var(--ink2)">Internal staff only see workspaces they are members of. Admin and Management see everything.</p>`;
+        <td style="text-align:right;white-space:nowrap">
+          <button class="btn btn-ghost btn-sm" onclick="editWorkspaceModal('${w.id}')">Edit</button>
+          <button class="btn btn-ghost btn-sm" onclick="teamMembersModal('${w.id}')">Members</button>
+          <button class="btn btn-ghost btn-sm" style="color:var(--red)" onclick="deleteWorkspaceModal('${w.id}')">Delete</button></td></tr>`).join('')}</tbody></table></div>
+      <p style="margin-top:12px;font-size:12.5px;color:var(--ink2)">Internal staff only see workspaces they are members of. Admin and Management see everything. Deleting a workspace also deletes its projects and tasks — you'll be asked to type the name to confirm.</p>`;
   }
   if(adminTab==='brands'){
     const brs = S.brandsList||[];
@@ -2151,6 +2244,73 @@ async function resetPassword(uid, name){
     if(!res.ok) throw new Error(out.error||'Failed');
     toast('Password reset — share it with them');
   }catch(e){ toast(e.message, true); }
+}
+const WS_COLORS=['#0F766E','#3E5C95','#8C5A3B','#5A6B4F','#6E56B8','#A8770E','#7D3C55','#C2434F','#12915E','#2B6CB0'];
+function wsMenu(anchor, wid){
+  const w = wsById(wid); if(!w) return;
+  const items = [{label:'Rename / edit', fn:()=>editWorkspaceModal(wid)},
+                 {label:'Members', fn:()=>teamMembersModal(wid)}];
+  if(isAdmin()){ items.push('-'); items.push({label:'Delete workspace', danger:true, fn:()=>deleteWorkspaceModal(wid)}); }
+  ctxMenu(anchor, items);
+}
+function editWorkspaceModal(wid){
+  const w = wsById(wid); if(!w) return;
+  const m = modal(`<div class="modal-head"><h2>Edit workspace</h2><button class="x" onclick="closeModals()">✕</button></div>
+    <div class="modal-body">
+      <label>Name <span class="req">*</span></label><input id="ew-name" value="${esc(w.name)}">
+      <label>Description</label><input id="ew-desc" value="${esc(w.description||'')}">
+      <label>Colour</label>
+      <div id="ew-cols" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:4px">
+        ${WS_COLORS.map(c=>`<span data-c="${c}" style="width:26px;height:26px;border-radius:50%;background:${c};cursor:pointer;box-shadow:${c===w.color?'0 0 0 3px #fff,0 0 0 5px '+c:'none'}"></span>`).join('')}
+      </div>
+    </div>
+    <div class="modal-foot"><button class="btn btn-ghost" onclick="closeModals()">Cancel</button><button class="btn btn-primary" id="ew-save">Save</button></div>`);
+  let colour = w.color;
+  m.querySelectorAll('#ew-cols span').forEach(s=> s.onclick=()=>{
+    colour = s.dataset.c;
+    m.querySelectorAll('#ew-cols span').forEach(x=> x.style.boxShadow = x.dataset.c===colour? '0 0 0 3px #fff,0 0 0 5px '+colour : 'none');
+  });
+  m.querySelector('#ew-save').onclick = async ()=>{
+    const name = m.querySelector('#ew-name').value.trim(); if(!name) return toast('Name required', true);
+    const {error} = await db.from('workspaces').update({name, description:m.querySelector('#ew-desc').value.trim(), color:colour}).eq('id',wid);
+    if(error) return toast(error.message, true);
+    closeModals(); toast('Workspace updated'); await refreshCore(); renderSidebar();
+    if(S.route.view==='admin') renderAdmin(); else if(S.route.view==='ws') renderWorkspace(wid);
+  };
+}
+async function deleteWorkspaceModal(wid){
+  const w = wsById(wid); if(!w) return;
+  if(!isAdmin()) return toast('Only an admin can delete a workspace', true);
+  const projs = S.projects.filter(p=>p.workspace_id===wid);
+  let nTasks = 0;
+  if(projs.length){
+    const {count} = await db.from('tasks').select('id',{count:'exact',head:true}).in('project_id', projs.map(p=>p.id));
+    nTasks = count||0;
+  }
+  const m = modal(`<div class="modal-head"><h2>Delete “${esc(w.name)}”?</h2><button class="x" onclick="closeModals()">✕</button></div>
+    <div class="modal-body">
+      <div class="danger-note"><b>This cannot be undone.</b> Deleting this workspace also deletes everything inside it.</div>
+      <div style="display:flex;gap:26px;margin:14px 0 16px">
+        <div><div style="font-size:26px;font-weight:800;line-height:1">${projs.length}</div><div style="font-size:12px;color:var(--ink3)">project${projs.length===1?'':'s'}</div></div>
+        <div><div style="font-size:26px;font-weight:800;line-height:1;color:${nTasks?'var(--red)':'inherit'}">${nTasks}</div><div style="font-size:12px;color:var(--ink3)">task${nTasks===1?'':'s'}</div></div>
+      </div>
+      ${projs.length? `<div style="font-size:13px;color:var(--ink2);margin-bottom:14px">Projects that will go: ${projs.slice(0,6).map(p=>'<b>'+esc(p.name)+'</b>').join(', ')}${projs.length>6?' and '+(projs.length-6)+' more':''}.</div>`:''}
+      <label>Type the workspace name to confirm</label>
+      <input id="dw-confirm" autocomplete="off" placeholder="${esc(w.name)}">
+    </div>
+    <div class="modal-foot"><button class="btn btn-ghost" onclick="closeModals()">Cancel</button>
+      <button class="btn btn-danger" id="dw-go" disabled>Delete workspace</button></div>`);
+  const inp=m.querySelector('#dw-confirm'), go=m.querySelector('#dw-go');
+  inp.oninput = ()=>{ go.disabled = inp.value.trim().toLowerCase() !== w.name.trim().toLowerCase(); };
+  go.onclick = async ()=>{
+    go.disabled=true; go.textContent='Deleting…';
+    const {error} = await db.from('workspaces').delete().eq('id',wid);
+    if(error){ go.disabled=false; go.textContent='Delete workspace'; return toast(error.message, true); }
+    logActivity('workspace', wid, 'delete', {name:w.name, projects:projs.length, tasks:nTasks});
+    closeModals(); toast('Workspace deleted'); await refreshCore();
+    if(S.route.view==='ws' && S.route.id===wid) location.hash='#/home'; else { renderSidebar(); if(S.route.view==='admin') renderAdmin(); }
+  };
+  setTimeout(()=>inp.focus(), 30);
 }
 function newWorkspaceModal(){
   const m = modal(`<div class="modal-head"><h2>New workspace</h2><button class="x" onclick="closeModals()">✕</button></div>
