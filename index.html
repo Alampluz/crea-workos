@@ -281,6 +281,20 @@ tr.tv-arch .tv-name .tv-open{text-decoration:line-through}
 .sw input:checked+span{background:var(--accent)}
 .sw input:checked+span::after{transform:translateX(14px)}
 .sw input:focus-visible+span{box-shadow:0 0 0 3px var(--accent-soft)}
+/* ---- per-row ⋯ menu ---- */
+td.tv-name{position:relative}
+.tv-dots{position:absolute;left:2px;top:50%;transform:translateY(-50%);width:20px;height:20px;
+  display:flex;align-items:center;justify-content:center;border-radius:6px;color:var(--ink3);
+  font-weight:700;cursor:pointer;opacity:0;transition:opacity .12s,background .12s}
+tr.tv-row:hover .tv-dots{opacity:1}
+.tv-dots:hover{background:var(--gray-soft);color:var(--ink)}
+td.tv-name .tv-open{padding-left:20px}
+/* ---- formula cells & builder ---- */
+.tv-fxv{color:var(--ink2);font-variant-numeric:tabular-nums}
+.tv-fxerr{color:var(--amber);cursor:help}
+.fx-chip{font:11.5px/1 ui-monospace,Menlo,monospace;color:var(--accent-ink);background:var(--accent-soft);
+  border:1px solid transparent;border-radius:6px;padding:4px 7px;cursor:pointer}
+.fx-chip:hover{border-color:var(--accent)}
 .ws-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .danger-note{background:var(--red-soft);border:1px solid var(--red);border-radius:8px;padding:10px 12px;margin-bottom:12px;font-size:13px;color:var(--red)}
 .tv .subchip{font-size:11.5px;font-weight:700;color:var(--ink3);background:var(--gray-soft);border-radius:6px;padding:2px 7px;margin-left:8px;white-space:nowrap}
@@ -842,7 +856,7 @@ function navigate(hash){
   S.route = {view, id:parts[1], tab:parts[2]};
   renderSidebar();
   const C = $('#content'); C.scrollTop=0;
-  const map = {home:renderHome, ws:renderWorkspace, project:renderProject, requests:renderRequests, approvals:renderApprovals, dashboard:renderDashboard, admin:renderAdmin, platform:renderPlatform};
+  const map = {home:renderHome, ws:renderWorkspace, project:renderProject, task:openTaskRoute, requests:renderRequests, approvals:renderApprovals, dashboard:renderDashboard, admin:renderAdmin, platform:renderPlatform};
   (map[view]||renderHome)(parts[1], parts[2]);
 }
 
@@ -1260,7 +1274,7 @@ function wsTabsHTML(wsId, active){
 async function renderWorkspace(id, tab){
   const w = wsById(id); if(!w){ location.hash='#/home'; return; }
   if(tab==='report') return renderWorkspaceReport(id);
-  widgetScope = null;
+  widgetScope = null; widgetProjScope = null;
   setTopbar(esc(w.name), (canEdit()? `<button class="btn btn-ghost btn-sm" onclick="editWorkspaceModal('${w.id}')">Edit workspace</button>`:'')
     + (isStaff()? `<button class="btn btn-ghost btn-sm" onclick="teamMembersModal('${w.id}')">Members</button>
     <button class="btn btn-primary btn-sm" onclick="wsAddMenu(this,'${w.id}')">＋ Add</button>`:''));
@@ -1590,7 +1604,8 @@ async function renderProject(id){
   const w = wsById(p.workspace_id);
   setTopbar(`<span onclick="location.hash='#/ws/${p.workspace_id}'" style="cursor:pointer">${w? esc(w.name):''}</span> <span>/</span> ${esc(p.name)} ${visChip(p.visibility)}`,
     `<div class="tabs"><button class="tab ${boardMode==='table'?'active':''}" onclick="boardMode='table';renderProject('${id}')">Table</button>
-     <button class="tab ${boardMode==='board'?'active':''}" onclick="boardMode='board';renderProject('${id}')">Board</button></div>
+     <button class="tab ${boardMode==='board'?'active':''}" onclick="boardMode='board';renderProject('${id}')">Board</button>
+     <button class="tab ${boardMode==='report'?'active':''}" onclick="boardMode='report';renderProject('${id}')">Report</button></div>
      ${isStaff()? `<button class="btn btn-ghost btn-sm" onclick="projectMembersModal('${id}')">Partner access</button>`:''}
      ${canEdit()? `<button class="btn btn-ghost btn-sm" onclick="editProjectModal('${id}')">Edit board</button>`:''}
      ${canDeleteBoard()? `<button class="btn btn-ghost btn-sm" style="color:var(--red)" onclick="deleteProjectModal('${id}')">Delete board</button>`:''}
@@ -1608,6 +1623,12 @@ async function renderProject(id){
   S._fields = fields||[]; S._groups = groups||[];
   S._subs = {};
   (sc||[]).forEach(s=>{ const o=S._subs[s.task_id]||(S._subs[s.task_id]={done:0,total:0}); o.total++; if(s.status==='done') o.done++; });
+  if(boardMode==='report'){
+    C.innerHTML = '<div id="board-body"></div>';
+    renderBoardReport(id);
+    return;
+  }
+  widgetProjScope = null;
   C.innerHTML = filterBarHTML(id) + '<div id="board-body"></div>';
   renderBoardBody(id);
 }
@@ -1780,7 +1801,121 @@ function tvShowMenu(anchor, opts, renderOpt, onPick, withSearch, includeClear){
   }
   setTimeout(()=>document.addEventListener('mousedown', tvMenuOutside),0);
 }
+/* ---- formula columns ----------------------------------------------------
+   A small, safe expression language — no eval(). Supports numbers, "text",
+   {Field} references (core + custom, by name), + - * / & comparisons, and
+   the usual sheet functions. */
+function fxEval(expr, t, depth=0){
+  if(!expr || !expr.trim()) throw new Error('The formula is empty');
+  const flds = S._fields||[];
+  const res = name=>{
+    const n = name.trim().toLowerCase();
+    const core = {
+      'name': t.title??'', 'title': t.title??'',
+      'status': (STATUSES.find(x=>x.k===t.status)||{}).label||t.status||'',
+      'priority': (PRIORITIES.find(x=>x.k===t.priority)||{}).label||t.priority||'',
+      'assignee': (prof(t.assignee_id)||{}).full_name||'',
+      'due date': t.due_date||'', 'due': t.due_date||'',
+      'group': ((S._groups||[]).find(g=>g.id===t.group_id)||{}).name||'',
+      'created': (t.created_at||'').slice(0,10),
+    };
+    if(n in core) return core[n];
+    const fld = flds.find(x=>x.label.toLowerCase()===n);
+    if(!fld) throw new Error('Unknown field {'+name+'}');
+    if(fld.ftype==='formula'){
+      if(depth>=3) throw new Error('Formulas reference each other in a loop');
+      return fxEval((fld.options&&fld.options.expr)||'', t, depth+1);
+    }
+    let v = (t.custom||{})[fld.id];
+    if(fld.ftype==='person') return (prof(v)||{}).full_name||'';
+    return v==null? '' : v;
+  };
+  const toks=[]; let i=0; const src=expr;
+  while(i<src.length){
+    const c=src[i];
+    if(/\s/.test(c)){i++;continue;}
+    if(c==='{'){ const j=src.indexOf('}',i); if(j<0) throw new Error('A { is missing its }'); toks.push({t:'field',v:src.slice(i+1,j)}); i=j+1; continue; }
+    if(c==='"'||c==="'"){ const q=c; let j=i+1,buf=''; while(j<src.length&&src[j]!==q){buf+=src[j++];} if(j>=src.length) throw new Error('A quote is not closed'); toks.push({t:'str',v:buf}); i=j+1; continue; }
+    if(/[0-9.]/.test(c)){ let j=i; while(j<src.length&&/[0-9.]/.test(src[j]))j++; toks.push({t:'num',v:parseFloat(src.slice(i,j))}); i=j; continue; }
+    if(/[A-Za-z_]/.test(c)){ let j=i; while(j<src.length&&/[A-Za-z_0-9]/.test(src[j]))j++; toks.push({t:'id',v:src.slice(i,j).toUpperCase()}); i=j; continue; }
+    if(c==='<'&&src[i+1]==='>'){toks.push({t:'op',v:'<>'});i+=2;continue;}
+    if((c==='<'||c==='>')&&src[i+1]==='='){toks.push({t:'op',v:c+'='});i+=2;continue;}
+    if('+-*/&(),=<>'.includes(c)){toks.push({t:'op',v:c});i++;continue;}
+    throw new Error('Unexpected character "'+c+'"');
+  }
+  let p=0;
+  const peek=()=>toks[p], eat=v=>{const k=toks[p]; if(!k||(v&&k.v!==v)) throw new Error('Expected '+(v||'more')); p++; return k;};
+  const num=x=>{ const n=typeof x==='number'?x:parseFloat(x); if(isNaN(n)) throw new Error('"'+x+'" is not a number'); return n; };
+  const truthy=x=> x===true || x==='true' || (typeof x==='number'&&x!==0) || (typeof x==='string'&&x!==''&&x.toLowerCase()!=='false');
+  function E(){ let a=A(); while(peek()&&peek().t==='op'&&['=','<>','<','>','<=','>='].includes(peek().v)){ const op=eat().v, b=A();
+    if(op==='=') a=String(a??'').toLowerCase()===String(b??'').toLowerCase();
+    else if(op==='<>') a=String(a??'').toLowerCase()!==String(b??'').toLowerCase();
+    else a= op==='<'? num(a)<num(b) : op==='>'? num(a)>num(b) : op==='<='? num(a)<=num(b) : num(a)>=num(b); }
+    return a; }
+  function A(){ let a=M(); while(peek()&&peek().t==='op'&&['+','-','&'].includes(peek().v)){ const op=eat().v, b=M();
+    if(op==='&') a=String(a??'')+String(b??'');
+    else if(op==='+'){ const x=parseFloat(a), y=parseFloat(b); a=(!isNaN(x)&&!isNaN(y))? x+y : String(a??'')+String(b??''); }
+    else a=num(a)-num(b); }
+    return a; }
+  function M(){ let a=U(); while(peek()&&peek().t==='op'&&['*','/'].includes(peek().v)){ const op=eat().v, b=U(); a= op==='*'? num(a)*num(b) : num(a)/num(b); } return a; }
+  function U(){ if(peek()&&peek().t==='op'&&peek().v==='-'){ eat(); return -num(U()); } return P(); }
+  function P(){
+    const k=peek(); if(!k) throw new Error('The formula ends too early');
+    if(k.t==='num'){eat();return k.v;}
+    if(k.t==='str'){eat();return k.v;}
+    if(k.t==='field'){eat();return res(k.v);}
+    if(k.t==='op'&&k.v==='('){eat('('); const v=E(); eat(')'); return v;}
+    if(k.t==='id'){ const name=eat().v;
+      if(name==='TRUE') return true; if(name==='FALSE') return false;
+      if(name==='TODAY' && !(peek()&&peek().v==='(')) return new Date().toISOString().slice(0,10);
+      eat('('); const args=[];
+      if(!(peek()&&peek().v===')')){ args.push(E()); while(peek()&&peek().v===','){eat(','); args.push(E());} }
+      eat(')');
+      return fxCall(name,args,num,truthy);
+    }
+    throw new Error('Unexpected "'+(k.v??'?')+'"');
+  }
+  const out=E();
+  if(p<toks.length) throw new Error('Unexpected "'+toks[p].v+'" near the end');
+  return out;
+}
+function fxCall(name,a,num,truthy){
+  const D=s=>{ const d=new Date(s); if(isNaN(d)) throw new Error('"'+s+'" is not a date'); return d; };
+  switch(name){
+    case 'CONCATENATE': return a.map(x=>String(x??'')).join('');
+    case 'UPPER': return String(a[0]??'').toUpperCase();
+    case 'LOWER': return String(a[0]??'').toLowerCase();
+    case 'TRIM':  return String(a[0]??'').trim();
+    case 'LEN':   return String(a[0]??'').length;
+    case 'LEFT':  return String(a[0]??'').slice(0, num(a[1]));
+    case 'RIGHT': return String(a[0]??'').slice(-num(a[1]));
+    case 'REPLACE': return String(a[0]??'').split(String(a[1]??'')).join(String(a[2]??''));
+    case 'IF':  return truthy(a[0])? a[1] : (a.length>2? a[2] : '');
+    case 'AND': return a.every(truthy);
+    case 'OR':  return a.some(truthy);
+    case 'NOT': return !truthy(a[0]);
+    case 'ROUND': { const d=a.length>1? num(a[1]):0; return Math.round(num(a[0])*Math.pow(10,d))/Math.pow(10,d); }
+    case 'ABS': return Math.abs(num(a[0]));
+    case 'MIN': return Math.min(...a.map(num));
+    case 'MAX': return Math.max(...a.map(num));
+    case 'SUM': return a.reduce((x,y)=>x+num(y),0);
+    case 'AVERAGE': return a.length? a.reduce((x,y)=>x+num(y),0)/a.length : 0;
+    case 'DAYS': return Math.round((D(a[0])-D(a[1]))/86400000);
+    case 'TODAY': return new Date().toISOString().slice(0,10);
+    default: throw new Error(name+' is not a known function');
+  }
+}
+function fxFormat(v){
+  if(typeof v==='number') return String(Math.round(v*100)/100);
+  if(v===true) return 'Yes'; if(v===false) return 'No';
+  return String(v??'');
+}
+function fxDisplay(f, t){
+  try{ return `<span class="tv-fxv">${esc(fxFormat(fxEval((f.options&&f.options.expr)||'', t)))}</span>`; }
+  catch(e){ return `<span class="tv-fxerr" title="${esc(e.message)}">⚠</span>`; }
+}
 function tvCell(t, f){
+  if(f.ftype==='formula') return fxDisplay(f, t);
   const v = (t.custom||{})[f.id];
   if(f.ftype==='checkbox') return `<input type="checkbox" ${v?'checked':''} ${canEdit()?`onchange="tvCustom('${t.id}','${f.id}', this.checked)"`:'disabled'}>`;
   if(f.ftype==='number')   return tvPickHTML('number', t.id, f.id, true, v);
@@ -1802,7 +1937,7 @@ function tvRowHTML(t, flds, gc){
   const arch = !!t.archived_at;
   return `<tr class="tv-row${tvSel.has(t.id)?' rowsel':''}${arch?' tv-arch':''}" data-tid="${t.id}" ${gc?`style="--gcol:${gc}"`:''}>
     ${canEdit()?`<td class="tv-check"><input type="checkbox" ${tvSel.has(t.id)?'checked':''} onchange="tvSelToggle('${t.id}',this.checked)"></td>`:''}
-    <td class="tv-name"><div class="tv-open" draggable="${canEdit()&&!arch}" ondragstart="tvDragStart(event,'${t.id}')" ondragend="tvDragEnd(event)" onclick="openTask('${t.id}')">${esc(t.title)}${sc&&sc.total? `<span class="subchip">${sc.done}/${sc.total}</span>`:''}</div>${arch&&canEdit()?`<span class="tv-restore" onclick="event.stopPropagation();tvUnarchive('${t.id}')">Restore</span>`:''}</td>
+    <td class="tv-name"><span class="tv-dots" title="Task options" onclick="event.stopPropagation();rowMenu(this,'${t.id}')">⋯</span><div class="tv-open" draggable="${canEdit()&&!arch}" ondragstart="tvDragStart(event,'${t.id}')" ondragend="tvDragEnd(event)" onclick="openTask('${t.id}')">${esc(t.title)}${sc&&sc.total? `<span class="subchip">${sc.done}/${sc.total}</span>`:''}</div>${arch&&canEdit()?`<span class="tv-restore" onclick="event.stopPropagation();tvUnarchive('${t.id}')">Restore</span>`:''}</td>
     <td>${tvPickHTML('status', t.id, 'status', false, t.status, t)}</td>
     <td>${tvPickHTML('people', t.id, 'assignee_id', false, t.assignee_id, t)}</td>
     <td>${tvPickHTML('due', t.id, 'due_date', false, t.due_date, t)}</td>
@@ -1950,6 +2085,85 @@ function tvBulkDelete(){
   };
   setTimeout(()=>inp.focus(), 30);
 }
+/* ---- per-row task menu (monday-style ⋯) ---- */
+function rowMenu(anchor, tid){
+  const t = (S._tasksAll||[]).find(x=>x.id===tid); if(!t) return;
+  const items = [
+    {label:'Open task', fn:()=>openTask(tid)},
+    {label:'Copy task link', fn:()=>copyTaskLink(tid)},
+  ];
+  if(canEdit() && !t.archived_at){
+    items.push('-');
+    items.push({label:'Move to top of group', fn:()=>taskMoveTop(tid)});
+    if((S._groups||[]).length) items.push({label:'Move to group…', fn:()=>taskMoveGroup(anchor, tid)});
+    items.push({label:'Move to another board…', fn:()=>taskMoveBoard(anchor, tid)});
+    items.push({label:'Duplicate', fn:()=>taskDuplicate(tid)});
+    items.push({label:'New task below', fn:()=>newTaskModal(t.project_id, t.status, t.group_id)});
+    items.push('-');
+    items.push({label:'Archive', fn:()=>taskArchiveOne(tid)});
+    if(isAdmin()) items.push({label:'Delete', danger:true, fn:()=>rowDelete(tid)});
+  }
+  ctxMenu(anchor, items);
+}
+function copyTaskLink(tid){
+  const url = location.origin + location.pathname + '#/task/' + tid;
+  const done = ()=>toast('Task link copied');
+  if(navigator.clipboard?.writeText) navigator.clipboard.writeText(url).then(done, ()=>prompt('Copy this link:', url));
+  else prompt('Copy this link:', url);
+}
+async function taskMoveTop(tid){
+  const t=(S._tasksAll||[]).find(x=>x.id===tid); if(!t) return;
+  const peers=(S._tasksAll||[]).filter(x=>x.group_id===t.group_id && x.id!==tid);
+  const pos = Math.min(0, ...peers.map(x=>x.position||0)) - 1;
+  const {error}=await db.from('tasks').update({position:pos}).eq('id',tid);
+  if(error) return toast(error.message, true);
+  t.position=pos; renderBoardBody(t.project_id);
+}
+function taskMoveGroup(anchor, tid){
+  const t=(S._tasksAll||[]).find(x=>x.id===tid); if(!t) return;
+  tvShowMenu(anchor, (S._groups||[]).filter(g=>g.id!==t.group_id).map(g=>({v:g.id,l:g.name})), o=>esc(o.l),
+    async v=>{ if(!v) return;
+      const {error}=await db.from('tasks').update({group_id:v}).eq('id',tid);
+      if(error) return toast(error.message, true);
+      t.group_id=v; renderBoardBody(t.project_id); toast('Moved to '+esc((S._groups.find(g=>g.id===v)||{}).name||'group'));
+    }, (S._groups||[]).length>5, false);
+}
+function taskMoveBoard(anchor, tid){
+  const t=(S._tasksAll||[]).find(x=>x.id===tid); if(!t) return;
+  const boards = S.projects.filter(p=>p.id!==t.project_id && p.status==='active');
+  if(!boards.length) return toast('No other board to move to', true);
+  tvShowMenu(anchor, boards.map(p=>({v:p.id,l:p.name})), o=>esc(o.l),
+    async v=>{ if(!v) return;
+      const {error}=await db.from('tasks').update({project_id:v, group_id:null}).eq('id',tid);
+      if(error) return toast(error.message, true);
+      S._tasksAll = S._tasksAll.filter(x=>x.id!==tid); tvApplyArch();
+      renderBoardBody(t.project_id);
+      toast('Moved to '+esc((projById(v)||{}).name||'board'));
+    }, boards.length>5, false);
+}
+async function taskDuplicate(tid){
+  const t=(S._tasksAll||[]).find(x=>x.id===tid); if(!t) return;
+  const {data, error}=await db.from('tasks').insert({
+    project_id:t.project_id, group_id:t.group_id, title:t.title+' (copy)',
+    description:t.description, status:t.status, priority:t.priority,
+    assignee_id:t.assignee_id, due_date:t.due_date, tags:t.tags,
+    custom:t.custom||{}, created_by:S.me.id, position:(t.position||0)+0.5,
+  }).select().single();
+  if(error) return toast(error.message, true);
+  S._tasksAll.push(data); tvApplyArch(); renderBoardBody(t.project_id);
+  toast('Task duplicated');
+}
+async function taskArchiveOne(tid){
+  const t=(S._tasksAll||[]).find(x=>x.id===tid); if(!t) return;
+  const at=new Date().toISOString();
+  const {error}=await db.from('tasks').update({archived_at:at}).eq('id',tid);
+  if(error) return toast(error.message, true);
+  t.archived_at=at; tvApplyArch(); renderBoardBody(t.project_id);
+  toastUndo('Task archived', ()=>tvUnarchive(tid));
+}
+function rowDelete(tid){
+  tvSel.clear(); tvSel.add(tid); tvBulkDelete();
+}
 function tvQuickAdd(e, pid, gid){
   if(e.key!=='Enter') return;
   const inp=e.target, title=inp.value.trim(); if(!title) return;
@@ -2036,14 +2250,22 @@ async function tvCustom(tid, fid, val){
 function addColumnModal(pid){ columnModal(pid, null); }
 function editColumnModal(fid, pid){ const f=(S._fields||[]).find(x=>x.id===fid); if(f) columnModal(pid, f); }
 function columnModal(pid, f){
-  const types=[['text','Text'],['number','Number'],['date','Date'],['select','Dropdown'],['checkbox','Checkbox'],['person','Person'],['brand','Brand']];
+  const types=[['text','Text'],['number','Number'],['date','Date'],['select','Dropdown'],['checkbox','Checkbox'],['person','Person'],['brand','Brand'],['formula','Formula']];
   const m = modal(`<div class="modal-head"><h2>${f?'Edit column':'New column'}</h2><button class="x" onclick="closeModals()">✕</button></div>
     <div class="modal-body">
       <label>Column name <span class="req">*</span></label><input id="cf-label" value="${f? esc(f.label):''}" placeholder="e.g. Store Location">
       <label>Type</label><select id="cf-type" ${f?'disabled':''}>${types.map(([k,l])=>`<option value="${k}" ${f&&f.ftype===k?'selected':''}>${l}</option>`).join('')}</select>
       <div id="cf-opts-wrap" style="display:${(f? f.ftype:'text')==='select'?'block':'none'}">
         <label>Dropdown options (one per line)</label>
-        <textarea id="cf-opts" rows="4" placeholder="Option A&#10;Option B">${f? esc((f.options||[]).join('\n')):''}</textarea>
+        <textarea id="cf-opts" rows="4" placeholder="Option A&#10;Option B">${f && Array.isArray(f.options)? esc(f.options.join('\n')):''}</textarea>
+      </div>
+      <div id="cf-fx-wrap" style="display:${(f? f.ftype:'text')==='formula'?'block':'none'}">
+        <label>Formula</label>
+        <textarea id="cf-fx" rows="3" spellcheck="false" style="font-family:ui-monospace,Menlo,monospace;font-size:13px" placeholder='IF({Status} = "Done", "✓", DAYS({Due date}, TODAY()) & " days left")'>${f && f.options && f.options.expr? esc(f.options.expr):''}</textarea>
+        <div style="font-size:11.5px;color:var(--ink3);margin:7px 0 4px">Click to insert a field:</div>
+        <div id="cf-fx-fields" style="display:flex;flex-wrap:wrap;gap:5px"></div>
+        <div style="font-size:11.5px;color:var(--ink3);margin:9px 0 4px">Functions: <span style="font-family:ui-monospace,Menlo,monospace">CONCATENATE UPPER LOWER LEFT RIGHT LEN REPLACE IF AND OR NOT ROUND ABS MIN MAX SUM AVERAGE DAYS TODAY</span> · text joins with <b>&amp;</b>, numbers use <b>+ − × ÷</b></div>
+        <div id="cf-fx-prev" style="margin-top:9px;padding:8px 11px;border:1px solid var(--line);border-radius:8px;background:var(--gray-soft);font-size:12.5px;color:var(--ink2)">Preview appears as you type</div>
       </div>
       ${f? `<p style="color:var(--ink3);font-size:12.5px;margin-top:10px">Type cannot be changed after creation. Deleting a column keeps task data but hides it.</p>`:''}
     </div>
@@ -2052,7 +2274,31 @@ function columnModal(pid, f){
       <button class="btn btn-ghost" onclick="closeModals()">Cancel</button>
       <button class="btn btn-primary" id="cf-save">${f?'Save':'Add column'}</button>
     </div>`);
-  m.querySelector('#cf-type').onchange = e=>{ m.querySelector('#cf-opts-wrap').style.display = e.target.value==='select'?'block':'none'; };
+  const syncType = v=>{
+    m.querySelector('#cf-opts-wrap').style.display = v==='select'?'block':'none';
+    m.querySelector('#cf-fx-wrap').style.display   = v==='formula'?'block':'none';
+  };
+  m.querySelector('#cf-type').onchange = e=> syncType(e.target.value);
+  // formula builder wiring: field chips + live preview against a real row
+  const fxIn = m.querySelector('#cf-fx'), fxPrev = m.querySelector('#cf-fx-prev');
+  const chipNames = ['Name','Status','Assignee','Due date','Priority','Group']
+    .concat((S._fields||[]).filter(x=>!f || x.id!==f.id).map(x=>x.label));
+  m.querySelector('#cf-fx-fields').innerHTML = chipNames.map(n=>`<button type="button" class="fx-chip">{${esc(n)}}</button>`).join('');
+  m.querySelectorAll('.fx-chip').forEach(ch=> ch.onclick = ()=>{
+    const pos = fxIn.selectionStart ?? fxIn.value.length;
+    fxIn.value = fxIn.value.slice(0,pos) + ch.textContent + fxIn.value.slice(fxIn.selectionEnd ?? pos);
+    fxIn.focus(); fxIn.selectionStart = fxIn.selectionEnd = pos + ch.textContent.length;
+    fxPreview();
+  });
+  const sampleTask = ()=> (S._tasks||[]).find(t=>!t.archived_at) || (S._tasks||[])[0] || {title:'Sample task', status:'todo', priority:'normal', custom:{}, created_at:new Date().toISOString()};
+  function fxPreview(){
+    const src = fxIn.value.trim();
+    if(!src){ fxPrev.innerHTML = 'Preview appears as you type'; return; }
+    try{ fxPrev.innerHTML = 'Preview: <b>'+esc(fxFormat(fxEval(src, sampleTask())))+'</b>'; fxPrev.style.color='var(--ink)'; }
+    catch(e){ fxPrev.innerHTML = '⚠ '+esc(e.message); fxPrev.style.color='var(--amber)'; }
+  }
+  fxIn.oninput = fxPreview;
+  if(f && f.ftype==='formula') fxPreview();
   if(f){
     m.querySelector('#cf-del').onclick = async ()=>{
       const {error}=await db.from('project_fields').delete().eq('id',f.id);
@@ -2063,8 +2309,15 @@ function columnModal(pid, f){
   m.querySelector('#cf-save').onclick = async ()=>{
     const label=m.querySelector('#cf-label').value.trim(); if(!label) return toast('Column name is required', true);
     const ftype=m.querySelector('#cf-type').value;
-    const options = ftype==='select'? m.querySelector('#cf-opts').value.split('\n').map(s=>s.trim()).filter(Boolean) : [];
+    let options = ftype==='select'? m.querySelector('#cf-opts').value.split('\n').map(s=>s.trim()).filter(Boolean) : [];
     if(ftype==='select' && !options.length) return toast('Add at least one dropdown option', true);
+    if(ftype==='formula'){
+      const expr = m.querySelector('#cf-fx').value.trim();
+      if(!expr) return toast('Write a formula first', true);
+      try{ fxEval(expr, {title:'x', status:'todo', priority:'normal', custom:{}, created_at:new Date().toISOString()}); }
+      catch(e){ if(/Unknown field|not a known function|missing|not closed|Unexpected|too early|loop/i.test(e.message)) return toast('Formula problem: '+e.message, true); }
+      options = {expr};
+    }
     let error;
     if(f){ ({error} = await db.from('project_fields').update({label, options}).eq('id',f.id)); }
     else { ({error} = await db.from('project_fields').insert({project_id:pid, label, ftype, options, position:(S._fields||[]).length, created_by:S.me.id})); }
@@ -2144,6 +2397,13 @@ function assigneeOptions(projectId, selected){
   // staff can assign anyone; also include project members (partners)
   return S.profiles.filter(p=>p.active).map(p=>
     `<option value="${p.id}" ${p.id===selected?'selected':''}>${esc(p.full_name)}</option>`).join('');
+}
+/* #/task/<id> — a shareable link straight to one task */
+async function openTaskRoute(id){
+  const {data:t} = await db.from('tasks').select('id,project_id').eq('id',id).single();
+  if(!t){ toast('Task not found — it may have been deleted or you may not have access', true); location.hash='#/home'; return; }
+  location.hash = '#/project/' + t.project_id;
+  setTimeout(()=>openTask(id), 450);
 }
 async function openTask(id){
   const [{data:t}, {data:chk}, {data:comments}, {data:atts}, {data:subs}, {data:hist}] = await Promise.all([
@@ -2729,15 +2989,70 @@ function statRowHTML(k){
       <div class="stat"><div class="n ${k.pendingAppr?'amber':''}">${k.pendingAppr}</div><div class="l">Pending approvals</div></div>
     </div>`;
 }
-/* Which widget set is on screen: null = personal dashboard, else a workspace id. */
-let widgetScope = null;
-const widgetsEditable = ()=> widgetScope ? canEdit() : isStaff();
-function reRenderWidgets(){ widgetScope ? renderWorkspaceReport(widgetScope) : renderDashboard(); }
+/* Which widget set is on screen: personal dashboard, a workspace report, or one board's report. */
+let widgetScope = null;        // workspace id
+let widgetProjScope = null;    // board (project) id
+const widgetsEditable = ()=> (widgetScope||widgetProjScope) ? canEdit() : isStaff();
+function reRenderWidgets(){
+  if(widgetProjScope) renderBoardReport(widgetProjScope);
+  else if(widgetScope) renderWorkspaceReport(widgetScope);
+  else renderDashboard();
+}
+
+/* ================= BOARD REPORT ================= */
+/* One board's numbers and widgets — shared with everyone who can open the board. */
+async function renderBoardReport(pid){
+  const p = projById(pid); if(!p){ location.hash='#/home'; return; }
+  widgetProjScope = pid; widgetScope = null;
+  const C=$('#board-body') || $('#content');
+  C.innerHTML='<div class="empty">Loading report…</div>';
+  const [{data:reqs},{data:wdg}] = await Promise.all([
+    db.from('requests').select('id,ticket_no,title,status,sla_due_at,completed_at,created_at,request_type_id,decided_at,submitted_by,assigned_to').eq('project_id',pid),
+    db.from('dashboard_widgets').select('*').eq('project_id',pid).order('position'),
+  ]);
+  const tasks = (S._tasksAll||[]).filter(t=>!t.archived_at);
+  const open = tasks.filter(t=>t.status!=='done');
+  const overdue = open.filter(t=>t.due_date && daysDiff(t.due_date)<0);
+  const dueWeek = open.filter(t=>t.due_date && daysDiff(t.due_date)>=0 && daysDiff(t.due_date)<=7);
+  const doneTasks = tasks.filter(t=>t.status==='done');
+  const onTime = doneTasks.filter(t=>!t.due_date || (t.completed_at && new Date(t.completed_at) <= new Date(t.due_date+'T23:59:59')));
+  const onTimePct = doneTasks.length? Math.round(onTime.length/doneTasks.length*100) : null;
+  const requests = reqs||[];
+  const openReqs = requests.filter(r=>['submitted','in_review','approved','in_progress'].includes(r.status));
+  const slaBreach = openReqs.filter(r=>r.sla_due_at && new Date(r.sla_due_at)<Date.now());
+  S._dashCtx = {tasks, requests, open, overdue, dueWeek, doneTasks, openReqs, slaBreach,
+                scopeProjects:[p], wsSel:p.workspace_id, groups:S._groups||[]};
+  S._widgets = wdg||[];
+  if(!S._widgets.length && canEdit() && !(S._seededBoardReports?.[pid])){
+    (S._seededBoardReports = S._seededBoardReports||{})[pid] = true;
+    const defaults = [
+      {wtype:'donut', title:'Tasks by status',    config:{entity:'tasks', groupBy:'status'},   position:0},
+      {wtype:'bar',   title:'Open tasks by group',config:{entity:'tasks', groupBy:'group'},    position:1},
+      {wtype:'bar',   title:'Workload by person', config:{entity:'tasks', groupBy:'assignee'}, position:2},
+      {wtype:'list',  title:'Overdue',            config:{entity:'tasks', show:'overdue'},     position:3},
+    ].map(x=>({...x, project_id:pid, user_id:S.me.id}));
+    const {data:seeded, error} = await db.from('dashboard_widgets').insert(defaults).select();
+    if(!error) S._widgets = seeded||[];
+  }
+  C.innerHTML = `
+    <div class="stat-row">
+      <div class="stat"><div class="n accent">${open.length}</div><div class="l">Open tasks</div></div>
+      <div class="stat"><div class="n ${overdue.length?'red':''}">${overdue.length}</div><div class="l">Overdue</div></div>
+      <div class="stat"><div class="n amber">${dueWeek.length}</div><div class="l">Due within 7 days</div></div>
+      <div class="stat"><div class="n ${onTimePct===null?'':onTimePct>=80?'green':onTimePct>=50?'amber':'red'}">${onTimePct===null?'—':onTimePct+'%'}</div><div class="l">On-time completion</div></div>
+      <div class="stat"><div class="n">${doneTasks.length}</div><div class="l">Done</div></div>
+      ${requests.length? `<div class="stat"><div class="n ${slaBreach.length?'red':'green'}">${slaBreach.length}</div><div class="l">SLA breached</div></div>`:''}
+    </div>
+    <div class="section-title" style="margin-top:22px;display:flex;align-items:center;gap:12px">Widgets
+      <span style="flex:1"></span>${canEdit()? `<button class="btn btn-primary btn-sm" onclick="widgetModal(null,null,'${pid}')">＋ Add widget</button>`:''}</div>
+    <div class="wgrid" id="wgrid">${(S._widgets||[]).map(x=>widgetCard(x)).join('')
+      || `<div class="card empty" style="grid-column:1/-1">${canEdit()? 'No widgets yet — add the first one.':'No widgets on this report yet.'}</div>`}</div>`;
+}
 
 let dashWs = 'all';
 async function renderDashboard(){
   if(!isStaff() && !isRequester()){ location.hash='#/home'; return; }
-  widgetScope = null;
+  widgetScope = null; widgetProjScope = null;
   setTopbar('Dashboard', `<select id="dash-ws" style="width:auto;min-width:200px" onchange="dashWs=this.value;renderDashboard()">
     <option value="all">All workspaces</option>
     ${S.workspaces.map(w=>`<option value="${w.id}" ${dashWs===w.id?'selected':''}>${esc(w.name)}</option>`).join('')}</select>`);
@@ -2774,7 +3089,7 @@ async function renderDashboard(){
 /* A shared report per workspace — everyone on the team sees the same widgets. */
 async function renderWorkspaceReport(wsId){
   const w = wsById(wsId); if(!w){ location.hash='#/home'; return; }
-  widgetScope = wsId;
+  widgetScope = wsId; widgetProjScope = null;
   const C=$('#content'); C.innerHTML='<div class="empty">Loading report…</div>';
   const [k, wdg] = await Promise.all([
     buildDashCtx(wsId),
@@ -2806,7 +3121,7 @@ async function renderWorkspaceReport(wsId){
 /* ================= DASHBOARD WIDGETS ================= */
 const W_SHOWS_TASKS = [['open','Open'],['overdue','Overdue'],['due7','Due within 7 days'],['done','Done'],['blocked','Blocked'],['review','In review'],['all','All']];
 const W_SHOWS_REQS  = [['open','Open'],['sla','SLA breached'],['all','All']];
-const W_GROUPS_TASKS= [['status','Status'],['priority','Priority'],['workspace','Workspace'],['project','Board'],['assignee','Assignee']];
+const W_GROUPS_TASKS= [['status','Status'],['priority','Priority'],['workspace','Workspace'],['project','Board'],['assignee','Assignee'],['group','Group']];
 const W_GROUPS_REQS = [['status','Status'],['type','Request type']];
 
 function widgetTaskRows(cfg){
@@ -2836,6 +3151,7 @@ function widgetGroups(cfg){
   if(cfg.groupBy==='workspace') return (c.wsSel? c.scopeProjects.map(p=>({label:p.name,color:p.color,n:c.open.filter(t=>t.project_id===p.id).length}))
     : S.workspaces.map(w=>{ const pids=new Set(S.projects.filter(p=>p.workspace_id===w.id).map(p=>p.id)); return {label:w.name,color:w.color,n:c.open.filter(t=>pids.has(t.project_id)).length}; })).filter(x=>x.n>0).sort((a,b)=>b.n-a.n);
   if(cfg.groupBy==='project') return c.scopeProjects.map(p=>({label:p.name, color:p.color, n:c.open.filter(t=>t.project_id===p.id).length})).filter(x=>x.n>0).sort((a,b)=>b.n-a.n).slice(0,10);
+  if(cfg.groupBy==='group') return (c.groups||[]).map(g=>({label:g.name, color:g.color, n:c.open.filter(t=>t.group_id===g.id).length})).filter(x=>x.n>0);
   if(cfg.groupBy==='assignee') return S.profiles.map(p=>({label:p.full_name, color:p.avatar_color||'#0F766E', n:c.open.filter(t=>t.assignee_id===p.id).length})).filter(x=>x.n>0).sort((a,b)=>b.n-a.n).slice(0,8);
   return STATUSES.map(s=>({label:s.label, color:s.color, n:c.tasks.filter(t=>t.status===s.k).length})).filter(x=>x.n>0);
 }
@@ -2900,9 +3216,10 @@ async function deleteWidget(id){
   document.getElementById('wgrid').innerHTML = S._widgets.map(widgetCard).join('') || `<div class="card empty" style="grid-column:1/-1">No widgets yet — add your first one.</div>`;
   toast('Widget removed');
 }
-function widgetModal(id, wsId){
+function widgetModal(id, wsId, projId){
   const w = id? S._widgets.find(x=>x.id===id): null;
   const scope = wsId || (w? w.workspace_id : null) || widgetScope || null;
+  const pScope = projId || (w? w.project_id : null) || widgetProjScope || null;
   const cfg = w? (w.config||{}) : {entity:'tasks', show:'open', groupBy:'status'};
   const types=[['stat','Number','A single big number'],['bar','Bar chart','Compare groups side by side'],['donut','Donut','Share of a total'],['list','List','The items themselves'],['progress','Progress','Done vs total']];
   const m = modal(`<div class="modal-head"><h2>${w?'Edit widget':'Add widget'}</h2><button class="x" onclick="closeModals()">✕</button></div>
@@ -2917,7 +3234,7 @@ function widgetModal(id, wsId){
         <div id="wm-dim"></div>
       </div>
       <div class="chk" id="wm-mine-wrap" style="margin-top:6px"><input type="checkbox" id="wm-mine" ${cfg.mine?'checked':''}> <span>Only items assigned to me</span></div>
-      <p style="color:var(--ink3);font-size:12.5px;margin-top:10px">${scope? 'This widget lives on the workspace report — everyone on the team sees it.' : 'Widgets follow the workspace selector at the top of the dashboard, and only you see them.'}</p>
+      <p style="color:var(--ink3);font-size:12.5px;margin-top:10px">${pScope? 'This widget lives on this board\'s report — everyone who can open the board sees it.' : scope? 'This widget lives on the workspace report — everyone on the team sees it.' : 'Widgets follow the workspace selector at the top of the dashboard, and only you see them.'}</p>
     </div>
     <div class="modal-foot"><button class="btn btn-ghost" onclick="closeModals()">Cancel</button><button class="btn btn-primary" id="wm-save">${w?'Save':'Add widget'}</button></div>`);
   window.wmRefresh = ()=>{
@@ -2947,7 +3264,7 @@ function widgetModal(id, wsId){
     }
     let error;
     if(w){ ({error} = await db.from('dashboard_widgets').update({wtype, title, config}).eq('id',w.id)); }
-    else { ({error} = await db.from('dashboard_widgets').insert({user_id:S.me.id, workspace_id:scope, wtype, title, config, position:(S._widgets||[]).length})); }
+    else { ({error} = await db.from('dashboard_widgets').insert({user_id:S.me.id, workspace_id:pScope? null : scope, project_id:pScope, wtype, title, config, position:(S._widgets||[]).length})); }
     if(error) return toast(error.message,true);
     closeModals(); toast(w?'Widget updated':'Widget added'); reRenderWidgets();
   };
