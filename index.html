@@ -150,6 +150,39 @@ tr.tv-arch .tv-name .tv-open{text-decoration:line-through}
 .vis-opt.on{border-color:var(--accent);background:var(--accent-soft)}
 .vis-opt .vis-t{font-weight:700;font-size:13.5px;color:var(--ink)}
 .vis-opt .vis-b{font-size:12px;color:var(--ink2);margin-top:2px;line-height:1.45}
+/* ---- @mentions ---- */
+.mention-menu{position:fixed;z-index:600;background:#fff;border:1px solid var(--line);border-radius:11px;box-shadow:0 12px 40px rgba(20,22,40,.18);padding:5px;max-height:230px;overflow-y:auto}
+.mention-menu .mopt{display:flex;align-items:center;gap:8px;padding:7px 9px;border-radius:8px;cursor:pointer;font-size:13px}
+.mention-menu .mopt:hover,.mention-menu .mopt.on{background:var(--accent-soft)}
+.mention{background:var(--accent-soft);color:var(--accent-ink);font-weight:700;border-radius:5px;padding:0 3px}
+/* ---- notification bell ---- */
+#bell-wrap{position:relative;margin-left:10px;flex:none}
+#bell{position:relative;font-size:16px;line-height:1;padding:6px 8px;border-radius:9px;color:var(--ink2)}
+#bell:hover{background:var(--gray-soft)}
+#bell-count{position:absolute;top:0;right:0;min-width:16px;height:16px;padding:0 4px;border-radius:9px;background:var(--red);color:#fff;font-size:10px;font-weight:800;display:flex;align-items:center;justify-content:center}
+#notif-panel{position:absolute;top:40px;right:0;width:340px;background:#fff;border:1px solid var(--line);border-radius:13px;box-shadow:0 16px 48px rgba(20,22,40,.18);z-index:500;overflow:hidden;animation:pop .12s ease}
+.np-head{display:flex;align-items:center;justify-content:space-between;padding:11px 14px;border-bottom:1px solid var(--line);font-size:13.5px}
+.np-head button{font-size:11.5px;font-weight:700;color:var(--accent);padding:2px 4px;border-radius:5px}
+.np-head button:hover{background:var(--accent-soft)}
+.np-body{max-height:390px;overflow-y:auto}
+.np-item{display:flex;gap:9px;padding:11px 14px;border-bottom:1px solid var(--line);cursor:pointer}
+.np-item:hover{background:var(--gray-soft)}
+.np-item.unread{background:var(--accent-soft)}
+.np-item.unread:hover{filter:brightness(.97)}
+.np-txt{font-size:12.5px;line-height:1.45;min-width:0}
+.np-body-txt{color:var(--ink2);margin-top:2px;overflow:hidden;text-overflow:ellipsis;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+.np-when{color:var(--ink3);font-size:11px;margin-top:3px}
+.np-empty{padding:26px 18px;text-align:center;color:var(--ink3);font-size:12.5px;line-height:1.55}
+/* ---- per-board filter bar ---- */
+.bfbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:14px}
+.bfbar .bf-q{width:220px;padding:7px 11px;font-size:13px;border:1px solid var(--line);border-radius:8px;background:#fff}
+.bfbar .bf-sel{padding:7px 10px;font-size:12.5px;font-weight:600;border:1px solid var(--line);border-radius:8px;background:#fff;color:var(--ink2);cursor:pointer;width:auto}
+.bfbar .bf-sel:hover{border-color:var(--ink3)}
+.bfbar .bf-sel.on,.bfbar .bf-q.on{border-color:var(--accent);background:var(--accent-soft);color:var(--accent-ink)}
+.bfbar .bf-clear{font-size:12px;font-weight:700;color:var(--accent);padding:6px 9px;border-radius:8px}
+.bfbar .bf-clear:hover{background:var(--accent-soft)}
+.bfbar .bf-count{font-size:12px;color:var(--ink3);margin-left:auto}
+.ro-field{padding:9px 12px;border:1px solid var(--line);border-radius:8px;background:var(--gray-soft);font-size:13.5px;font-weight:600;color:var(--ink2);display:flex;align-items:center;gap:8px}
 .ws-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .danger-note{background:var(--red-soft);border:1px solid var(--red);border-radius:8px;padding:10px 12px;margin-bottom:12px;font-size:13px;color:var(--red)}
 .tv .subchip{font-size:11.5px;font-weight:700;color:var(--ink3);background:var(--gray-soft);border-radius:6px;padding:2px 7px;margin-left:8px;white-space:nowrap}
@@ -360,6 +393,7 @@ tr.tv-arch .tv-name .tv-open{text-decoration:line-through}
     <div id="topbar">
       <div class="crumb" id="crumb">Home</div>
       <div class="topbar-right" id="topbar-actions"></div>
+      <div id="bell-wrap"><button id="bell" title="Notifications" onclick="toggleNotifPanel(event)">🔔<span id="bell-count" class="hidden">0</span></button></div>
     </div>
     <div id="ten-banner" class="hidden" style="padding:8px 24px;font-size:12.5px;font-weight:600;background:var(--amber-soft);color:var(--amber);border-bottom:1px solid var(--line)"></div>
     <div id="content"></div>
@@ -569,6 +603,7 @@ async function _boot(){
     b.classList.remove('hidden');
   } else b.classList.add('hidden');
   renderSidebar();
+  startNotifPolling();
   navigate(location.hash || '#/home');
 }
 async function refreshCore(){
@@ -674,6 +709,159 @@ function changePasswordModal(){
 function setTopbar(crumb, actionsHtml=''){
   $('#crumb').innerHTML = crumb;
   $('#topbar-actions').innerHTML = actionsHtml;
+}
+
+/* ================= @MENTIONS ================= */
+/* People you can tag: active colleagues, minus yourself. */
+function mentionables(){
+  return (S.profiles||[]).filter(p=>p.active && p.id!==S.me.id);
+}
+/* Attach @-autocomplete to a text input. Chosen people are remembered on the
+   element so a name typed by hand can't accidentally ping the wrong person. */
+function wireMentions(input){
+  if(!input || input._mentionsWired) return;
+  input._mentionsWired = true;
+  input._picked = new Map();           // full_name -> id
+  let menu = null, anchorPos = -1;
+  const close = ()=>{ menu?.remove(); menu=null; anchorPos=-1; };
+  const pick = (p)=>{
+    const v = input.value, before = v.slice(0, anchorPos), after = v.slice(input.selectionStart);
+    input.value = before + '@' + p.full_name + ' ' + after;
+    input._picked.set(p.full_name, p.id);
+    const caret = (before + '@' + p.full_name + ' ').length;
+    input.focus(); input.setSelectionRange(caret, caret);
+    close();
+  };
+  const render = (q)=>{
+    const list = mentionables().filter(p=>p.full_name.toLowerCase().includes(q) || (p.email||'').toLowerCase().includes(q)).slice(0,6);
+    if(!list.length) return close();
+    if(!menu){ menu = document.createElement('div'); menu.className='mention-menu'; document.body.appendChild(menu); }
+    menu.innerHTML = list.map((p,i)=>`<div class="mopt${i===0?' on':''}" data-id="${p.id}">${avatar(p,true)}<span><b>${esc(p.full_name)}</b> <span style="color:var(--ink3)">${esc(p.role)}</span></span></div>`).join('');
+    menu.querySelectorAll('.mopt').forEach(o=> o.onmousedown = e=>{ e.preventDefault(); pick(list.find(p=>p.id===o.dataset.id)); });
+    const r = input.getBoundingClientRect(), h = menu.getBoundingClientRect().height;
+    menu.style.left = r.left+'px';
+    menu.style.top = (r.top - h - 6 > 8 ? r.top - h - 6 : r.bottom + 6) + 'px';
+    menu.style.width = Math.max(240, Math.min(r.width, 340)) + 'px';
+  };
+  input.addEventListener('input', ()=>{
+    const upto = input.value.slice(0, input.selectionStart);
+    const mth = upto.match(/(?:^|\s)@([^@]{0,30})$/);
+    if(!mth) return close();
+    anchorPos = input.selectionStart - mth[1].length - 1;
+    render(mth[1].toLowerCase());
+  });
+  input.addEventListener('keydown', e=>{
+    if(!menu) return;
+    const opts = [...menu.querySelectorAll('.mopt')];
+    let i = opts.findIndex(o=>o.classList.contains('on'));
+    if(e.key==='ArrowDown'||e.key==='ArrowUp'){
+      e.preventDefault();
+      opts[i]?.classList.remove('on');
+      i = e.key==='ArrowDown' ? (i+1)%opts.length : (i-1+opts.length)%opts.length;
+      opts[i].classList.add('on');
+    } else if(e.key==='Enter'||e.key==='Tab'){
+      e.preventDefault();
+      const id = opts[i<0?0:i]?.dataset.id;
+      pick(mentionables().find(p=>p.id===id));
+    } else if(e.key==='Escape'){ close(); }
+  });
+  input.addEventListener('blur', ()=> setTimeout(close, 120));
+}
+/* Which of the picked people are still named in the final text. */
+function extractMentions(input){
+  const text = input.value, ids = [];
+  (input._picked||new Map()).forEach((id,name)=>{ if(text.includes('@'+name) && !ids.includes(id)) ids.push(id); });
+  return ids;
+}
+function renderMentionText(body, mentions){
+  const names = (mentions||[]).map(id=>prof(id)?.full_name).filter(Boolean);
+  let out = esc(body);
+  names.forEach(n=>{ out = out.split(esc('@'+n)).join(`<span class="mention">@${esc(n)}</span>`); });
+  return out;
+}
+/* Post a comment and ping everyone tagged in it. */
+async function postComment(entityType, entityId, entityTitle, input, box){
+  const body = input.value.trim(); if(!body) return null;
+  const mentions = extractMentions(input);
+  const {data, error} = await db.from('comments')
+    .insert({entity_type:entityType, entity_id:entityId, author_id:S.me.id, body, mentions})
+    .select().single();
+  if(error){ toast(error.message, true); return null; }
+  if(mentions.length){
+    const rows = mentions.map(uid=>({
+      user_id:uid, actor_id:S.me.id, kind:'mention',
+      entity_type:entityType, entity_id:entityId,
+      title:entityTitle, body: body.slice(0,180),
+    }));
+    const {error:nErr} = await db.from('notifications').insert(rows);
+    if(nErr) toast('Comment saved, but the notification failed: '+nErr.message, true);
+    else toast(mentions.length===1 ? `${prof(mentions[0])?.full_name||'They'} was notified` : `${mentions.length} people notified`);
+  }
+  if(box){
+    if(box.firstElementChild && !box.firstElementChild.classList.contains('comment')) box.innerHTML='';
+    box.insertAdjacentHTML('beforeend', commentRow(data));
+    box.lastElementChild?.scrollIntoView?.({block:'nearest'});
+  }
+  input.value=''; input._picked?.clear();
+  return data;
+}
+
+/* ================= NOTIFICATIONS ================= */
+let notifPoll = null;
+async function refreshNotifs(){
+  if(!S.me) return;
+  const {data} = await db.from('notifications').select('*').order('created_at',{ascending:false}).limit(30);
+  S._notifs = data||[];
+  const unread = S._notifs.filter(n=>!n.read_at).length;
+  const b = $('#bell-count'); if(!b) return;
+  b.textContent = unread > 99 ? '99+' : unread;
+  b.classList.toggle('hidden', unread===0);
+  const panel = $('#notif-panel'); if(panel) panel.innerHTML = notifPanelHTML();
+}
+function startNotifPolling(){
+  clearInterval(notifPoll);
+  refreshNotifs();
+  notifPoll = setInterval(refreshNotifs, 60000);
+}
+function notifPanelHTML(){
+  const list = S._notifs||[];
+  const unread = list.filter(n=>!n.read_at).length;
+  return `<div class="np-head"><b>Notifications</b>${unread? `<button onclick="markAllNotifsRead()">Mark all read</button>`:''}</div>
+    <div class="np-body">${list.length? list.map(n=>{
+      const who = prof(n.actor_id);
+      return `<div class="np-item ${n.read_at?'':'unread'}" onclick="openNotif('${n.id}')">
+        ${avatar(who,true)}
+        <div class="np-txt"><div><b>${esc(who?.full_name||'Someone')}</b> mentioned you${n.title? ` in <b>${esc(n.title)}</b>`:''}</div>
+          <div class="np-body-txt">${esc(n.body||'')}</div>
+          <div class="np-when">${fmtDateTime(n.created_at)}</div></div>
+      </div>`;
+    }).join('') : '<div class="np-empty">Nothing yet. When someone tags you with @ in a comment, it lands here.</div>'}</div>`;
+}
+function toggleNotifPanel(e){
+  e?.stopPropagation();
+  const open = $('#notif-panel');
+  if(open){ open.remove(); return; }
+  const p = document.createElement('div'); p.id='notif-panel';
+  p.innerHTML = notifPanelHTML();
+  $('#bell-wrap').appendChild(p);
+  p.addEventListener('click', ev=>ev.stopPropagation());
+  const off = ()=>{ $('#notif-panel')?.remove(); document.removeEventListener('click', off); };
+  setTimeout(()=>document.addEventListener('click', off), 0);
+  refreshNotifs();
+}
+async function markAllNotifsRead(){
+  const ids = (S._notifs||[]).filter(n=>!n.read_at).map(n=>n.id);
+  if(!ids.length) return;
+  await db.from('notifications').update({read_at:new Date().toISOString()}).in('id',ids);
+  await refreshNotifs();
+}
+async function openNotif(id){
+  const n = (S._notifs||[]).find(x=>x.id===id); if(!n) return;
+  if(!n.read_at){ await db.from('notifications').update({read_at:new Date().toISOString()}).eq('id',id); }
+  $('#notif-panel')?.remove();
+  await refreshNotifs();
+  if(n.entity_type==='task') openTask(n.entity_id);
+  else if(n.entity_type==='request') openRequest(n.entity_id);
 }
 
 /* ================= PUBLIC FORM (no login) ================= */
@@ -1023,11 +1211,16 @@ async function userWorkspacesModal(uid){
   };
 }
 function newProjectModal(wsId){
-  const m = modal(`<div class="modal-head"><h2>New board</h2><button class="x" onclick="closeModals()">✕</button></div>
+  // Opened from inside a workspace: that workspace is the answer, not a question.
+  const fixedWs = wsId ? wsById(wsId) : null;
+  const m = modal(`<div class="modal-head"><h2>New board${fixedWs? ' in '+esc(fixedWs.name):''}</h2><button class="x" onclick="closeModals()">✕</button></div>
     <div class="modal-body">
       <label>Board name <span class="req">*</span></label><input id="pj-name" placeholder="e.g. Escalations — Q3">
       <label>Description</label><textarea id="pj-desc" rows="2"></textarea>
-      <label>Workspace</label><select id="pj-ws">${S.workspaces.map(w=>`<option value="${w.id}" ${w.id===wsId?'selected':''}>${esc(w.name)}</option>`).join('')}</select>
+      ${fixedWs
+        ? `<label>Workspace</label><div class="ro-field"><span class="ws-dot" style="display:inline-block;background:${fixedWs.color}"></span> ${esc(fixedWs.name)}</div>
+           <input type="hidden" id="pj-ws" value="${fixedWs.id}">`
+        : `<label>Workspace</label><select id="pj-ws">${S.workspaces.map(w=>`<option value="${w.id}">${esc(w.name)}</option>`).join('')}</select>`}
       <label style="margin-top:14px">Who can open this board</label>
       ${visPickerHTML('pj-vis','collaborate')}
       </div>
@@ -1049,19 +1242,58 @@ function newProjectModal(wsId){
 }
 
 /* ================= PROJECT (Board / List) ================= */
-let boardMode = 'board';
+let boardMode = 'table';
+/* Per-board filters. Keyed by board id so each board remembers its own. */
+const boardFilters = {};
+const bfGet = pid => (boardFilters[pid] || (boardFilters[pid] = {q:'', status:'', priority:'', assignee:'', group:''}));
+function bfActiveCount(pid){ const f=bfGet(pid); return ['q','status','priority','assignee','group'].filter(k=>f[k]).length; }
+function bfSet(pid, key, val){ bfGet(pid)[key] = val; renderBoardBody(pid); }
+function bfClear(pid){ boardFilters[pid] = {q:'', status:'', priority:'', assignee:'', group:''}; renderProject(pid); }
+function bfApply(pid, rows){
+  const f = bfGet(pid);
+  const q = f.q.trim().toLowerCase();
+  return rows.filter(t=>
+    (!q || (t.title||'').toLowerCase().includes(q) || (t.description||'').toLowerCase().includes(q))
+    && (!f.status   || t.status===f.status)
+    && (!f.priority || t.priority===f.priority)
+    && (!f.assignee || (f.assignee==='__none__' ? !t.assignee_id : t.assignee_id===f.assignee))
+    && (!f.group    || (f.group==='__none__' ? !t.group_id : t.group_id===f.group))
+  );
+}
+/* People pickers are always searchable — a name is faster to type than to find. */
+function bfPickPerson(btn, pid){
+  const opts = [{v:'__none__', l:'Unassigned'}]
+    .concat((S.profiles||[]).filter(p=>p.active).map(p=>({v:p.id, l:p.full_name})));
+  tvShowMenu(btn, opts, o=>`${o.v==='__none__'?'<span style="width:22px"></span>':avatar(prof(o.v),true)}<span>${esc(o.l)}</span>`,
+    v=>{ bfGet(pid).assignee = v || ''; renderProject(pid); }, true, true);
+}
+function filterBarHTML(pid){
+  const f = bfGet(pid), n = bfActiveCount(pid);
+  const people = (S.profiles||[]).filter(p=>p.active);
+  const sel = (key, label, opts) => `<select class="bf-sel ${f[key]?'on':''}" onchange="bfSet('${pid}','${key}',this.value)">
+      <option value="">${label}</option>
+      ${opts.map(o=>`<option value="${o.v}" ${f[key]===o.v?'selected':''}>${esc(o.l)}</option>`).join('')}</select>`;
+  return `<div class="bfbar">
+    <input class="bf-q ${f.q?'on':''}" placeholder="Search tasks…" value="${esc(f.q)}" oninput="bfSet('${pid}','q',this.value)">
+    ${sel('status','Status', STATUSES.map(s=>({v:s.k,l:s.label})))}
+    ${sel('priority','Priority', PRIORITIES.map(p=>({v:p.k,l:p.label})))}
+    <button class="bf-sel ${f.assignee?'on':''}" onclick="bfPickPerson(this,'${pid}')">${f.assignee? esc(f.assignee==='__none__'?'Unassigned':(prof(f.assignee)?.full_name||'Person')) : 'Person'} ▾</button>
+    ${(S._groups||[]).length? sel('group','Group', (S._groups||[]).map(g=>({v:g.id,l:g.name})).concat([{v:'__none__',l:'No group'}])) : ''}
+    ${n? `<button class="bf-clear" onclick="bfClear('${pid}')">Clear ${n} filter${n>1?'s':''}</button>`:''}
+    <span class="bf-count" id="bf-count"></span>
+  </div>`;
+}
 async function renderProject(id){
   const p = projById(id);
-  if(!p){ // maybe not in cache (partner) — try fetch
+  if(!p){ // maybe not in cache (partner) — try fetch, but never loop on it
     const {data} = await db.from('projects').select('*').eq('id',id).single();
-    if(!data){ location.hash='#/home'; return; }
+    if(!data || data.id!==id){ location.hash='#/home'; return; }
     S.projects.push(data); return renderProject(id);
   }
   const w = wsById(p.workspace_id);
   setTopbar(`<span onclick="location.hash='#/ws/${p.workspace_id}'" style="cursor:pointer">${w? esc(w.name):''}</span> <span>/</span> ${esc(p.name)} ${visChip(p.visibility)}`,
-    `<div class="tabs"><button class="tab ${boardMode==='board'?'active':''}" onclick="boardMode='board';renderProject('${id}')">Board</button>
-     <button class="tab ${boardMode==='list'?'active':''}" onclick="boardMode='list';renderProject('${id}')">List</button>
-     <button class="tab ${boardMode==='table'?'active':''}" onclick="boardMode='table';renderProject('${id}')">Table</button></div>
+    `<div class="tabs"><button class="tab ${boardMode==='table'?'active':''}" onclick="boardMode='table';renderProject('${id}')">Table</button>
+     <button class="tab ${boardMode==='board'?'active':''}" onclick="boardMode='board';renderProject('${id}')">Board</button></div>
      ${isStaff()? `<button class="btn btn-ghost btn-sm" onclick="projectMembersModal('${id}')">Partner access</button>`:''}
      ${canEdit()? `<button class="btn btn-ghost btn-sm" onclick="editProjectModal('${id}')">Edit board</button>`:''}
      ${canDeleteBoard()? `<button class="btn btn-ghost btn-sm" style="color:var(--red)" onclick="deleteProjectModal('${id}')">Delete board</button>`:''}
@@ -1079,21 +1311,24 @@ async function renderProject(id){
   S._fields = fields||[]; S._groups = groups||[];
   S._subs = {};
   (sc||[]).forEach(s=>{ const o=S._subs[s.task_id]||(S._subs[s.task_id]={done:0,total:0}); o.total++; if(s.status==='done') o.done++; });
-  if(boardMode==='table'){
-    renderProjectTableView(id);
-    return;
-  }
-  if(boardMode==='list'){
-    const sorted=[...S._tasks].sort((a,b)=> (a.status==='done')-(b.status==='done') || (a.due_date||'9999').localeCompare(b.due_date||'9999'));
-    C.innerHTML = `<div class="card">${sorted.length? taskTable(sorted): `<div class="empty">No tasks yet</div>`}</div>`;
-    return;
-  }
-  C.innerHTML = `<div class="board">${STATUSES.map(s=>{
-    const list = S._tasks.filter(t=>t.status===s.k);
+  C.innerHTML = filterBarHTML(id) + '<div id="board-body"></div>';
+  renderBoardBody(id);
+}
+/* Re-renders only the content below the filter bar, so typing in the search
+   box never steals focus from itself. */
+function renderBoardBody(id){
+  const host = $('#board-body') || $('#content'); if(!host) return;
+  const rows = bfApply(id, S._tasks||[]);
+  const cnt = $('#bf-count');
+  if(cnt) cnt.textContent = bfActiveCount(id)? `${rows.length} of ${(S._tasks||[]).length} tasks` : '';
+  // keep the select/search states in sync without rebuilding the bar
+  if(boardMode==='table'){ renderProjectTableView(id, rows, host); return; }
+  host.innerHTML = `<div class="board">${STATUSES.map(s=>{
+    const list = rows.filter(t=>t.status===s.k);
     return `<div class="col" data-status="${s.k}">
       <div class="col-head"><span class="dot" style="background:${s.color}"></span>${s.label}<span class="count">${list.length}</span></div>
       <div class="col-body" data-status="${s.k}">${list.map(taskCard).join('')}</div>
-      <button class="add-card" onclick="newTaskModal('${id}','${s.k}')">＋ Add task</button>
+      ${canCreate()? `<button class="add-card" onclick="newTaskModal('${id}','${s.k}')">＋ Add task</button>`:''}
     </div>`;}).join('')}</div>`;
   wireDnD(id);
 }
@@ -1225,7 +1460,8 @@ function tvEdit(el, ev){
     kind==='priority'? `<span class="tv-fill mini" style="background:${PRIORITIES.find(p=>p.k===o.v)?.color||'#8E93A8'}">${esc(o.l)}</span>` :
     kind==='people'? `${avatar(prof(o.v),true)}<span>${esc(o.l)}</span>` : esc(o.l);
   const canClear = !(cust!=='1' && (field==='status'||field==='priority'));
-  tvShowMenu(el, opts, renderOpt, save, opts.length>8, canClear);
+  // people pickers are always searchable; other lists once they get long
+  tvShowMenu(el, opts, renderOpt, save, kind==='people' || opts.length>5, canClear);
 }
 function tvShowMenu(anchor, opts, renderOpt, onPick, withSearch, includeClear){
   tvCloseMenu();
@@ -1278,9 +1514,10 @@ function tvRowHTML(t, flds, gc){
     ${isStaff()? '<td></td>':''}
   </tr>`;
 }
-function renderProjectTableView(id){
-  const C=$('#content');
+function renderProjectTableView(id, rowSet, host){
+  const C = host || $('#board-body') || $('#content');
   tvPid = id;
+  const SRC = rowSet || S._tasks || [];
   const flds = S._fields||[], groups = S._groups||[];
   tvBuildOpts(flds);
   const cols = 5+(canEdit()?1:0)+flds.length+(isStaff()?1:0);
@@ -1294,15 +1531,15 @@ function renderProjectTableView(id){
   const nArch = (S._tasksAll||[]).filter(t=>t.archived_at).length;
   const archBar = (nArch||tvShowArch)? `<div class="tv-archbar" onclick="tvToggleArch()">${tvShowArch?'▾':'▸'} ${nArch} archived task${nArch===1?'':'s'} — ${tvShowArch?'hide':'show'}</div>` : '';
   if(!groups.length){
-    const rows = [...S._tasks].sort(byPos);
+    const rows = [...SRC].sort(byPos);
     C.innerHTML = tableFor(rows, null, true)
       + (isStaff()? `<div class="tv-addgroup" onclick="addGroupModal('${id}')" style="margin-top:14px">＋ Add group</div>`:'') + archBar;
     return;
   }
   const gids = new Set(groups.map(g=>g.id));
-  const ungrouped = S._tasks.filter(t=>!t.group_id || !gids.has(t.group_id)).sort(byPos);
+  const ungrouped = SRC.filter(t=>!t.group_id || !gids.has(t.group_id)).sort(byPos);
   C.innerHTML = groups.map((g,i)=>{
-    const rows = S._tasks.filter(t=>t.group_id===g.id).sort(byPos);
+    const rows = SRC.filter(t=>t.group_id===g.id).sort(byPos);
     const closed = tvCollapsed.has(g.id);
     return `<div class="tv-group ${closed?'collapsed':''}" id="tvg-${g.id}">
       <div class="tv-group-head"><span class="caret" onclick="tvToggleGroup('${g.id}')">${closed?'▸':'▾'}</span><span class="bar" style="background:${g.color}"></span>
@@ -1333,7 +1570,7 @@ function tvSelGroup(el, gid){
   if(wrap) wrap.querySelectorAll('tbody .tv-check input').forEach(cb=>{ cb.checked=el.checked; cb.closest('tr')?.classList.toggle('rowsel', el.checked); });
   tvBulkBar();
 }
-function tvSelClear(){ tvSel.clear(); tvBulkBar(); const y=scrollY; renderProjectTableView(tvPid); scrollTo(0,y); }
+function tvSelClear(){ tvSel.clear(); tvBulkBar(); const y=scrollY; renderBoardBody(tvPid); scrollTo(0,y); }
 function tvBulkBar(){
   document.getElementById('tvbulk')?.remove();
   if(!tvSel.size) return;
@@ -1348,9 +1585,9 @@ function tvBulkBar(){
   document.body.appendChild(b);
 }
 function tvBulkPick(btn, which){
-  if(which==='status') tvShowMenu(btn, TVO.status, o=>`<span class="tv-fill mini" style="background:${STATUSES.find(s=>s.k===o.v)?.color}">${esc(o.l)}</span>`, v=>{ if(v) tvBulkApply('status',v); }, false, false);
-  else if(which==='assignee') tvShowMenu(btn, TVO.people, o=>`${avatar(prof(o.v),true)}<span>${esc(o.l)}</span>`, v=>tvBulkApply('assignee_id',v), (TVO.people||[]).length>8, true);
-  else if(which==='group') tvShowMenu(btn, (S._groups||[]).map(g=>({v:g.id,l:g.name})), o=>esc(o.l), v=>tvBulkApply('group_id',v), false, true);
+  if(which==='status') tvShowMenu(btn, TVO.status, o=>`<span class="tv-fill mini" style="background:${STATUSES.find(s=>s.k===o.v)?.color}">${esc(o.l)}</span>`, v=>{ if(v) tvBulkApply('status',v); }, TVO.status.length>5, false);
+  else if(which==='assignee') tvShowMenu(btn, TVO.people, o=>`${avatar(prof(o.v),true)}<span>${esc(o.l)}</span>`, v=>tvBulkApply('assignee_id',v), true, true);
+  else if(which==='group') tvShowMenu(btn, (S._groups||[]).map(g=>({v:g.id,l:g.name})), o=>esc(o.l), v=>tvBulkApply('group_id',v), (S._groups||[]).length>5, true);
 }
 async function tvBulkApply(field, value){
   const ids=[...tvSel]; if(!ids.length) return;
@@ -1358,12 +1595,12 @@ async function tvBulkApply(field, value){
   if(error) return toast(error.message, true);
   S._tasks.forEach(t=>{ if(tvSel.has(t.id)) t[field]=value; });
   toast(ids.length+' task'+(ids.length>1?'s':'')+' updated');
-  const y=scrollY; renderProjectTableView(tvPid); scrollTo(0,y);
+  const y=scrollY; renderBoardBody(tvPid); scrollTo(0,y);
 }
 /* Archive = reversible. This is the default for removing rows. */
 let tvShowArch = false;
 function tvApplyArch(){ S._tasks = tvShowArch ? (S._tasksAll||[]) : (S._tasksAll||[]).filter(t=>!t.archived_at); }
-function tvToggleArch(){ tvShowArch=!tvShowArch; tvApplyArch(); const y=scrollY; renderProjectTableView(tvPid); scrollTo(0,y); }
+function tvToggleArch(){ tvShowArch=!tvShowArch; tvApplyArch(); const y=scrollY; renderBoardBody(tvPid); scrollTo(0,y); }
 async function tvBulkArchive(){
   const ids=[...tvSel]; if(!ids.length) return;
   const at=new Date().toISOString();
@@ -1372,14 +1609,14 @@ async function tvBulkArchive(){
   (S._tasksAll||[]).forEach(t=>{ if(tvSel.has(t.id)) t.archived_at=at; });
   tvSel.clear(); tvBulkBar(); tvApplyArch();
   toast(ids.length+' task'+(ids.length>1?'s':'')+' archived — "Show archived" to restore');
-  const y=scrollY; renderProjectTableView(tvPid); scrollTo(0,y);
+  const y=scrollY; renderBoardBody(tvPid); scrollTo(0,y);
 }
 async function tvUnarchive(tid){
   const {error}=await db.from('tasks').update({archived_at:null}).eq('id',tid);
   if(error) return toast(error.message, true);
   const t=(S._tasksAll||[]).find(x=>x.id===tid); if(t) t.archived_at=null;
   tvApplyArch(); toast('Restored');
-  const y=scrollY; renderProjectTableView(tvPid); scrollTo(0,y);
+  const y=scrollY; renderBoardBody(tvPid); scrollTo(0,y);
 }
 /* Permanent delete — admin only, typed confirmation, shows what is going. */
 function tvBulkDelete(){
@@ -1412,7 +1649,7 @@ function tvBulkDelete(){
     if(error){ go.disabled=false; go.textContent='Delete permanently'; return toast(error.message, true); }
     S._tasksAll = (S._tasksAll||[]).filter(t=>!tvSel.has(t.id));
     tvSel.clear(); tvBulkBar(); tvApplyArch(); closeModals(); toast(ids.length+' task'+(ids.length>1?'s':'')+' deleted');
-    const y=scrollY; renderProjectTableView(tvPid); scrollTo(0,y);
+    const y=scrollY; renderBoardBody(tvPid); scrollTo(0,y);
   };
   setTimeout(()=>inp.focus(), 30);
 }
@@ -1424,7 +1661,7 @@ function tvQuickAdd(e, pid, gid){
   db.from('tasks').insert({project_id:pid, title, group_id:gid, status:'todo', priority:'normal', created_by:S.me.id, position:maxPos+1}).select().single().then(({data,error})=>{
     if(error){ toast(error.message, true); inp.disabled=false; return; }
     S._tasks.push(data);
-    const y=scrollY; renderProjectTableView(pid); scrollTo(0,y);
+    const y=scrollY; renderBoardBody(pid); scrollTo(0,y);
   });
 }
 window.addEventListener('hashchange', ()=>{ tvSel.clear(); document.getElementById('tvbulk')?.remove(); document.getElementById('tvmenu')?.remove(); });
@@ -1445,9 +1682,9 @@ async function tvDrop(e, pid){
   const t=S._tasks.find(x=>x.id===tvDragId); tvDragId=null;
   if(!t || (t.group_id||null)===gid) return;
   const old=t.group_id||null; t.group_id=gid;
-  renderProjectTableView(pid);
+  renderBoardBody(pid);
   const {error}=await db.from('tasks').update({group_id:gid}).eq('id',t.id);
-  if(error){ t.group_id=old; renderProjectTableView(pid); toast(error.message, true); }
+  if(error){ t.group_id=old; renderBoardBody(pid); toast(error.message, true); }
 }
 function addGroupModal(pid){ groupModal(pid, null); }
 function editGroupModal(gid, pid){ const g=(S._groups||[]).find(x=>x.id===gid); if(g) groupModal(pid, g); }
@@ -1649,8 +1886,9 @@ async function openTask(id){
         <button class="btn btn-ghost btn-sm" id="tv-files-add">Upload</button></div>
       <label>Comments</label>
       <div id="tv-comments">${(comments||[]).map(commentRow).join('')||'<div style="color:var(--ink3);font-size:13px">No comments yet</div>'}</div>
-      <div style="display:flex;gap:8px;margin-top:10px"><input id="tv-comment" placeholder="Write a comment…" style="flex:1">
+      <div style="display:flex;gap:8px;margin-top:10px"><input id="tv-comment" placeholder="Write a comment… type @ to tag someone" autocomplete="off" style="flex:1">
         <button class="btn btn-primary btn-sm" id="tv-comment-add">Send</button></div>
+      <div style="font-size:11.5px;color:var(--ink3);margin-top:5px">Type <b>@</b> to tag a colleague — they get a notification.</div>
       <div style="margin-top:14px;font-size:11.5px;color:var(--ink3)">Created ${fmtDateTime(t.created_at)} by ${esc(prof(t.created_by)?.full_name||'—')} · in ${esc(p?.name||'')}</div>
     </div>
     <div class="modal-foot"><button class="btn btn-ghost" onclick="closeModals()">Close</button>${canEdit()? `<button class="btn btn-primary" id="tv-save">Save changes</button>`:''}</div>`, true);
@@ -1686,15 +1924,10 @@ async function openTask(id){
     if(n){ toast(n + ' file' + (n>1?'s':'') + ' uploaded'); const {data:na} = await db.from('attachments').select('*').eq('entity_type','task').eq('entity_id',t.id).order('created_at');
       m.querySelector('#tv-atts').innerHTML = (na||[]).map(attLink).join(''); m.querySelector('#tv-files').value=''; }
   };
-  m.querySelector('#tv-comment-add').onclick = async ()=>{
-    const body = m.querySelector('#tv-comment').value.trim(); if(!body) return;
-    const {data, error} = await db.from('comments').insert({entity_type:'task', entity_id:t.id, author_id:S.me.id, body}).select().single();
-    if(error) return toast(error.message, true);
-    const box = m.querySelector('#tv-comments');
-    if(box.firstElementChild && !box.firstElementChild.classList.contains('comment')) box.innerHTML='';
-    box.insertAdjacentHTML('beforeend', commentRow(data));
-    m.querySelector('#tv-comment').value='';
-  };
+  const cIn = m.querySelector('#tv-comment');
+  wireMentions(cIn);
+  cIn.addEventListener('keydown', e=>{ if(e.key==='Enter' && !document.querySelector('.mention-menu')) m.querySelector('#tv-comment-add').click(); });
+  m.querySelector('#tv-comment-add').onclick = ()=> postComment('task', t.id, t.title, cIn, m.querySelector('#tv-comments'));
 }
 function subProgressBar(subs){
   const total=subs.length, done=subs.filter(s=>s.status==='done').length;
@@ -1748,7 +1981,7 @@ async function delChk(id){
 }
 function commentRow(c){
   const a = prof(c.author_id);
-  return `<div class="comment">${avatar(a,true)}<div class="body"><b>${esc(a?.full_name||'Unknown')}</b><span class="when">${fmtDateTime(c.created_at)}</span><p>${esc(c.body)}</p></div></div>`;
+  return `<div class="comment">${avatar(a,true)}<div class="body"><b>${esc(a?.full_name||'Unknown')}</b><span class="when">${fmtDateTime(c.created_at)}</span><p>${renderMentionText(c.body, c.mentions)}</p></div></div>`;
 }
 async function deleteTask(id, projectId){
   if(!confirm('Delete this task permanently?')) return;
@@ -1875,8 +2108,9 @@ async function openRequest(id){
         <button class="btn btn-ghost btn-sm" id="rv-files-add">Upload</button></div>
       <label>Comments</label>
       <div id="rv-comments">${(comments||[]).map(commentRow).join('')||'<div style="color:var(--ink3);font-size:13px">No comments yet</div>'}</div>
-      <div style="display:flex;gap:8px;margin-top:10px"><input id="rv-comment" placeholder="Write a comment…" style="flex:1">
+      <div style="display:flex;gap:8px;margin-top:10px"><input id="rv-comment" placeholder="Write a comment… type @ to tag someone" autocomplete="off" style="flex:1">
         <button class="btn btn-primary btn-sm" id="rv-comment-add">Send</button></div>
+      <div style="font-size:11.5px;color:var(--ink3);margin-top:5px">Type <b>@</b> to tag a colleague — they get a notification.</div>
     </div>
     <div class="modal-foot">
       ${r.submitted_by===S.me.id && ['submitted','in_review'].includes(r.status)? `<button class="btn btn-danger" id="rv-cancel">Cancel request</button>`:''}
@@ -1904,15 +2138,10 @@ async function openRequest(id){
     if(n){ toast(n + ' file' + (n>1?'s':'') + ' uploaded'); const {data:na} = await db.from('attachments').select('*').eq('entity_type','request').eq('entity_id',r.id).order('created_at');
       m.querySelector('#rv-atts').innerHTML = (na||[]).map(attLink).join(''); m.querySelector('#rv-files').value=''; }
   };
-  m.querySelector('#rv-comment-add').onclick = async ()=>{
-    const body = m.querySelector('#rv-comment').value.trim(); if(!body) return;
-    const {data, error} = await db.from('comments').insert({entity_type:'request', entity_id:r.id, author_id:S.me.id, body}).select().single();
-    if(error) return toast(error.message, true);
-    const box = m.querySelector('#rv-comments');
-    if(box.firstElementChild && !box.firstElementChild.classList.contains('comment')) box.innerHTML='';
-    box.insertAdjacentHTML('beforeend', commentRow(data));
-    m.querySelector('#rv-comment').value='';
-  };
+  const rIn = m.querySelector('#rv-comment');
+  wireMentions(rIn);
+  rIn.addEventListener('keydown', e=>{ if(e.key==='Enter' && !document.querySelector('.mention-menu')) m.querySelector('#rv-comment-add').click(); });
+  m.querySelector('#rv-comment-add').onclick = ()=> postComment('request', r.id, (r.ticket_no? r.ticket_no+' · ':'')+r.title, rIn, m.querySelector('#rv-comments'));
 }
 function requestApprovalModal(reqId, title){
   const staffList = S.profiles.filter(p=>p.active && ['admin','internal','management'].includes(p.role));
