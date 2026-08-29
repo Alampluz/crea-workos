@@ -2262,6 +2262,8 @@ function histLine(a){
     case 'subtask_added':  return `added subtask <b>${esc(d.title||'')}</b>`;
     case 'subtask_removed':return `removed subtask <b>${esc(d.title||'')}</b>`;
     case 'subtask_status': return `marked subtask <b>${esc(d.title||'')}</b> ${esc(d.to==='done'?'done':'not done')}`;
+    // entries written before the history engine existed
+    case 'status_changed': return `changed <b>Status</b> from ${histValue('status',d.from)} to ${histValue('status',d.to)}`;
     case 'updated': {
       const cs = d.changes||[];
       if(!cs.length) return 'made a change';
