@@ -905,7 +905,7 @@ function wireMentions(input){
     const list = mentionables().filter(p=>p.full_name.toLowerCase().includes(q) || (p.email||'').toLowerCase().includes(q)).slice(0,6);
     if(!list.length) return close();
     if(!menu){ menu = document.createElement('div'); menu.className='mention-menu'; document.body.appendChild(menu); }
-    menu.innerHTML = list.map((p,i)=>`<div class="mopt${i===0?' on':''}" data-id="${p.id}">${avatar(p,true)}<span><b>${esc(p.full_name)}</b> <span style="color:var(--ink3)">${esc(p.role)}</span></span></div>`).join('');
+    menu.innerHTML = list.map((p,i)=>`<div class="mopt${i===0?' on':''}" data-id="${p.id}">${avatar(p,true)}<span><b>${esc(p.full_name)}</b></span></div>`).join('');
     menu.querySelectorAll('.mopt').forEach(o=> o.onmousedown = e=>{ e.preventDefault(); pick(list.find(p=>p.id===o.dataset.id)); });
     const r = input.getBoundingClientRect(), h = menu.getBoundingClientRect().height;
     menu.style.left = r.left+'px';
@@ -2035,7 +2035,7 @@ async function projectMembersModal(pid){
         ${canEdit()? `<button class="btn btn-ghost btn-sm" style="margin-left:8px" id="pm-tovis">Make Shareable</button>`:''}</div>`}
       ${externals.length? externals.map(p=>`
         <div class="chk" ${canGuest?'':'style="opacity:.45"'}><input type="checkbox" data-uid="${p.id}" ${memberIds.has(p.id)?'checked':''} ${canGuest?'':'disabled'}>
-        ${avatar(p,true)} <span>${esc(p.full_name)} <span style="color:var(--ink3)">· ${p.role} · ${esc(p.email)}</span></span></div>`).join('')
+        ${avatar(p,true)} <span>${esc(p.full_name)} <span style="color:var(--ink3)">· ${esc(p.email)}</span></span></div>`).join('')
       : '<div class="empty">No partner or freelancer accounts yet. Create them in Admin → Users.</div>'}
     </div>
     <div class="modal-foot"><button class="btn btn-ghost" onclick="closeModals()">Close</button><button class="btn btn-primary" id="pm-save" ${canGuest?'':'disabled'}>Save</button></div>`);
@@ -2091,7 +2091,7 @@ function newTaskModal(projectId, status='todo', groupId=null){
 function assigneeOptions(projectId, selected){
   // staff can assign anyone; also include project members (partners)
   return S.profiles.filter(p=>p.active).map(p=>
-    `<option value="${p.id}" ${p.id===selected?'selected':''}>${esc(p.full_name)} (${p.role})</option>`).join('');
+    `<option value="${p.id}" ${p.id===selected?'selected':''}>${esc(p.full_name)}</option>`).join('');
 }
 async function openTask(id){
   const [{data:t}, {data:chk}, {data:comments}, {data:atts}, {data:subs}, {data:hist}] = await Promise.all([
@@ -2468,7 +2468,7 @@ function requestApprovalModal(reqId, title){
   const staffList = S.profiles.filter(p=>p.active && ['admin','internal','management'].includes(p.role));
   const m = modal(`<div class="modal-head"><h2>Ask for approval</h2><button class="x" onclick="closeModals()">✕</button></div>
     <div class="modal-body">
-      <label>Approver</label><select id="ap-who">${staffList.map(p=>`<option value="${p.id}">${esc(p.full_name)} (${p.role})</option>`).join('')}</select>
+      <label>Approver</label><select id="ap-who">${staffList.map(p=>`<option value="${p.id}">${esc(p.full_name)}</option>`).join('')}</select>
       <label>What are they approving?</label><input id="ap-title" value="Approve: ${esc(title)}">
     </div>
     <div class="modal-foot"><button class="btn btn-ghost" onclick="closeModals()">Cancel</button><button class="btn btn-primary" id="ap-save">Send</button></div>`);
