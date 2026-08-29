@@ -272,6 +272,15 @@ tr.tv-arch .tv-name .tv-open{text-decoration:line-through}
 .hist-undo{margin-left:8px;font-size:11px;font-weight:700;color:var(--accent);padding:2px 7px;border-radius:6px}
 .hist-undo:hover{background:var(--accent-soft)}
 .toast-undo{margin-left:12px;font-size:12px;font-weight:700;color:#fff;text-decoration:underline;text-underline-offset:3px}
+/* ---- automation switches ---- */
+.sw{position:relative;display:inline-block;width:34px;height:20px;margin:0;cursor:pointer}
+.sw input{opacity:0;width:0;height:0;position:absolute}
+.sw span{position:absolute;inset:0;background:#C9CCD4;border-radius:20px;transition:background .16s}
+.sw span::after{content:'';position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%;
+  background:#fff;transition:transform .16s;box-shadow:0 1px 2px rgba(20,22,40,.25)}
+.sw input:checked+span{background:var(--accent)}
+.sw input:checked+span::after{transform:translateX(14px)}
+.sw input:focus-visible+span{box-shadow:0 0 0 3px var(--accent-soft)}
 .ws-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .danger-note{background:var(--red-soft);border:1px solid var(--red);border-radius:8px;padding:10px 12px;margin-bottom:12px;font-size:13px;color:var(--red)}
 .tv .subchip{font-size:11.5px;font-weight:700;color:var(--ink3);background:var(--gray-soft);border-radius:6px;padding:2px 7px;margin-left:8px;white-space:nowrap}
@@ -1076,11 +1085,24 @@ function notifPanelHTML(){
       const who = prof(n.actor_id);
       return `<div class="np-item ${n.read_at?'':'unread'}" onclick="openNotif('${n.id}')">
         ${avatar(who,true)}
-        <div class="np-txt"><div><b>${esc(who?.full_name||'Someone')}</b> mentioned you${n.title? ` in <b>${esc(n.title)}</b>`:''}</div>
+        <div class="np-txt"><div>${notifLine(n, who)}</div>
           <div class="np-body-txt">${esc(n.body||'')}</div>
           <div class="np-when">${timeAgo(n.created_at)}</div></div>
       </div>`;
     }).join('') : '<div class="np-empty">Nothing yet.</div>'}</div>`;
+}
+function notifLine(n, who){
+  const name = `<b>${esc(who?.full_name||'Someone')}</b>`;
+  const t = n.title? `<b>${esc(n.title)}</b>` : 'something';
+  switch(n.kind){
+    case 'assigned':    return `${name} assigned you ${t}`;
+    case 'review':      return `${t} is ready for review`;
+    case 'request':     return `New ticket: ${t}`;
+    case 'sla_warning': return `${t} is close to its SLA`;
+    case 'sla_breach':  return `${t} has breached its SLA`;
+    case 'overdue':     return `${t} is overdue`;
+    default:            return `${name} mentioned you${n.title? ` in ${t}`:''}`;
+  }
 }
 function toggleNotifPanel(e){
   e?.stopPropagation();
@@ -2952,6 +2974,7 @@ async function renderAdmin(){
         <button class="tab ${adminTab==='workspaces'?'active':''}" onclick="adminTab='workspaces';renderAdmin()">Workspaces</button>
         <button class="tab ${adminTab==='brands'?'active':''}" onclick="adminTab='brands';renderAdmin()">Brands</button>
         <button class="tab ${adminTab==='types'?'active':''}" onclick="adminTab='types';renderAdmin()">Request types</button>
+        <button class="tab ${adminTab==='automations'?'active':''}" onclick="adminTab='automations';renderAdmin()">Automations</button>
       </div>
       <div class="actions">${adminTab==='users'? '<button class="btn btn-primary" onclick="inviteUserModal()">＋ Add user</button>':''}
         ${adminTab==='workspaces'? '<button class="btn btn-primary" onclick="newWorkspaceModal()">＋ Add workspace</button>':''}</div></div>
@@ -3016,6 +3039,7 @@ async function renderAdmin(){
       toast('Brand added'); await refreshCore(); renderAdmin();
     };
   }
+  if(adminTab==='automations'){ await renderAutomationsTab(B); }
   if(adminTab==='types'){
     const {data:allTypes} = await db.from('request_types').select('*').order('position');
     window._allTypes = allTypes||[];
@@ -3032,6 +3056,91 @@ async function renderAdmin(){
         <td style="text-align:right"><button class="btn btn-ghost btn-sm" onclick="editTypeModal('${rt.id}')">Edit</button></td></tr>`;}).join('')}</tbody></table></div>
       <p style="margin-top:12px;font-size:12.5px;color:var(--ink2)">Turn on “Public form link” to get a shareable URL — anyone can submit a ticket through it without an account. Submissions land in the Requests queue with a WO number and SLA timer.</p>`;
   }
+}
+/* ================= AUTOMATIONS (editable in-app) ================= */
+const AUTO_RULES = [
+  {key:'request_submitted', label:'New ticket alerts the team',      how:'When a request is submitted, everyone on the routed workspace gets a notification.'},
+  {key:'task_assigned',     label:'Assignee is notified',            how:'When a task is assigned or reassigned, the new owner hears about it.'},
+  {key:'status_review',     label:'Review notifies the requester',   how:'When a task moves to Review, whoever raised it is told it is ready to check.'},
+  {key:'subtasks_done',     label:'Subtasks done → parent to Review',how:'When the last open subtask is finished, the parent task moves to Review by itself.'},
+  {key:'task_completed',    label:'Done stamps the turnaround',      how:'Marking a task Done records the completion time — this powers the on-time numbers on the dashboard.'},
+  {key:'sla_warning',       label:'SLA warning at 80%',              how:'A ticket that has used 80% of its SLA notifies its owner. Checked every 15 minutes.'},
+  {key:'sla_breach',        label:'SLA breach escalates',            how:'A breached ticket notifies every admin and manager, once. Checked every 15 minutes.'},
+  {key:'task_overdue',      label:'Overdue task nudges its owner',   how:'A task past its due date notifies its assignee, once. Checked every 15 minutes.'},
+];
+let autoWs = '';   // '' = everywhere
+async function renderAutomationsTab(B){
+  const [{data:rules},{data:runs}] = await Promise.all([
+    db.from('automation_rules').select('*'),
+    db.from('automation_runs').select('*').order('created_at',{ascending:false}).limit(30),
+  ]);
+  S._autoRules = rules||[];
+  const stateOf = (key)=>{
+    const wsRow = autoWs? S._autoRules.find(r=>r.rule_key===key && r.workspace_id===autoWs) : null;
+    const glRow = S._autoRules.find(r=>r.rule_key===key && !r.workspace_id);
+    if(wsRow) return {on:wsRow.enabled, src:'custom'};
+    if(glRow) return {on:glRow.enabled, src: autoWs? 'inherited':'set'};
+    return {on:true, src: autoWs? 'inherited':'default'};
+  };
+  const ruleLabel = k => (AUTO_RULES.find(r=>r.key===k)||{}).label || k;
+  B.innerHTML = `
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;flex-wrap:wrap">
+      <label style="margin:0">Rules apply to</label>
+      <select style="width:auto;min-width:200px" onchange="autoWs=this.value;renderAdmin()">
+        <option value="">Everywhere</option>
+        ${S.workspaces.map(w=>`<option value="${w.id}" ${autoWs===w.id?'selected':''}>${esc(w.name)}</option>`).join('')}
+      </select>
+      <span style="flex:1"></span>
+      <button class="btn btn-ghost btn-sm" onclick="runSweepNow(this)">Run timed checks now</button>
+    </div>
+    <div class="card"><table class="tbl"><thead><tr><th style="width:40px"></th><th>Automation</th><th>What it does</th><th style="width:90px"></th></tr></thead><tbody>
+      ${AUTO_RULES.map(r=>{
+        const st = stateOf(r.key);
+        return `<tr>
+          <td><label class="sw"><input type="checkbox" ${st.on?'checked':''} onchange="setAutoRule('${r.key}', this.checked)"><span></span></label></td>
+          <td style="font-weight:600">${esc(r.label)}</td>
+          <td style="color:var(--ink2)">${esc(r.how)}</td>
+          <td style="text-align:right">${autoWs? (st.src==='custom'
+              ? `<button class="btn btn-ghost btn-sm" onclick="clearAutoRule('${r.key}')" title="Follow the Everywhere setting again">Reset</button>`
+              : '<span style="font-size:11px;color:var(--ink3)">inherited</span>') : ''}</td>
+        </tr>`;}).join('')}
+    </tbody></table></div>
+    <p style="margin-top:10px;font-size:12.5px;color:var(--ink2)">Switching a rule off here stops it ${autoWs? 'for this workspace only — everywhere else follows the global setting':'everywhere, unless a workspace has its own setting'}. Timed rules run every 15 minutes on their own.</p>
+    <div class="section-title" style="margin-top:24px">Recent runs</div>
+    <div class="card"><table class="tbl"><thead><tr><th>When</th><th>Rule</th><th>On</th><th>Result</th></tr></thead><tbody>
+      ${(runs||[]).length? runs.map(x=>`<tr>
+        <td style="white-space:nowrap;color:var(--ink2)">${timeAgo(x.created_at)}</td>
+        <td style="font-weight:600">${esc(ruleLabel(x.rule_key))}</td>
+        <td style="color:var(--ink2)">${x.entity_type==='task'? 'a task':'a ticket'}${x.detail?.notified? ` · ${x.detail.notified} notified`:''}${x.detail?.hours? ` · ${x.detail.hours}h turnaround`:''}</td>
+        <td><span class="chip" style="background:${x.status==='ok'?'var(--green-soft);color:var(--green)':'var(--red-soft);color:var(--red)'}">${esc(x.status)}</span></td>
+      </tr>`).join('') : '<tr><td colspan="4"><div class="empty" style="padding:22px">Nothing has fired yet.</div></td></tr>'}
+    </tbody></table></div>`;
+}
+async function setAutoRule(key, on){
+  const payload = {rule_key:key, workspace_id: autoWs||null, enabled:on};
+  const existing = (S._autoRules||[]).find(r=>r.rule_key===key && (r.workspace_id||'')===(autoWs||''));
+  const {error} = existing
+    ? await db.from('automation_rules').update({enabled:on}).eq('id',existing.id)
+    : await db.from('automation_rules').insert(payload);
+  if(error){ toast(error.message, true); renderAdmin(); return; }
+  toast(`${(AUTO_RULES.find(r=>r.key===key)||{}).label||key} ${on?'on':'off'}${autoWs? ' for this workspace':''}`);
+  renderAdmin();
+}
+async function clearAutoRule(key){
+  const existing = (S._autoRules||[]).find(r=>r.rule_key===key && r.workspace_id===autoWs);
+  if(!existing) return;
+  const {error} = await db.from('automation_rules').delete().eq('id',existing.id);
+  if(error) return toast(error.message, true);
+  toast('Back to the Everywhere setting'); renderAdmin();
+}
+async function runSweepNow(btn){
+  btn.disabled=true; btn.textContent='Checking…';
+  const {data, error} = await db.rpc('run_automation_sweep');
+  btn.disabled=false; btn.textContent='Run timed checks now';
+  if(error) return toast(error.message, true);
+  const n = (data?.sla_warning||0)+(data?.sla_breach||0)+(data?.task_overdue||0);
+  toast(n? `${n} alert${n>1?'s':''} sent` : 'All clear — nothing new to flag');
+  renderAdmin();
 }
 function inviteUserModal(){
   const m = modal(`<div class="modal-head"><h2>Add user</h2><button class="x" onclick="closeModals()">✕</button></div>
