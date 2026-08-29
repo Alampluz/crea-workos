@@ -1241,7 +1241,7 @@ async function renderWorkspace(id, tab){
   widgetScope = null;
   setTopbar(esc(w.name), (canEdit()? `<button class="btn btn-ghost btn-sm" onclick="editWorkspaceModal('${w.id}')">Edit workspace</button>`:'')
     + (isStaff()? `<button class="btn btn-ghost btn-sm" onclick="teamMembersModal('${w.id}')">Members</button>
-    <button class="btn btn-primary btn-sm" onclick="newProjectModal('${w.id}')">＋ New board</button>`:''));
+    <button class="btn btn-primary btn-sm" onclick="wsAddMenu(this,'${w.id}')">＋ Add</button>`:''));
   const C=$('#content'); C.innerHTML='<div class="empty">Loading…</div>';
   const projects = S.projects.filter(p=>p.workspace_id===id && p.status!=='archived');
   const ids = projects.map(p=>p.id);
@@ -1303,6 +1303,19 @@ function wireVisPicker(root, id){
     box.dataset.sel = o.dataset.v;
     box.querySelectorAll('.vis-opt').forEach(x=> x.classList.toggle('on', x===o));
   });
+}
+/* monday-style "Add to workspace": everything you can create here, one menu. */
+function wsAddMenu(anchor, wid){
+  const items = [
+    {label:'Board — tasks in groups and columns', fn:()=>newProjectModal(wid)},
+    {label:'Report widget — chart on this workspace', fn:()=>{
+      const go=()=>widgetModal(null, wid);
+      if(S.route.view==='ws' && S.route.id===wid && S.route.tab==='report') go();
+      else { location.hash = '#/ws/'+wid+'/report'; setTimeout(go, 600); }
+    }},
+  ];
+  if(isAdmin()) items.push({label:'Form — public request form routed here', fn:()=>editTypeModal(null, wid)});
+  ctxMenu(anchor, items);
 }
 /* ---- Boards (projects): rename, recolour, delete ---- */
 const PJ_COLORS=['#00B894','#0984E3','#6C5CE7','#E17055','#E84393','#D63031','#FDCB6E','#00CEC9','#0F766E','#7D3C55'];
@@ -3072,7 +3085,7 @@ function inviteUserModal(){
     }catch(e){ toast(e.message, true); btn.disabled=false; btn.textContent='Create account'; }
   };
 }
-function editTypeModal(id){
+function editTypeModal(id, wsDefault){
   const t = id? (window._allTypes||[]).find(x=>x.id===id) : null;
   const FT=['text','textarea','number','date','select','multiselect','brand'];
   const wsOpts = (sel)=>'<option value="">— all staff (no routing) —</option>'+S.workspaces.map(w=>`<option value="${w.id}" ${w.id===sel?'selected':''}>${esc(w.name)}</option>`).join('');
@@ -3089,7 +3102,7 @@ function editTypeModal(id){
       <label>Description</label><input id="ty-desc" value="${esc(t?.description||'')}">
       <div class="field-grid">
         <div><label>SLA (hours)</label><input id="ty-sla" type="number" value="${t?.sla_hours??48}"></div>
-        <div><label>Routes to workspace</label><select id="ty-ws">${wsOpts(t?.default_workspace_id)}</select></div>
+        <div><label>Routes to workspace</label><select id="ty-ws">${wsOpts(t? t.default_workspace_id : (wsDefault||null))}</select></div>
       </div>
       <div style="display:flex;gap:22px;margin-top:14px;flex-wrap:wrap">
         <label style="display:flex;align-items:center;gap:7px;margin:0;color:var(--ink)"><input type="checkbox" id="ty-appr" ${t?.approval_required?'checked':''} style="width:15px;height:15px">Requires approval</label>
@@ -3130,7 +3143,8 @@ function editTypeModal(id){
     if(t) ({error} = await db.from('request_types').update(payload).eq('id',t.id));
     else ({error} = await db.from('request_types').insert(Object.assign({}, payload, {position:100})));
     if(error) return toast(error.message, true);
-    closeModals(); toast('Request type saved'); await refreshCore(); renderAdmin();
+    closeModals(); toast('Request type saved'); await refreshCore();
+    if(S.route.view==='admin') renderAdmin();
   };
 }
 async function toggleBrand(id, active){
@@ -3163,7 +3177,9 @@ async function resetPassword(uid, name){
 const WS_COLORS=['#0F766E','#3E5C95','#8C5A3B','#5A6B4F','#6E56B8','#A8770E','#7D3C55','#C2434F','#12915E','#2B6CB0'];
 function wsMenu(anchor, wid){
   const w = wsById(wid); if(!w) return;
-  const items = [{label:'Rename / edit', fn:()=>editWorkspaceModal(wid)},
+  const items = [{label:'New board', fn:()=>newProjectModal(wid)},
+                 '-',
+                 {label:'Rename / edit', fn:()=>editWorkspaceModal(wid)},
                  {label:'Members', fn:()=>teamMembersModal(wid)}];
   if(isAdmin()){ items.push('-'); items.push({label:'Delete workspace', danger:true, fn:()=>deleteWorkspaceModal(wid)}); }
   ctxMenu(anchor, items);
