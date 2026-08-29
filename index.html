@@ -993,6 +993,12 @@ async function postComment(entityType, entityId, entityTitle, input, box){
   if(error){ toast(error.message, true); return null; }
   if(staged.length){
     const made = await uploadFiles('comment', data.id, staged);
+    // If the files were the whole point and none of them landed, don't leave an
+    // empty comment sitting in the thread — take it back out.
+    if(!made.length && !body){
+      await db.from('comments').delete().eq('id', data.id);
+      return null;
+    }
     data.atts = made;
     input._staged = []; input._redrawStaged?.();
   }
