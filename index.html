@@ -677,11 +677,11 @@ function navigate(hash){
   closeModals();
   const parts = hash.replace(/^#\//,'').split('/');
   const view = parts[0]||'home';
-  S.route = {view, id:parts[1]};
+  S.route = {view, id:parts[1], tab:parts[2]};
   renderSidebar();
   const C = $('#content'); C.scrollTop=0;
   const map = {home:renderHome, ws:renderWorkspace, project:renderProject, requests:renderRequests, approvals:renderApprovals, dashboard:renderDashboard, admin:renderAdmin, platform:renderPlatform};
-  (map[view]||renderHome)(parts[1]);
+  (map[view]||renderHome)(parts[1], parts[2]);
 }
 
 /* ================= SIDEBAR ================= */
@@ -870,7 +870,7 @@ function notifPanelHTML(){
           <div class="np-body-txt">${esc(n.body||'')}</div>
           <div class="np-when">${timeAgo(n.created_at)}</div></div>
       </div>`;
-    }).join('') : '<div class="np-empty">Nothing yet.<br>When someone tags you with @ in a comment, it lands here.</div>'}</div>`;
+    }).join('') : '<div class="np-empty">Nothing yet.</div>'}</div>`;
 }
 function toggleNotifPanel(e){
   e?.stopPropagation();
@@ -1018,8 +1018,17 @@ function approvalTable(apprs){
 }
 
 /* ================= WORKSPACE ================= */
-async function renderWorkspace(id){
+/* Boards | Report — the two faces of a workspace. */
+function wsTabsHTML(wsId, active){
+  return `<div class="tabs" style="margin-bottom:18px;width:fit-content">
+    <button class="tab ${active==='boards'?'active':''}" onclick="location.hash='#/ws/${wsId}'">Boards</button>
+    <button class="tab ${active==='report'?'active':''}" onclick="location.hash='#/ws/${wsId}/report'">Report</button>
+  </div>`;
+}
+async function renderWorkspace(id, tab){
   const w = wsById(id); if(!w){ location.hash='#/home'; return; }
+  if(tab==='report') return renderWorkspaceReport(id);
+  widgetScope = null;
   setTopbar(esc(w.name), (canEdit()? `<button class="btn btn-ghost btn-sm" onclick="editWorkspaceModal('${w.id}')">Edit workspace</button>`:'')
     + (isStaff()? `<button class="btn btn-ghost btn-sm" onclick="teamMembersModal('${w.id}')">Members</button>
     <button class="btn btn-primary btn-sm" onclick="newProjectModal('${w.id}')">＋ New board</button>`:''));
@@ -1032,6 +1041,7 @@ async function renderWorkspace(id){
     (data||[]).forEach(t=>{ counts[t.project_id]=counts[t.project_id]||{open:0,done:0}; t.status==='done'?counts[t.project_id].done++:counts[t.project_id].open++; });
   }
   C.innerHTML = `
+    ${wsTabsHTML(id,'boards')}
     <div class="page-head"><div><h1>${esc(w.name)}</h1><div class="sub">${esc(w.description)}</div></div></div>
     ${projects.length? `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:14px">
       ${projects.map(p=>{
@@ -1125,7 +1135,7 @@ function editProjectModal(pid){
       status:m.querySelector('#ep-status').value, color:colour}).eq('id',pid);
     if(error) return toast(error.message, true);
     closeModals(); toast('Board updated'); await refreshCore();
-    if(S.route.view==='project') renderProject(pid); else if(S.route.view==='ws') renderWorkspace(S.route.id); else renderSidebar();
+    if(S.route.view==='project') renderProject(pid); else if(S.route.view==='ws') renderWorkspace(S.route.id, S.route.tab); else renderSidebar();
   };
 }
 async function deleteProjectModal(pid){
@@ -1161,7 +1171,7 @@ async function deleteProjectModal(pid){
     logActivity('project', pid, 'delete', {name:p.name, tasks:n});
     closeModals(); toast('Board deleted'); await refreshCore();
     if(S.route.view==='project') location.hash='#/ws/'+p.workspace_id;
-    else { renderSidebar(); if(S.route.view==='ws') renderWorkspace(S.route.id); }
+    else { renderSidebar(); if(S.route.view==='ws') renderWorkspace(S.route.id, S.route.tab); }
   };
   setTimeout(()=>inp.focus(), 30);
 }
@@ -2272,36 +2282,15 @@ async function decideApproval(id, status, reqIdToRefresh){
 </script>
 <script>
 /* ================= DASHBOARD ================= */
-let dashWs = 'all';
-async function renderDashboard(){
-  if(!isStaff() && !isRequester()){ location.hash='#/home'; return; }
-  setTopbar('Dashboard', `<select id="dash-ws" style="width:auto;min-width:200px" onchange="dashWs=this.value;renderDashboard()">
-    <option value="all">All workspaces</option>
-    ${S.workspaces.map(w=>`<option value="${w.id}" ${dashWs===w.id?'selected':''}>${esc(w.name)}</option>`).join('')}</select>`);
-  const C=$('#content'); C.innerHTML='<div class="empty">Loading…</div>';
-  const [tks, reqs, apprs, wdg] = await Promise.all([
+/* One engine, two homes: the personal Dashboard, and each workspace's Report tab.
+   `wsSel` (a workspace id, or null for everything) scopes every widget. */
+async function buildDashCtx(wsSel){
+  const [tks, reqs, apprs] = await Promise.all([
     db.from('tasks').select('id,project_id,title,status,priority,assignee_id,due_date,completed_at,created_at'),
     db.from('requests').select('id,ticket_no,title,status,sla_due_at,completed_at,created_at,request_type_id,decided_at,submitted_by,assigned_to'),
     db.from('approvals').select('id,status,request_id'),
-    db.from('dashboard_widgets').select('*').eq('user_id', S.me.id).order('position'),
   ]);
   let tasks=tks.data||[], requests=reqs.data||[], approvals=apprs.data||[];
-  S._widgets = wdg.data||[];
-  if(!S._widgets.length && !S._widgetsSeeded){
-    S._widgetsSeeded = true;
-    const defaults = [
-      {wtype:'bar',   title:'Open tasks by workspace', config:{entity:'tasks', groupBy:'workspace'}, position:0},
-      {wtype:'donut', title:'Tasks by status',         config:{entity:'tasks', groupBy:'status'},    position:1},
-      {wtype:'bar',   title:'Open workload by person', config:{entity:'tasks', groupBy:'assignee'},  position:2},
-      {wtype:'list',  title:'My tasks due soon',       config:{entity:'tasks', show:'due7', mine:true}, position:3},
-    ].map(w=>({...w, user_id:S.me.id}));
-    const {data:seeded} = await db.from('dashboard_widgets').insert(defaults).select();
-    S._widgets = seeded||[];
-  }
-
-  // workspace filter
-  const wsSel = dashWs !== 'all' ? dashWs : null;
-  const wsObj = wsSel ? wsById(wsSel) : null;
   const scopeProjects = wsSel ? S.projects.filter(p=>p.workspace_id===wsSel) : S.projects;
   if(wsSel){
     const pidSet = new Set(scopeProjects.map(p=>p.id));
@@ -2320,26 +2309,92 @@ async function renderDashboard(){
   const openReqs = requests.filter(r=>['submitted','in_review','approved','in_progress'].includes(r.status));
   const slaBreach = openReqs.filter(r=>r.sla_due_at && new Date(r.sla_due_at)<Date.now());
   const pendingAppr = approvals.filter(a=>a.status==='pending').length;
-
-  // context shared by all widgets (already scoped to the selected workspace)
   S._dashCtx = {tasks, requests, open, overdue, dueWeek, doneTasks, openReqs, slaBreach, scopeProjects, wsSel};
+  return {open, overdue, dueWeek, onTimePct, openReqs, slaBreach, pendingAppr};
+}
+function statRowHTML(k){
+  return `<div class="stat-row">
+      <div class="stat"><div class="n accent">${k.open.length}</div><div class="l">Open tasks</div></div>
+      <div class="stat"><div class="n ${k.overdue.length?'red':''}">${k.overdue.length}</div><div class="l">Overdue</div></div>
+      <div class="stat"><div class="n amber">${k.dueWeek.length}</div><div class="l">Due within 7 days</div></div>
+      <div class="stat"><div class="n ${k.onTimePct===null?'':k.onTimePct>=80?'green':k.onTimePct>=50?'amber':'red'}">${k.onTimePct===null?'—':k.onTimePct+'%'}</div><div class="l">On-time completion</div></div>
+      <div class="stat"><div class="n">${k.openReqs.length}</div><div class="l">Open requests</div></div>
+      <div class="stat"><div class="n ${k.slaBreach.length?'red':'green'}">${k.slaBreach.length}</div><div class="l">SLA breached</div></div>
+      <div class="stat"><div class="n ${k.pendingAppr?'amber':''}">${k.pendingAppr}</div><div class="l">Pending approvals</div></div>
+    </div>`;
+}
+/* Which widget set is on screen: null = personal dashboard, else a workspace id. */
+let widgetScope = null;
+const widgetsEditable = ()=> widgetScope ? canEdit() : isStaff();
+function reRenderWidgets(){ widgetScope ? renderWorkspaceReport(widgetScope) : renderDashboard(); }
 
+let dashWs = 'all';
+async function renderDashboard(){
+  if(!isStaff() && !isRequester()){ location.hash='#/home'; return; }
+  widgetScope = null;
+  setTopbar('Dashboard', `<select id="dash-ws" style="width:auto;min-width:200px" onchange="dashWs=this.value;renderDashboard()">
+    <option value="all">All workspaces</option>
+    ${S.workspaces.map(w=>`<option value="${w.id}" ${dashWs===w.id?'selected':''}>${esc(w.name)}</option>`).join('')}</select>`);
+  const C=$('#content'); C.innerHTML='<div class="empty">Loading…</div>';
+  const wsSel = dashWs !== 'all' ? dashWs : null;
+  const [k, wdg] = await Promise.all([
+    buildDashCtx(wsSel),
+    db.from('dashboard_widgets').select('*').eq('user_id', S.me.id).is('workspace_id', null).order('position'),
+  ]);
+  S._widgets = wdg.data||[];
+  if(!S._widgets.length && !S._widgetsSeeded && isStaff()){
+    S._widgetsSeeded = true;
+    const defaults = [
+      {wtype:'bar',   title:'Open tasks by workspace', config:{entity:'tasks', groupBy:'workspace'}, position:0},
+      {wtype:'donut', title:'Tasks by status',         config:{entity:'tasks', groupBy:'status'},    position:1},
+      {wtype:'bar',   title:'Open workload by person', config:{entity:'tasks', groupBy:'assignee'},  position:2},
+      {wtype:'list',  title:'My tasks due soon',       config:{entity:'tasks', show:'due7', mine:true}, position:3},
+    ].map(w=>({...w, user_id:S.me.id}));
+    const {data:seeded} = await db.from('dashboard_widgets').insert(defaults).select();
+    S._widgets = seeded||[];
+  }
+  const wsObj = wsSel ? wsById(wsSel) : null;
   C.innerHTML = `
     <div class="page-head"><div><h1>${wsObj? esc(wsObj.name):'Operations Dashboard'}</h1><div class="sub">${wsObj? 'Workspace view — tasks, requests and approvals routed here':'Live view across all workspaces'}</div></div></div>
-    <div class="stat-row">
-      <div class="stat"><div class="n accent">${open.length}</div><div class="l">Open tasks</div></div>
-      <div class="stat"><div class="n ${overdue.length?'red':''}">${overdue.length}</div><div class="l">Overdue</div></div>
-      <div class="stat"><div class="n amber">${dueWeek.length}</div><div class="l">Due within 7 days</div></div>
-      <div class="stat"><div class="n ${onTimePct===null?'':onTimePct>=80?'green':onTimePct>=50?'amber':'red'}">${onTimePct===null?'—':onTimePct+'%'}</div><div class="l">On-time completion</div></div>
-      <div class="stat"><div class="n">${openReqs.length}</div><div class="l">Open requests</div></div>
-      <div class="stat"><div class="n ${slaBreach.length?'red':'green'}">${slaBreach.length}</div><div class="l">SLA breached</div></div>
-      <div class="stat"><div class="n ${pendingAppr?'amber':''}">${pendingAppr}</div><div class="l">Pending approvals</div></div>
-    </div>
+    ${statRowHTML(k)}
     <div class="section-title" style="margin-top:22px;display:flex;align-items:center;gap:12px">Widgets
-      <span style="flex:1"></span><button class="btn btn-primary btn-sm" onclick="widgetModal()">＋ Add widget</button></div>
+      <span style="flex:1"></span>${isStaff()? `<button class="btn btn-primary btn-sm" onclick="widgetModal()">＋ Add widget</button>`:''}</div>
     <div class="wgrid" id="wgrid">${(S._widgets||[]).map(w=>widgetCard(w)).join('') || `<div class="card empty" style="grid-column:1/-1">No widgets yet — add your first one.</div>`}</div>
-    ${overdue.length? `<div class="section-title" style="margin-top:22px">Overdue tasks <span class="count">${overdue.length}</span></div>
-      <div class="card">${taskTable(overdue)}</div>`:''}`;
+    ${k.overdue.length? `<div class="section-title" style="margin-top:22px">Overdue tasks <span class="count">${k.overdue.length}</span></div>
+      <div class="card">${taskTable(k.overdue)}</div>`:''}`;
+}
+
+/* ================= WORKSPACE REPORT ================= */
+/* A shared report per workspace — everyone on the team sees the same widgets. */
+async function renderWorkspaceReport(wsId){
+  const w = wsById(wsId); if(!w){ location.hash='#/home'; return; }
+  widgetScope = wsId;
+  const C=$('#content'); C.innerHTML='<div class="empty">Loading report…</div>';
+  const [k, wdg] = await Promise.all([
+    buildDashCtx(wsId),
+    db.from('dashboard_widgets').select('*').eq('workspace_id', wsId).order('position'),
+  ]);
+  S._widgets = wdg.data||[];
+  if(!S._widgets.length && canEdit() && !S._seededReports?.[wsId]){
+    (S._seededReports = S._seededReports||{})[wsId] = true;
+    const defaults = [
+      {wtype:'donut', title:'Tasks by status',        config:{entity:'tasks', groupBy:'status'},   position:0},
+      {wtype:'bar',   title:'Workload by person',     config:{entity:'tasks', groupBy:'assignee'}, position:1},
+      {wtype:'bar',   title:'Open tasks by board',    config:{entity:'tasks', groupBy:'project'},  position:2},
+      {wtype:'list',  title:'Overdue',                config:{entity:'tasks', show:'overdue'},     position:3},
+    ].map(x=>({...x, workspace_id:wsId, user_id:S.me.id}));
+    const {data:seeded, error} = await db.from('dashboard_widgets').insert(defaults).select();
+    if(!error) S._widgets = seeded||[];
+  }
+  C.innerHTML = `
+    ${wsTabsHTML(wsId,'report')}
+    <div class="page-head"><div><h1>${esc(w.name)} — Report</h1>
+      <div class="sub">Shared with everyone in this workspace${canEdit()? ' · your changes are visible to the whole team':''}</div></div></div>
+    ${statRowHTML(k)}
+    <div class="section-title" style="margin-top:22px;display:flex;align-items:center;gap:12px">Widgets
+      <span style="flex:1"></span>${canEdit()? `<button class="btn btn-primary btn-sm" onclick="widgetModal(null,'${wsId}')">＋ Add widget</button>`:''}</div>
+    <div class="wgrid" id="wgrid">${(S._widgets||[]).map(x=>widgetCard(x)).join('')
+      || `<div class="card empty" style="grid-column:1/-1">${canEdit()? 'No widgets yet — add the first one.':'No widgets on this report yet.'}</div>`}</div>`;
 }
 
 /* ================= DASHBOARD WIDGETS ================= */
@@ -2414,16 +2469,17 @@ function widgetCard(w){
     else rows=[...rows].sort((a,b)=>(a.due_date||'9999').localeCompare(b.due_date||'9999')).slice(0,6);
     body = rows.length? (cfg.entity==='requests'? requestTable(rows): taskTable(rows)) : '<div style="color:var(--ink3);font-size:13px;padding:8px 0">Nothing here</div>';
   }
-  return `<div class="card widget-card ${w.wtype==='list'?'w-wide':''}" draggable="true" data-wid="${w.id}"
+  return `<div class="card widget-card ${w.wtype==='list'?'w-wide':''}" draggable="${widgetsEditable()}" data-wid="${w.id}"
       ondragstart="wDragStart(event,'${w.id}')" ondragover="event.preventDefault()" ondrop="wDrop(event,'${w.id}')">
     <div class="w-head"><h3>${esc(w.title)}</h3>
-      <span class="w-actions"><span onclick="widgetModal('${w.id}')">Edit</span><span onclick="deleteWidget('${w.id}')">Remove</span></span></div>
+      ${widgetsEditable()? `<span class="w-actions"><span onclick="widgetModal('${w.id}')">Edit</span><span onclick="deleteWidget('${w.id}')">Remove</span></span>`:''}</div>
     ${body}</div>`;
 }
 let wDragId=null;
 function wDragStart(e,id){ wDragId=id; }
 async function wDrop(e,targetId){
   e.preventDefault();
+  if(!widgetsEditable()) return;
   if(!wDragId || wDragId===targetId) return;
   const ws=S._widgets, from=ws.findIndex(x=>x.id===wDragId), to=ws.findIndex(x=>x.id===targetId);
   if(from<0||to<0) return;
@@ -2438,8 +2494,9 @@ async function deleteWidget(id){
   document.getElementById('wgrid').innerHTML = S._widgets.map(widgetCard).join('') || `<div class="card empty" style="grid-column:1/-1">No widgets yet — add your first one.</div>`;
   toast('Widget removed');
 }
-function widgetModal(id){
+function widgetModal(id, wsId){
   const w = id? S._widgets.find(x=>x.id===id): null;
+  const scope = wsId || (w? w.workspace_id : null) || widgetScope || null;
   const cfg = w? (w.config||{}) : {entity:'tasks', show:'open', groupBy:'status'};
   const types=[['stat','Number','A single big number'],['bar','Bar chart','Compare groups side by side'],['donut','Donut','Share of a total'],['list','List','The items themselves'],['progress','Progress','Done vs total']];
   const m = modal(`<div class="modal-head"><h2>${w?'Edit widget':'Add widget'}</h2><button class="x" onclick="closeModals()">✕</button></div>
@@ -2454,7 +2511,7 @@ function widgetModal(id){
         <div id="wm-dim"></div>
       </div>
       <div class="chk" id="wm-mine-wrap" style="margin-top:6px"><input type="checkbox" id="wm-mine" ${cfg.mine?'checked':''}> <span>Only items assigned to me</span></div>
-      <p style="color:var(--ink3);font-size:12.5px;margin-top:10px">Widgets follow the workspace selector at the top of the dashboard.</p>
+      <p style="color:var(--ink3);font-size:12.5px;margin-top:10px">${scope? 'This widget lives on the workspace report — everyone on the team sees it.' : 'Widgets follow the workspace selector at the top of the dashboard, and only you see them.'}</p>
     </div>
     <div class="modal-foot"><button class="btn btn-ghost" onclick="closeModals()">Cancel</button><button class="btn btn-primary" id="wm-save">${w?'Save':'Add widget'}</button></div>`);
   window.wmRefresh = ()=>{
@@ -2484,9 +2541,9 @@ function widgetModal(id){
     }
     let error;
     if(w){ ({error} = await db.from('dashboard_widgets').update({wtype, title, config}).eq('id',w.id)); }
-    else { ({error} = await db.from('dashboard_widgets').insert({user_id:S.me.id, wtype, title, config, position:(S._widgets||[]).length})); }
+    else { ({error} = await db.from('dashboard_widgets').insert({user_id:S.me.id, workspace_id:scope, wtype, title, config, position:(S._widgets||[]).length})); }
     if(error) return toast(error.message,true);
-    closeModals(); toast(w?'Widget updated':'Widget added'); renderDashboard();
+    closeModals(); toast(w?'Widget updated':'Widget added'); reRenderWidgets();
   };
 }
 function hbars(rows){
@@ -2762,7 +2819,7 @@ function editWorkspaceModal(wid){
     const {error} = await db.from('workspaces').update({name, description:m.querySelector('#ew-desc').value.trim(), color:colour}).eq('id',wid);
     if(error) return toast(error.message, true);
     closeModals(); toast('Workspace updated'); await refreshCore(); renderSidebar();
-    if(S.route.view==='admin') renderAdmin(); else if(S.route.view==='ws') renderWorkspace(wid);
+    if(S.route.view==='admin') renderAdmin(); else if(S.route.view==='ws') renderWorkspace(wid, S.route.tab);
   };
 }
 async function deleteWorkspaceModal(wid){
