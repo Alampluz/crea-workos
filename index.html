@@ -250,6 +250,17 @@ tr.tv-arch .tv-name .tv-open{text-decoration:line-through}
 .stg-s{color:var(--ink3);font-size:10.5px;flex:none}
 .stg-x{color:var(--ink3);font-size:11px;padding:0 2px;flex:none}
 .stg-x:hover{color:var(--red)}
+/* ---- task history ---- */
+.hist{position:relative;margin-top:4px;padding-left:2px}
+.hist-row{display:flex;gap:10px;padding:7px 0;position:relative}
+.hist-row+.hist-row{border-top:1px solid var(--line)}
+.hist-txt{font-size:12.5px;line-height:1.55;color:var(--ink2);min-width:0}
+.hist-txt b{color:var(--ink);font-weight:600}
+.hist-txt em{font-style:normal;color:var(--ink3)}
+.hist-when{color:var(--ink3);font-size:11px;margin-left:6px;white-space:nowrap}
+.hist-more{margin-top:8px;font-size:12px;font-weight:600;color:var(--accent);cursor:pointer;
+  display:inline-block;padding:4px 8px;border-radius:7px}
+.hist-more:hover{background:var(--accent-soft)}
 .ws-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .danger-note{background:var(--red-soft);border:1px solid var(--red);border-radius:8px;padding:10px 12px;margin-bottom:12px;font-size:13px;color:var(--red)}
 .tv .subchip{font-size:11.5px;font-weight:700;color:var(--ink3);background:var(--gray-soft);border-radius:6px;padding:2px 7px;margin-left:8px;white-space:nowrap}
@@ -1593,7 +1604,7 @@ function wireDnD(projectId){
       renderProjectFromCache(projectId);
       const {error} = await db.from('tasks').update({status}).eq('id',dragId);
       if(error){ t.status=old; renderProjectFromCache(projectId); toast(error.message, true); }
-      else logActivity('task', dragId, 'status_changed', {from:old, to:status});
+
     });
   });
 }
@@ -1961,7 +1972,7 @@ async function tvCore(tid, field, val){
   const old=t[field]; t[field]=val;
   const {error}=await db.from('tasks').update({[field]:val}).eq('id',tid);
   if(error){ t[field]=old; toast(error.message, true); }
-  else if(field==='status') logActivity('task', tid, 'status_changed', {from:old, to:val});
+
 }
 async function tvCustom(tid, fid, val){
   const t=S._tasks.find(x=>x.id===tid); if(!t) return;
@@ -2073,7 +2084,7 @@ function newTaskModal(projectId, status='todo', groupId=null){
       created_by:S.me.id, position:maxPos+1, group_id:groupId
     }).select().single();
     if(error) return toast(error.message, true);
-    closeModals(); toast('Task created'); logActivity('task', data.id, 'created', {title});
+    closeModals(); toast('Task created');
     if(S.route.view==='project') renderProject(projectId); else renderHome();
   };
 }
@@ -2083,13 +2094,15 @@ function assigneeOptions(projectId, selected){
     `<option value="${p.id}" ${p.id===selected?'selected':''}>${esc(p.full_name)} (${p.role})</option>`).join('');
 }
 async function openTask(id){
-  const [{data:t}, {data:chk}, {data:comments}, {data:atts}, {data:subs}] = await Promise.all([
+  const [{data:t}, {data:chk}, {data:comments}, {data:atts}, {data:subs}, {data:hist}] = await Promise.all([
     db.from('tasks').select('*').eq('id',id).single(),
     db.from('task_checklist').select('*').eq('task_id',id).order('position'),
     db.from('comments').select('*').eq('entity_type','task').eq('entity_id',id).order('created_at'),
     db.from('attachments').select('*').eq('entity_type','task').eq('entity_id',id).order('created_at'),
     db.from('subtasks').select('*').eq('task_id',id).order('position').order('created_at'),
+    db.from('activity_log').select('*').eq('entity_type','task').eq('entity_id',id).order('created_at',{ascending:false}).limit(200),
   ]);
+  S._taskHist = hist||[];
   if(!t) return toast('Task not found', true);
   await hydrateCommentAtts(comments||[]);
   const p = projById(t.project_id);
@@ -2121,6 +2134,8 @@ async function openTask(id){
       <label>Comments</label>
       <div id="tv-comments">${(comments||[]).map(commentRow).join('')||'<div style="color:var(--ink3);font-size:13px">No comments yet</div>'}</div>
       ${canCreate()? commentComposerHTML('tv') : ''}
+      <label>History</label>
+      <div id="tv-history">${historyHTML(S._taskHist)}</div>
       <div style="margin-top:14px;font-size:11.5px;color:var(--ink3)">Created ${fmtDateTime(t.created_at)} by ${esc(prof(t.created_by)?.full_name||'—')} · in ${esc(p?.name||'')}</div>
     </div>
     <div class="modal-foot"><button class="btn btn-ghost" onclick="closeModals()">Close</button>${canEdit()? `<button class="btn btn-primary" id="tv-save">Save changes</button>`:''}</div>`, true);
@@ -2134,7 +2149,7 @@ async function openTask(id){
     };
     const {error} = await db.from('tasks').update(upd).eq('id',t.id);
     if(error) return toast(error.message, true);
-    closeModals(); toast('Task saved'); logActivity('task', t.id, 'updated', {});
+    closeModals(); toast('Task saved');
     if(S.route.view==='project') renderProject(t.project_id); else if(S.route.view==='home') renderHome();
   };
   if(m.querySelector('#tv-sub-add')) m.querySelector('#tv-sub-add').onclick = async ()=>{
@@ -2218,6 +2233,69 @@ function commentRow(c){
     ${c.body? `<p>${renderMentionText(c.body, c.mentions)}</p>`:''}
     ${atts.length? `<div class="att-list in-comment">${atts.map(x=>attLink(x)).join('')}</div>`:''}
   </div></div>`;
+}
+/* ---- task history ---- */
+const statusLabel = k => (STATUSES.find(s=>s.k===k)||{}).label || k || '—';
+const prioLabel   = k => (PRIORITIES.find(p=>p.k===k)||{}).label || k || '—';
+const groupLabel  = id => ((S._groups||[]).find(g=>g.id===id)||{}).name || (id? 'another group':'no group');
+const fieldLabel  = f => ({title:'Title', status:'Status', priority:'Priority', assignee:'Assignee',
+                           due_date:'Due date', group:'Group', board:'Board', description:'Description',
+                           archived:'Archive'})[f] || f;
+function histValue(field, v, key){
+  if(v===null || v===undefined || v==='') return '<em>empty</em>';
+  if(field==='status')   return esc(statusLabel(v));
+  if(field==='priority') return esc(prioLabel(v));
+  if(field==='assignee') return esc(prof(v)?.full_name || 'someone');
+  if(field==='group')    return esc(groupLabel(v));
+  if(field==='board')    return esc(projById(v)?.name || 'another board');
+  if(field==='due_date') return esc(fmtDate(v));
+  return esc(String(v));
+}
+function histLine(a){
+  const d = a.detail||{};
+  switch(a.action){
+    case 'created':        return 'created this task';
+    case 'deleted':        return 'deleted this task';
+    case 'commented':      return `commented${d.excerpt? ` — “${esc(d.excerpt)}”`:''}`;
+    case 'file_added':     return `attached <b>${esc(d.file||'a file')}</b>`;
+    case 'file_removed':   return `removed <b>${esc(d.file||'a file')}</b>`;
+    case 'subtask_added':  return `added subtask <b>${esc(d.title||'')}</b>`;
+    case 'subtask_removed':return `removed subtask <b>${esc(d.title||'')}</b>`;
+    case 'subtask_status': return `marked subtask <b>${esc(d.title||'')}</b> ${esc(d.to==='done'?'done':'not done')}`;
+    case 'updated': {
+      const cs = d.changes||[];
+      if(!cs.length) return 'made a change';
+      return cs.map(c=>{
+        if(c.field==='description') return 'edited the description';
+        if(c.field==='archived')    return c.to==='archived'? 'archived this task' : 'restored this task';
+        if(c.field==='custom'){
+          const f = (S._fields||[]).find(x=>x.id===c.key);
+          return `set <b>${esc(f?f.name:'a field')}</b> to ${histValue('custom', c.to)}`;
+        }
+        const from = histValue(c.field, c.from), to = histValue(c.field, c.to);
+        if(c.field==='title') return `renamed it to <b>${to}</b>`;
+        return `changed <b>${esc(fieldLabel(c.field))}</b> from ${from} to ${to}`;
+      }).join(', ');
+    }
+    default: return esc(a.action.replace(/_/g,' '));
+  }
+}
+function historyHTML(rows, showAll){
+  if(!rows || !rows.length) return '<div style="color:var(--ink3);font-size:13px">Nothing recorded yet.</div>';
+  const shown = showAll ? rows : rows.slice(0,8);
+  return `<div class="hist">${shown.map(a=>{
+    const who = prof(a.actor_id);
+    return `<div class="hist-row">
+      ${avatar(who,true)}
+      <div class="hist-txt"><b>${esc(who?.full_name||'Someone')}</b> ${histLine(a)}
+        <span class="hist-when" title="${fmtDateTime(a.created_at)}">${timeAgo(a.created_at)}</span></div>
+    </div>`;
+  }).join('')}</div>
+  ${rows.length>8 && !showAll ? `<div class="hist-more" onclick="showAllHistory()">Show all ${rows.length} events</div>`:''}`;
+}
+function showAllHistory(){
+  const box = document.getElementById('tv-history'); if(!box) return;
+  box.innerHTML = historyHTML(S._taskHist||[], true);
 }
 /* Comments come back without their files; fetch them in one go and attach. */
 async function hydrateCommentAtts(comments){
