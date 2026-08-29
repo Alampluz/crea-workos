@@ -261,17 +261,17 @@ tr.tv-arch .tv-name .tv-open{text-decoration:line-through}
 .hist-more{margin-top:8px;font-size:12px;font-weight:600;color:var(--accent);cursor:pointer;
   display:inline-block;padding:4px 8px;border-radius:7px}
 .hist-more:hover{background:var(--accent-soft)}
-/* ---- removable comments ---- */
+/* ---- editable / removable comments ---- */
 .comment .body{position:relative}
-.cmt-del{position:absolute;top:0;right:0;color:var(--ink3);font-size:11px;line-height:1;
-  padding:3px 5px;border-radius:6px;opacity:0;transition:opacity .14s,color .14s,background .14s}
-.comment:hover .cmt-del{opacity:1}
-.cmt-del:hover{background:var(--red-soft);color:var(--red)}
-.comment.gone .body{background:transparent;border:1px dashed var(--line)}
-.gone-txt{font-size:12.5px;color:var(--ink3);font-style:italic}
-.cmt-undo{margin-left:10px;font-size:11.5px;font-weight:700;color:var(--accent);
-  padding:2px 7px;border-radius:6px}
-.cmt-undo:hover{background:var(--accent-soft)}
+.cmt-acts{position:absolute;top:6px;right:8px;display:flex;gap:2px;opacity:0;transition:opacity .14s}
+.comment:hover .cmt-acts{opacity:1}
+.cmt-act{font-size:11px;font-weight:600;color:var(--ink3);padding:2px 7px;border-radius:6px}
+.cmt-act:hover{background:var(--gray-soft);color:var(--ink)}
+.cmt-act.danger:hover{background:var(--red-soft);color:var(--red)}
+.cmt-editbox{width:100%;padding:6px 9px;font-size:13px;border:1px solid var(--accent);border-radius:7px;margin-top:2px}
+.hist-undo{margin-left:8px;font-size:11px;font-weight:700;color:var(--accent);padding:2px 7px;border-radius:6px}
+.hist-undo:hover{background:var(--accent-soft)}
+.toast-undo{margin-left:12px;font-size:12px;font-weight:700;color:#fff;text-decoration:underline;text-underline-offset:3px}
 .ws-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .danger-note{background:var(--red-soft);border:1px solid var(--red);border-radius:8px;padding:10px 12px;margin-bottom:12px;font-size:13px;color:var(--red)}
 .tv .subchip{font-size:11.5px;font-weight:700;color:var(--ink3);background:var(--gray-soft);border-radius:6px;padding:2px 7px;margin-left:8px;white-space:nowrap}
@@ -547,6 +547,12 @@ const esc = s=> (s??'').toString().replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;
 function toast(msg, err=false){
   const t=el(`<div class="toast ${err?'err':''}">${esc(msg)}</div>`);
   $('#toasts').appendChild(t); setTimeout(()=>t.remove(), 3800);
+}
+/* A toast with a way back — used when something reversible just happened. */
+function toastUndo(msg, fn){
+  const t=el(`<div class="toast">${esc(msg)}<button class="toast-undo">Undo</button></div>`);
+  t.querySelector('.toast-undo').onclick = ()=>{ t.remove(); fn(); };
+  $('#toasts').appendChild(t); setTimeout(()=>t.remove(), 7000);
 }
 function initials(name){ return (name||'?').trim().split(/\s+/).slice(0,2).map(w=>w[0]).join('').toUpperCase(); }
 function avatar(p, sm=false){
@@ -2113,7 +2119,7 @@ async function openTask(id){
     db.from('subtasks').select('*').eq('task_id',id).order('position').order('created_at'),
     db.from('activity_log').select('*').eq('entity_type','task').eq('entity_id',id).order('created_at',{ascending:false}).limit(200),
   ]);
-  S._taskHist = hist||[];
+  S._taskHist = hist||[]; S._histEntity = id;
   if(!t) return toast('Task not found', true);
   await hydrateCommentAtts(comments||[]);
   S._commentCache = {}; (comments||[]).forEach(c=> S._commentCache[c.id]=c);
@@ -2238,46 +2244,79 @@ async function delChk(id){
   document.getElementById('chk-'+id)?.remove();
 }
 function canRemoveComment(c){ return S.me && (c.author_id===S.me.id || isStaff()); }
+function canEditComment(c){ return S.me && c.author_id===S.me.id; }
+/* A removed comment disappears from the thread entirely — its trace, and the
+   Undo, live on the task History instead. */
 function commentRow(c){
+  if(c.deleted_at) return '';
   const a = prof(c.author_id);
   const atts = c.atts || [];
-  if(c.deleted_at){
-    const by = prof(c.deleted_by);
-    return `<div class="comment gone" data-cid="${c.id}">${avatar(a,true)}<div class="body">
-      <span class="gone-txt">Comment removed${by? ` by ${esc(by.full_name)}`:''}</span>
-      <span class="when">${timeAgo(c.deleted_at)}</span>
-      ${canRemoveComment(c)? `<button class="cmt-undo" onclick="undoDeleteComment('${c.id}')">Undo</button>`:''}
-    </div></div>`;
-  }
   return `<div class="comment" data-cid="${c.id}">${avatar(a,true)}<div class="body">
-    <b>${esc(a?.full_name||'Unknown')}</b><span class="when">${fmtDateTime(c.created_at)}</span>
-    ${canRemoveComment(c)? `<button class="cmt-del" title="Remove this comment" onclick="deleteComment('${c.id}')">✕</button>`:''}
-    ${c.body? `<p>${renderMentionText(c.body, c.mentions)}</p>`:''}
+    <b>${esc(a?.full_name||'Unknown')}</b><span class="when">${fmtDateTime(c.created_at)}${c.edited_at? ' · edited':''}</span>
+    <span class="cmt-acts">
+      ${canEditComment(c)? `<button class="cmt-act" title="Edit" onclick="editComment('${c.id}')">Edit</button>`:''}
+      ${canRemoveComment(c)? `<button class="cmt-act danger" title="Remove" onclick="deleteComment('${c.id}')">Remove</button>`:''}
+    </span>
+    <p class="cmt-body">${c.body? renderMentionText(c.body, c.mentions):''}</p>
     ${atts.length? `<div class="att-list in-comment">${atts.map(x=>attLink(x)).join('')}</div>`:''}
   </div></div>`;
 }
-/* Removing hides it and keeps the row, so History still shows it happened
-   and Undo can bring it straight back. */
+function commentsBoxEl(){ return document.querySelector('#tv-comments, #rv-comments'); }
+function renderCommentsBox(){
+  const box = commentsBoxEl(); if(!box) return;
+  const rows = Object.values(S._commentCache||{}).sort((a,b)=>(a.created_at||'').localeCompare(b.created_at||''));
+  box.innerHTML = rows.map(commentRow).join('') || '<div style="color:var(--ink3);font-size:13px">No comments yet</div>';
+}
+async function refreshTaskHistory(){
+  const boxEl = document.getElementById('tv-history'); if(!boxEl || !S._histEntity) return;
+  const {data} = await db.from('activity_log').select('*').eq('entity_type','task')
+    .eq('entity_id', S._histEntity).order('created_at',{ascending:false}).limit(200);
+  S._taskHist = data||[];
+  boxEl.innerHTML = historyHTML(S._taskHist);
+}
 async function deleteComment(id){
   const {data, error} = await db.from('comments')
     .update({deleted_at:new Date().toISOString(), deleted_by:S.me.id}).eq('id',id).select().single();
   if(error) return toast(error.message, true);
-  swapCommentRow(id, data);
-  toast('Comment removed — Undo is on the comment', false);
+  cacheComment(data); renderCommentsBox(); refreshTaskHistory();
+  toastUndo('Comment removed', ()=>undoDeleteComment(id));
 }
 async function undoDeleteComment(id){
   const {data, error} = await db.from('comments')
     .update({deleted_at:null, deleted_by:null}).eq('id',id).select().single();
   if(error) return toast(error.message, true);
-  swapCommentRow(id, data);
+  cacheComment(data); renderCommentsBox(); refreshTaskHistory();
   toast('Comment restored');
 }
-function swapCommentRow(id, row){
-  const el = document.querySelector(`.comment[data-cid="${id}"]`); if(!el || !row) return;
-  const prev = (S._commentCache||{})[id];
+/* Edit in place: the text swaps for an input; Enter saves, Escape cancels. */
+function editComment(id){
+  const c = (S._commentCache||{})[id]; if(!c) return;
+  const body = document.querySelector(`.comment[data-cid="${id}"] .cmt-body`); if(!body) return;
+  if(body.querySelector('input')) return;
+  const inp = document.createElement('input');
+  inp.className = 'cmt-editbox'; inp.value = c.body||'';
+  body.textContent=''; body.appendChild(inp); inp.focus();
+  inp.setSelectionRange(inp.value.length, inp.value.length);
+  let done=false;
+  const cancel = ()=>{ if(done) return; done=true; body.innerHTML = renderMentionText(c.body, c.mentions); };
+  const save = async ()=>{
+    if(done) return;
+    const val = inp.value.trim();
+    if(!val || val===c.body) return cancel();
+    done=true;
+    const {data, error} = await db.from('comments')
+      .update({body:val, edited_at:new Date().toISOString()}).eq('id',id).select().single();
+    if(error){ done=false; return toast(error.message, true); }
+    cacheComment(data); renderCommentsBox(); refreshTaskHistory();
+  };
+  inp.onkeydown = e=>{ if(e.key==='Enter') save(); if(e.key==='Escape') cancel(); };
+  inp.onblur = ()=> setTimeout(save, 100);
+}
+function cacheComment(row){
+  if(!row) return;
+  const prev = (S._commentCache||{})[row.id];
   if(prev) row.atts = prev.atts;
-  (S._commentCache = S._commentCache||{})[id] = row;
-  el.outerHTML = commentRow(row);
+  (S._commentCache = S._commentCache||{})[row.id] = row;
 }
 /* ---- task history ---- */
 const statusLabel = k => (STATUSES.find(s=>s.k===k)||{}).label || k || '—';
@@ -2304,6 +2343,7 @@ function histLine(a){
     case 'commented':        return `commented${d.excerpt? ` — “${esc(d.excerpt)}”`:''}`;
     case 'comment_deleted':  return `removed a comment${d.excerpt? ` — “${esc(d.excerpt)}”`:''}`;
     case 'comment_restored': return `restored a comment${d.excerpt? ` — “${esc(d.excerpt)}”`:''}`;
+    case 'comment_edited':   return `edited a comment${d.excerpt? ` — now “${esc(d.excerpt)}”`:''}`;
     case 'file_added':     return `attached <b>${esc(d.file||'a file')}</b>`;
     case 'file_removed':   return `removed <b>${esc(d.file||'a file')}</b>`;
     case 'subtask_added':  return `added subtask <b>${esc(d.title||'')}</b>`;
@@ -2334,10 +2374,14 @@ function historyHTML(rows, showAll){
   const shown = showAll ? rows : rows.slice(0,8);
   return `<div class="hist">${shown.map(a=>{
     const who = prof(a.actor_id);
+    const cid = a.action==='comment_deleted' ? (a.detail||{}).comment_id : null;
+    const cRow = cid ? (S._commentCache||{})[cid] : null;
+    const undo = cid && cRow && cRow.deleted_at && canRemoveComment(cRow)
+      ? `<button class="hist-undo" onclick="undoDeleteComment('${cid}')">Undo</button>` : '';
     return `<div class="hist-row">
       ${avatar(who,true)}
       <div class="hist-txt"><b>${esc(who?.full_name||'Someone')}</b> ${histLine(a)}
-        <span class="hist-when" title="${fmtDateTime(a.created_at)}">${timeAgo(a.created_at)}</span></div>
+        <span class="hist-when" title="${fmtDateTime(a.created_at)}">${timeAgo(a.created_at)}</span>${undo}</div>
     </div>`;
   }).join('')}</div>
   ${rows.length>8 && !showAll ? `<div class="hist-more" onclick="showAllHistory()">Show all ${rows.length} events</div>`:''}`;
@@ -2445,6 +2489,8 @@ async function openRequest(id){
   ]);
   if(!r) return toast('Request not found', true);
   await hydrateCommentAtts(comments||[]);
+  S._commentCache = {}; (comments||[]).forEach(c=> S._commentCache[c.id]=c);
+  S._histEntity = null;
   const rt = S.requestTypes.find(x=>x.id===r.request_type_id);
   const staff = isStaff();
   const canEditStatus = staff || r.assigned_to===S.me.id;
