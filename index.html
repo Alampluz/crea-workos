@@ -141,6 +141,8 @@ tr.tv-arch .tv-name .tv-open{text-decoration:line-through}
 .ws-item .ws-menu{margin-left:auto;opacity:0;color:var(--ink3);font-weight:700;padding:0 4px;border-radius:5px;line-height:1;flex:none}
 .ws-item:hover .ws-menu,.ws-item .ws-menu.on{opacity:1}
 .ws-item .ws-menu:hover{background:rgba(0,0,0,.07);color:var(--ink)}
+.pj-menu{color:var(--ink3);font-weight:700;padding:0 5px;border-radius:5px;line-height:1;cursor:pointer;flex:none}
+.pj-menu:hover{background:var(--gray-soft);color:var(--ink)}
 .ws-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .danger-note{background:var(--red-soft);border:1px solid var(--red);border-radius:8px;padding:10px 12px;margin-bottom:12px;font-size:13px;color:var(--red)}
 .tv .subchip{font-size:11.5px;font-weight:700;color:var(--ink3);background:var(--gray-soft);border-radius:6px;padding:2px 7px;margin-left:8px;white-space:nowrap}
@@ -810,6 +812,7 @@ async function renderWorkspace(id){
             <span class="ws-dot" style="background:${p.color};width:11px;height:11px"></span>
             <b style="font-size:14.5px;flex:1">${esc(p.name)}</b>
             ${p.status!=='active'? `<span class="chip" style="background:var(--gray-soft);color:var(--ink2)">${p.status.replace('_',' ')}</span>`:''}
+            ${canEdit()? `<span class="pj-menu" title="Board options" onclick="event.stopPropagation();projMenu(this,'${p.id}')">⋯</span>`:''}
           </div>
           <div style="color:var(--ink2);font-size:12.5px;min-height:18px;margin-bottom:12px">${esc(p.description||'')}</div>
           <div style="display:flex;align-items:center;gap:10px;font-size:12px;color:var(--ink2)">
@@ -819,6 +822,85 @@ async function renderWorkspace(id){
           </div></div>`;
       }).join('')}</div>`
     : `<div class="card empty">No projects yet in this workspace${isStaff()? ' — create the first one.':''}</div>`}`;
+}
+/* ---- Boards (projects): rename, recolour, delete ---- */
+const PJ_COLORS=['#00B894','#0984E3','#6C5CE7','#E17055','#E84393','#D63031','#FDCB6E','#00CEC9','#0F766E','#7D3C55'];
+const canDeleteBoard = ()=> S.me && (S.me.role==='admin' || S.me.role==='management');
+function projMenu(anchor, pid){
+  const p = (S.projects||[]).find(x=>x.id===pid); if(!p) return;
+  const items = [{label:'Rename / edit board', fn:()=>editProjectModal(pid)},
+                 {label:'Partner access', fn:()=>projectMembersModal(pid)}];
+  if(canDeleteBoard()){ items.push('-'); items.push({label:'Delete board', danger:true, fn:()=>deleteProjectModal(pid)}); }
+  ctxMenu(anchor, items);
+}
+function editProjectModal(pid){
+  const p = (S.projects||[]).find(x=>x.id===pid); if(!p) return;
+  const m = modal(`<div class="modal-head"><h2>Edit board</h2><button class="x" onclick="closeModals()">✕</button></div>
+    <div class="modal-body">
+      <label>Board name <span class="req">*</span></label><input id="ep-name" value="${esc(p.name)}">
+      <label>Description</label><input id="ep-desc" value="${esc(p.description||'')}">
+      <div class="field-grid">
+        <div><label>Workspace</label><select id="ep-ws">${S.workspaces.map(w=>`<option value="${w.id}" ${w.id===p.workspace_id?'selected':''}>${esc(w.name)}</option>`).join('')}</select></div>
+        <div><label>Due date</label><input id="ep-due" type="date" value="${p.due_date||''}"></div>
+      </div>
+      <label>Status</label><select id="ep-status">${['active','on_hold','archived'].map(s=>`<option value="${s}" ${s===p.status?'selected':''}>${s.replace('_',' ')}</option>`).join('')}</select>
+      <label>Colour</label>
+      <div id="ep-cols" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:4px">
+        ${PJ_COLORS.map(c=>`<span data-c="${c}" style="width:26px;height:26px;border-radius:50%;background:${c};cursor:pointer;box-shadow:${c===p.color?'0 0 0 3px #fff,0 0 0 5px '+c:'none'}"></span>`).join('')}
+      </div>
+    </div>
+    <div class="modal-foot"><button class="btn btn-ghost" onclick="closeModals()">Cancel</button><button class="btn btn-primary" id="ep-save">Save</button></div>`);
+  let colour = p.color;
+  m.querySelectorAll('#ep-cols span').forEach(s=> s.onclick=()=>{
+    colour = s.dataset.c;
+    m.querySelectorAll('#ep-cols span').forEach(x=> x.style.boxShadow = x.dataset.c===colour? '0 0 0 3px #fff,0 0 0 5px '+colour : 'none');
+  });
+  m.querySelector('#ep-save').onclick = async ()=>{
+    const name = m.querySelector('#ep-name').value.trim(); if(!name) return toast('Name required', true);
+    const {error} = await db.from('projects').update({name, description:m.querySelector('#ep-desc').value.trim(),
+      workspace_id:m.querySelector('#ep-ws').value, due_date:m.querySelector('#ep-due').value||null,
+      status:m.querySelector('#ep-status').value, color:colour}).eq('id',pid);
+    if(error) return toast(error.message, true);
+    closeModals(); toast('Board updated'); await refreshCore();
+    if(S.route.view==='project') renderProject(pid); else if(S.route.view==='ws') renderWorkspace(S.route.id); else renderSidebar();
+  };
+}
+async function deleteProjectModal(pid){
+  const p = (S.projects||[]).find(x=>x.id===pid); if(!p) return;
+  if(!canDeleteBoard()) return toast('Only admin or management can delete a board', true);
+  const {count} = await db.from('tasks').select('id',{count:'exact',head:true}).eq('project_id',pid);
+  const n = count||0;
+  const m = modal(`<div class="modal-head"><h2>Delete board “${esc(p.name)}”?</h2><button class="x" onclick="closeModals()">✕</button></div>
+    <div class="modal-body">
+      <div class="danger-note"><b>This cannot be undone.</b> Every task on this board goes with it, along with its subtasks, comments and attachments.</div>
+      <div style="margin:14px 0 16px"><div style="font-size:30px;font-weight:800;line-height:1;color:${n?'var(--red)':'inherit'}">${n}</div>
+        <div style="font-size:12px;color:var(--ink3)">task${n===1?'':'s'} on this board</div></div>
+      ${n? `<p style="font-size:13px;color:var(--ink2);margin-bottom:14px">If you only want it out of the way, set the board's status to <b>archived</b> in Edit instead — nothing is lost and you can switch it back.</p>`:''}
+      <label>Type the board name to confirm</label>
+      <input id="dp-confirm" autocomplete="off" placeholder="${esc(p.name)}">
+    </div>
+    <div class="modal-foot"><button class="btn btn-ghost" onclick="closeModals()">Cancel</button>
+      ${n? `<button class="btn btn-ghost" id="dp-arch">Archive instead</button>`:''}
+      <button class="btn btn-danger" id="dp-go" disabled>Delete board</button></div>`);
+  const inp=m.querySelector('#dp-confirm'), go=m.querySelector('#dp-go');
+  inp.oninput = ()=>{ go.disabled = inp.value.trim().toLowerCase() !== p.name.trim().toLowerCase(); };
+  m.querySelector('#dp-arch')?.addEventListener('click', async ()=>{
+    const {error} = await db.from('projects').update({status:'archived'}).eq('id',pid);
+    if(error) return toast(error.message, true);
+    closeModals(); toast('Board archived'); await refreshCore();
+    if(S.route.view==='project') location.hash='#/ws/'+p.workspace_id; else renderWorkspace(p.workspace_id);
+  });
+  go.onclick = async ()=>{
+    go.disabled=true; go.textContent='Deleting…';
+    const {data, error} = await db.from('projects').delete().eq('id',pid).select('id');
+    if(error){ go.disabled=false; go.textContent='Delete board'; return toast(error.message, true); }
+    if(!data || !data.length){ go.disabled=false; go.textContent='Delete board'; return toast('Nothing was deleted — your role may not have permission', true); }
+    logActivity('project', pid, 'delete', {name:p.name, tasks:n});
+    closeModals(); toast('Board deleted'); await refreshCore();
+    if(S.route.view==='project') location.hash='#/ws/'+p.workspace_id;
+    else { renderSidebar(); if(S.route.view==='ws') renderWorkspace(S.route.id); }
+  };
+  setTimeout(()=>inp.focus(), 30);
 }
 /* Roles that need to be granted a workspace explicitly. admin + management
    already see every workspace, so they are shown as "all workspaces" and
@@ -940,6 +1022,8 @@ async function renderProject(id){
      <button class="tab ${boardMode==='list'?'active':''}" onclick="boardMode='list';renderProject('${id}')">List</button>
      <button class="tab ${boardMode==='table'?'active':''}" onclick="boardMode='table';renderProject('${id}')">Table</button></div>
      ${isStaff()? `<button class="btn btn-ghost btn-sm" onclick="projectMembersModal('${id}')">Partner access</button>`:''}
+     ${canEdit()? `<button class="btn btn-ghost btn-sm" onclick="editProjectModal('${id}')">Edit board</button>`:''}
+     ${canDeleteBoard()? `<button class="btn btn-ghost btn-sm" style="color:var(--red)" onclick="deleteProjectModal('${id}')">Delete board</button>`:''}
      <button class="btn btn-primary btn-sm" onclick="newTaskModal('${id}')">＋ New task</button>`);
   const C=$('#content'); C.innerHTML='<div class="empty">Loading…</div>';
   const [{data:tasks, error},{data:sc},{data:fields},{data:groups}] = await Promise.all([
@@ -2392,8 +2476,9 @@ async function deleteWorkspaceModal(wid){
   inp.oninput = ()=>{ go.disabled = inp.value.trim().toLowerCase() !== w.name.trim().toLowerCase(); };
   go.onclick = async ()=>{
     go.disabled=true; go.textContent='Deleting…';
-    const {error} = await db.from('workspaces').delete().eq('id',wid);
+    const {data, error} = await db.from('workspaces').delete().eq('id',wid).select('id');
     if(error){ go.disabled=false; go.textContent='Delete workspace'; return toast(error.message, true); }
+    if(!data || !data.length){ go.disabled=false; go.textContent='Delete workspace'; return toast('Nothing was deleted — only an admin can delete a workspace', true); }
     logActivity('workspace', wid, 'delete', {name:w.name, projects:projs.length, tasks:nTasks});
     closeModals(); toast('Workspace deleted'); await refreshCore();
     if(S.route.view==='ws' && S.route.id===wid) location.hash='#/home'; else { renderSidebar(); if(S.route.view==='admin') renderAdmin(); }
