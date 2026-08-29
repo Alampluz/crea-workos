@@ -143,6 +143,13 @@ tr.tv-arch .tv-name .tv-open{text-decoration:line-through}
 .ws-item .ws-menu:hover{background:rgba(0,0,0,.07);color:var(--ink)}
 .pj-menu{color:var(--ink3);font-weight:700;padding:0 5px;border-radius:5px;line-height:1;cursor:pointer;flex:none}
 .pj-menu:hover{background:var(--gray-soft);color:var(--ink)}
+.vis-chip{background:var(--gray-soft);color:var(--ink2);font-weight:600}
+.vis-pick{display:flex;flex-direction:column;gap:8px;margin-top:4px}
+.vis-opt{border:1.5px solid var(--line);border-radius:10px;padding:10px 12px;cursor:pointer;transition:all .12s;background:#fff}
+.vis-opt:hover{border-color:var(--ink3)}
+.vis-opt.on{border-color:var(--accent);background:var(--accent-soft)}
+.vis-opt .vis-t{font-weight:700;font-size:13.5px;color:var(--ink)}
+.vis-opt .vis-b{font-size:12px;color:var(--ink2);margin-top:2px;line-height:1.45}
 .ws-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .danger-note{background:var(--red-soft);border:1px solid var(--red);border-radius:8px;padding:10px 12px;margin-bottom:12px;font-size:13px;color:var(--red)}
 .tv .subchip{font-size:11.5px;font-weight:700;color:var(--ink3);background:var(--gray-soft);border-radius:6px;padding:2px 7px;margin-left:8px;white-space:nowrap}
@@ -811,6 +818,7 @@ async function renderWorkspace(id){
           <div style="display:flex;align-items:center;gap:9px;margin-bottom:6px">
             <span class="ws-dot" style="background:${p.color};width:11px;height:11px"></span>
             <b style="font-size:14.5px;flex:1">${esc(p.name)}</b>
+            ${visChip(p.visibility)}
             ${p.status!=='active'? `<span class="chip" style="background:var(--gray-soft);color:var(--ink2)">${p.status.replace('_',' ')}</span>`:''}
             ${canEdit()? `<span class="pj-menu" title="Board options" onclick="event.stopPropagation();projMenu(this,'${p.id}')">⋯</span>`:''}
           </div>
@@ -818,10 +826,33 @@ async function renderWorkspace(id){
           <div style="display:flex;align-items:center;gap:10px;font-size:12px;color:var(--ink2)">
             <div style="flex:1;height:6px;background:var(--gray-soft);border-radius:4px"><div style="width:${pct}%;height:100%;border-radius:4px;background:${p.color}"></div></div>
             <span style="font-weight:700">${pct}%</span><span>${c.open} open</span>
-            ${p.due_date? dueBadge(p.due_date,false):''}
           </div></div>`;
       }).join('')}</div>`
     : `<div class="card empty">No boards yet in this workspace${isStaff()? ' — create the first one.':''}</div>`}`;
+}
+/* ---- Board visibility: private | collaborate | shareable ---- */
+const VIS = {
+  private:     {label:'Private',     icon:'🔒', blurb:'Only the people you add to this board. Nobody else in the workspace sees it.'},
+  collaborate: {label:'Collaborate', icon:'👥', blurb:'Everyone in the workspace can open and work on it. This is the normal setting.'},
+  shareable:   {label:'Shareable',   icon:'🌐', blurb:'Everyone in the workspace, plus outside partners and freelancers you invite to this board.'},
+};
+const visChip = v=>{
+  const d = VIS[v] || VIS.collaborate;
+  if(v==='collaborate') return '';
+  return `<span class="chip vis-chip" title="${esc(d.blurb)}">${d.icon} ${d.label}</span>`;
+};
+function visPickerHTML(id, cur){
+  return `<div class="vis-pick" id="${id}" data-sel="${cur||'collaborate'}">
+    ${Object.entries(VIS).map(([k,d])=>`<div class="vis-opt ${k===(cur||'collaborate')?'on':''}" data-v="${k}">
+      <div class="vis-t">${d.icon} ${d.label}</div><div class="vis-b">${d.blurb}</div></div>`).join('')}
+  </div>`;
+}
+function wireVisPicker(root, id){
+  const box = root.querySelector('#'+id); if(!box) return;
+  box.querySelectorAll('.vis-opt').forEach(o=> o.onclick = ()=>{
+    box.dataset.sel = o.dataset.v;
+    box.querySelectorAll('.vis-opt').forEach(x=> x.classList.toggle('on', x===o));
+  });
 }
 /* ---- Boards (projects): rename, recolour, delete ---- */
 const PJ_COLORS=['#00B894','#0984E3','#6C5CE7','#E17055','#E84393','#D63031','#FDCB6E','#00CEC9','#0F766E','#7D3C55'];
@@ -841,24 +872,33 @@ function editProjectModal(pid){
       <label>Description</label><input id="ep-desc" value="${esc(p.description||'')}">
       <div class="field-grid">
         <div><label>Workspace</label><select id="ep-ws">${S.workspaces.map(w=>`<option value="${w.id}" ${w.id===p.workspace_id?'selected':''}>${esc(w.name)}</option>`).join('')}</select></div>
-        <div><label>Due date</label><input id="ep-due" type="date" value="${p.due_date||''}"></div>
+        <div><label>Status</label><select id="ep-status">${['active','on_hold','archived'].map(s=>`<option value="${s}" ${s===p.status?'selected':''}>${s.replace('_',' ')}</option>`).join('')}</select></div>
       </div>
-      <label>Status</label><select id="ep-status">${['active','on_hold','archived'].map(s=>`<option value="${s}" ${s===p.status?'selected':''}>${s.replace('_',' ')}</option>`).join('')}</select>
-      <label>Colour</label>
+      <label style="margin-top:14px">Who can open this board</label>
+      ${visPickerHTML('ep-vis', p.visibility||'collaborate')}
+      <label style="margin-top:14px">Colour</label>
       <div id="ep-cols" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:4px">
         ${PJ_COLORS.map(c=>`<span data-c="${c}" style="width:26px;height:26px;border-radius:50%;background:${c};cursor:pointer;box-shadow:${c===p.color?'0 0 0 3px #fff,0 0 0 5px '+c:'none'}"></span>`).join('')}
       </div>
     </div>
     <div class="modal-foot"><button class="btn btn-ghost" onclick="closeModals()">Cancel</button><button class="btn btn-primary" id="ep-save">Save</button></div>`);
   let colour = p.color;
+  wireVisPicker(m,'ep-vis');
   m.querySelectorAll('#ep-cols span').forEach(s=> s.onclick=()=>{
     colour = s.dataset.c;
     m.querySelectorAll('#ep-cols span').forEach(x=> x.style.boxShadow = x.dataset.c===colour? '0 0 0 3px #fff,0 0 0 5px '+colour : 'none');
   });
   m.querySelector('#ep-save').onclick = async ()=>{
     const name = m.querySelector('#ep-name').value.trim(); if(!name) return toast('Name required', true);
+    const vis = m.querySelector('#ep-vis').dataset.sel || 'collaborate';
+    // Narrowing away from Shareable would strand external guests — warn first.
+    if(p.visibility==='shareable' && vis!=='shareable'){
+      const {data:pms} = await db.from('project_members').select('user_id').eq('project_id',pid);
+      const ext = (pms||[]).map(r=>prof(r.user_id)).filter(u=>u && ['partner','freelancer'].includes(u.role));
+      if(ext.length && !confirm(`${ext.map(u=>u.full_name).join(', ')} ${ext.length>1?'are':'is'} on this board as an outside guest. Switching to ${VIS[vis].label} removes their access. Continue?`)) return;
+    }
     const {error} = await db.from('projects').update({name, description:m.querySelector('#ep-desc').value.trim(),
-      workspace_id:m.querySelector('#ep-ws').value, due_date:m.querySelector('#ep-due').value||null,
+      workspace_id:m.querySelector('#ep-ws').value, visibility:vis,
       status:m.querySelector('#ep-status').value, color:colour}).eq('id',pid);
     if(error) return toast(error.message, true);
     closeModals(); toast('Board updated'); await refreshCore();
@@ -987,17 +1027,18 @@ function newProjectModal(wsId){
     <div class="modal-body">
       <label>Board name <span class="req">*</span></label><input id="pj-name" placeholder="e.g. Escalations — Q3">
       <label>Description</label><textarea id="pj-desc" rows="2"></textarea>
-      <div class="field-grid">
-        <div><label>Workspace</label><select id="pj-ws">${S.workspaces.map(w=>`<option value="${w.id}" ${w.id===wsId?'selected':''}>${esc(w.name)}</option>`).join('')}</select></div>
-        <div><label>Due date</label><input id="pj-due" type="date"></div>
-      </div></div>
+      <label>Workspace</label><select id="pj-ws">${S.workspaces.map(w=>`<option value="${w.id}" ${w.id===wsId?'selected':''}>${esc(w.name)}</option>`).join('')}</select>
+      <label style="margin-top:14px">Who can open this board</label>
+      ${visPickerHTML('pj-vis','collaborate')}
+      </div>
     <div class="modal-foot"><button class="btn btn-ghost" onclick="closeModals()">Cancel</button><button class="btn btn-primary" id="pj-save">Create board</button></div>`);
+  wireVisPicker(m,'pj-vis');
   m.querySelector('#pj-save').onclick = async ()=>{
     const name=m.querySelector('#pj-name').value.trim(); if(!name) return toast('Name is required', true);
     const colors=['#00B894','#0984E3','#6C5CE7','#E17055','#E84393','#D63031','#FDCB6E','#00CEC9'];
     const {data, error} = await db.from('projects').insert({
       workspace_id:m.querySelector('#pj-ws').value, name, description:m.querySelector('#pj-desc').value.trim(),
-      due_date:m.querySelector('#pj-due').value||null, created_by:S.me.id,
+      visibility:m.querySelector('#pj-vis').dataset.sel||'collaborate', created_by:S.me.id,
       color:colors[Math.floor(Math.random()*colors.length)]
     }).select().single();
     if(error) return toast(error.message, true);
@@ -1017,7 +1058,7 @@ async function renderProject(id){
     S.projects.push(data); return renderProject(id);
   }
   const w = wsById(p.workspace_id);
-  setTopbar(`<span onclick="location.hash='#/ws/${p.workspace_id}'" style="cursor:pointer">${w? esc(w.name):''}</span> <span>/</span> ${esc(p.name)}`,
+  setTopbar(`<span onclick="location.hash='#/ws/${p.workspace_id}'" style="cursor:pointer">${w? esc(w.name):''}</span> <span>/</span> ${esc(p.name)} ${visChip(p.visibility)}`,
     `<div class="tabs"><button class="tab ${boardMode==='board'?'active':''}" onclick="boardMode='board';renderProject('${id}')">Board</button>
      <button class="tab ${boardMode==='list'?'active':''}" onclick="boardMode='list';renderProject('${id}')">List</button>
      <button class="tab ${boardMode==='table'?'active':''}" onclick="boardMode='table';renderProject('${id}')">Table</button></div>
@@ -1501,21 +1542,33 @@ async function projectMembersModal(pid){
   const {data:members} = await db.from('project_members').select('*').eq('project_id',pid);
   const memberIds = new Set((members||[]).map(m=>m.user_id));
   const externals = S.profiles.filter(p=>['partner','freelancer'].includes(p.role));
+  const board = (S.projects||[]).find(x=>x.id===pid) || {};
+  const vis = board.visibility || 'collaborate';
+  const canGuest = vis === 'shareable';
   const m = modal(`<div class="modal-head"><h2>Board members (partner access)</h2><button class="x" onclick="closeModals()">✕</button></div>
     <div class="modal-body">
-      <p style="color:var(--ink2);font-size:13px;margin-top:8px">Internal staff can see every board in their workspaces. Add partners or freelancers here to give them access to <b>this board only</b>.</p>
+      <p style="color:var(--ink2);font-size:13px;margin-top:8px">Internal staff already see every board in their workspaces. Add partners or freelancers here to give them access to <b>this board only</b>.</p>
+      ${canGuest? '' : `<div style="margin-top:12px;padding:10px 12px;background:var(--gray-soft);border-radius:8px;font-size:12.5px;color:var(--ink2)">
+        This board is <b>${VIS[vis].label}</b>, so outside guests can't be added. Switch it to <b>🌐 Shareable</b> first.
+        ${canEdit()? `<button class="btn btn-ghost btn-sm" style="margin-left:8px" id="pm-tovis">Make Shareable</button>`:''}</div>`}
       ${externals.length? externals.map(p=>`
-        <div class="chk"><input type="checkbox" data-uid="${p.id}" ${memberIds.has(p.id)?'checked':''}>
+        <div class="chk" ${canGuest?'':'style="opacity:.45"'}><input type="checkbox" data-uid="${p.id}" ${memberIds.has(p.id)?'checked':''} ${canGuest?'':'disabled'}>
         ${avatar(p,true)} <span>${esc(p.full_name)} <span style="color:var(--ink3)">· ${p.role} · ${esc(p.email)}</span></span></div>`).join('')
       : '<div class="empty">No partner or freelancer accounts yet. Create them in Admin → Users.</div>'}
     </div>
-    <div class="modal-foot"><button class="btn btn-ghost" onclick="closeModals()">Close</button><button class="btn btn-primary" id="pm-save">Save</button></div>`);
+    <div class="modal-foot"><button class="btn btn-ghost" onclick="closeModals()">Close</button><button class="btn btn-primary" id="pm-save" ${canGuest?'':'disabled'}>Save</button></div>`);
+  m.querySelector('#pm-tovis')?.addEventListener('click', async ()=>{
+    const {error} = await db.from('projects').update({visibility:'shareable'}).eq('id',pid);
+    if(error) return toast(error.message, true);
+    board.visibility='shareable'; await refreshCore();
+    closeModals(); toast('Board is now Shareable'); projectMembersModal(pid);
+  });
   m.querySelector('#pm-save').onclick = async ()=>{
     const want = new Set([...m.querySelectorAll('input[data-uid]:checked')].map(i=>i.dataset.uid));
     const add=[...want].filter(u=>!memberIds.has(u)).map(user_id=>({project_id:pid,user_id}));
     const rm=[...memberIds].filter(u=>!want.has(u));
-    if(add.length) await db.from('project_members').insert(add);
-    if(rm.length) await db.from('project_members').delete().eq('project_id',pid).in('user_id',rm);
+    if(add.length){ const {error} = await db.from('project_members').insert(add); if(error) return toast(error.message, true); }
+    if(rm.length){ const {error} = await db.from('project_members').delete().eq('project_id',pid).in('user_id',rm); if(error) return toast(error.message, true); }
     closeModals(); toast('Members updated');
   };
 }
