@@ -820,26 +820,84 @@ async function renderWorkspace(id){
       }).join('')}</div>`
     : `<div class="card empty">No projects yet in this workspace${isStaff()? ' — create the first one.':''}</div>`}`;
 }
+/* Roles that need to be granted a workspace explicitly. admin + management
+   already see every workspace, so they are shown as "all workspaces" and
+   are not checkboxes. Anyone here can belong to as many workspaces as you like. */
+const ASSIGNABLE_ROLES = ['internal','requester','partner','freelancer'];
+const ROLE_LABEL = {internal:'Internal staff', requester:'Requester (view + raise + comment)', partner:'Partner (external)', freelancer:'Freelancer (external)'};
 async function teamMembersModal(wsId){
+  const w = wsById(wsId);
   const {data:members} = await db.from('workspace_members').select('*').eq('workspace_id',wsId);
   const memberIds = new Set((members||[]).map(m=>m.user_id));
-  const internals = S.profiles.filter(p=>p.active && p.role==='internal');
-  const m = modal(`<div class="modal-head"><h2>Workspace members</h2><button class="x" onclick="closeModals()">✕</button></div>
+  const pool = S.profiles.filter(p=>p.active && ASSIGNABLE_ROLES.includes(p.role));
+  const supers = S.profiles.filter(p=>p.active && (p.role==='admin'||p.role==='management'));
+  const wsCount = {}; // how many workspaces each person is already in — filled below
+  const {data:allM} = await db.from('workspace_members').select('user_id');
+  (allM||[]).forEach(r=>{ wsCount[r.user_id]=(wsCount[r.user_id]||0)+1; });
+  const groupBlock = role=>{
+    const list = pool.filter(p=>p.role===role);
+    if(!list.length) return '';
+    return `<div style="margin-top:14px"><div style="font-size:11.5px;font-weight:700;letter-spacing:.03em;text-transform:uppercase;color:var(--ink3);margin-bottom:6px">${ROLE_LABEL[role]}</div>
+      ${list.map(p=>{
+        const others = (wsCount[p.id]||0) - (memberIds.has(p.id)?1:0);
+        return `<div class="chk"><input type="checkbox" data-uid="${p.id}" ${memberIds.has(p.id)?'checked':''}>
+          ${avatar(p,true)} <span>${esc(p.full_name)} <span style="color:var(--ink3)">· ${esc(p.email)}</span>
+          ${others>0? `<span class="chip" style="background:var(--gray-soft);color:var(--ink3);margin-left:6px">+${others} other workspace${others>1?'s':''}</span>`:''}</span></div>`;
+      }).join('')}</div>`;
+  };
+  const m = modal(`<div class="modal-head"><h2>Members of ${esc(w?w.name:'workspace')}</h2><button class="x" onclick="closeModals()">✕</button></div>
     <div class="modal-body">
-      <p style="color:var(--ink2);font-size:13px;margin-top:8px">Internal staff only see the workspaces they belong to. Admin and Management see every workspace. Partners get access per-project via project members.</p>
-      ${internals.length? internals.map(p=>`
-        <div class="chk"><input type="checkbox" data-uid="${p.id}" ${memberIds.has(p.id)?'checked':''}>
-        ${avatar(p,true)} <span>${esc(p.full_name)} <span style="color:var(--ink3)">· ${esc(p.email)}</span></span></div>`).join('')
-      : '<div class="empty">No internal staff accounts yet. Create them in Admin → Users.</div>'}
+      <p style="color:var(--ink2);font-size:13px;margin-top:6px">Tick anyone who should see this workspace. <b>A person can belong to as many workspaces as you like</b> — ticking them here does not remove them from any other one.</p>
+      ${supers.length? `<div style="margin-top:12px;padding:9px 12px;background:var(--gray-soft);border-radius:8px;font-size:12.5px;color:var(--ink2)">
+        <b>Always has access:</b> ${supers.map(p=>esc(p.full_name)).join(', ')} — admin and management see every workspace.</div>`:''}
+      ${ASSIGNABLE_ROLES.map(groupBlock).join('') || '<div class="empty">No assignable accounts yet. Create them in Admin → Users.</div>'}
     </div>
     <div class="modal-foot"><button class="btn btn-ghost" onclick="closeModals()">Close</button><button class="btn btn-primary" id="tm-save">Save</button></div>`);
   m.querySelector('#tm-save').onclick = async ()=>{
     const want = new Set([...m.querySelectorAll('input[data-uid]:checked')].map(i=>i.dataset.uid));
     const add=[...want].filter(u=>!memberIds.has(u)).map(user_id=>({workspace_id:wsId,user_id}));
-    const rm=[...memberIds].filter(u=>!want.has(u) && internals.some(p=>p.id===u));
+    const rm=[...memberIds].filter(u=>!want.has(u) && pool.some(p=>p.id===u));
     if(add.length){ const {error} = await db.from('workspace_members').insert(add); if(error) return toast(error.message, true); }
     if(rm.length){ const {error} = await db.from('workspace_members').delete().eq('workspace_id',wsId).in('user_id',rm); if(error) return toast(error.message, true); }
-    closeModals(); toast('Workspace members updated');
+    closeModals(); toast('Workspace members updated'); await refreshCore(); renderSidebar();
+    if(S.route.view==='admin') renderAdmin();
+  };
+}
+/* The other direction: pick the person, tick every workspace they should reach. */
+async function userWorkspacesModal(uid){
+  const p = prof(uid) || S.profiles.find(x=>x.id===uid); if(!p) return;
+  if(p.role==='admin'||p.role==='management'){
+    return modal(`<div class="modal-head"><h2>${esc(p.full_name)}</h2><button class="x" onclick="closeModals()">✕</button></div>
+      <div class="modal-body"><p style="font-size:13.5px;color:var(--ink2)"><b>${esc(p.full_name)}</b> is ${p.role==='admin'?'an admin':'management'} — they already see <b>every workspace</b>, current and future. There is nothing to assign.</p></div>
+      <div class="modal-foot"><button class="btn btn-primary" onclick="closeModals()">OK</button></div>`);
+  }
+  const {data:mine} = await db.from('workspace_members').select('workspace_id').eq('user_id',uid);
+  const have = new Set((mine||[]).map(r=>r.workspace_id));
+  const m = modal(`<div class="modal-head"><h2>Workspaces for ${esc(p.full_name)}</h2><button class="x" onclick="closeModals()">✕</button></div>
+    <div class="modal-body">
+      <p style="color:var(--ink2);font-size:13px;margin-top:6px">Tick every workspace <b>${esc(p.full_name)}</b> should be able to open. They can be in as many as you need.</p>
+      <div style="display:flex;gap:8px;margin:12px 0 4px">
+        <button class="btn btn-ghost btn-sm" id="uw-all">Select all</button>
+        <button class="btn btn-ghost btn-sm" id="uw-none">Clear all</button>
+      </div>
+      ${S.workspaces.length? S.workspaces.map(w=>`
+        <div class="chk"><input type="checkbox" data-wid="${w.id}" ${have.has(w.id)?'checked':''}>
+        <span class="ws-dot" style="display:inline-block;background:${w.color}"></span>
+        <span>${esc(w.name)} ${w.description? `<span style="color:var(--ink3)">· ${esc(w.description)}</span>`:''}</span></div>`).join('')
+      : '<div class="empty">No workspaces yet.</div>'}
+    </div>
+    <div class="modal-foot"><button class="btn btn-ghost" onclick="closeModals()">Cancel</button><button class="btn btn-primary" id="uw-save">Save</button></div>`);
+  const boxes = ()=> [...m.querySelectorAll('input[data-wid]')];
+  m.querySelector('#uw-all').onclick = ()=> boxes().forEach(b=>b.checked=true);
+  m.querySelector('#uw-none').onclick = ()=> boxes().forEach(b=>b.checked=false);
+  m.querySelector('#uw-save').onclick = async ()=>{
+    const want = new Set(boxes().filter(b=>b.checked).map(b=>b.dataset.wid));
+    const add = [...want].filter(w=>!have.has(w)).map(workspace_id=>({workspace_id, user_id:uid}));
+    const rm  = [...have].filter(w=>!want.has(w));
+    if(add.length){ const {error} = await db.from('workspace_members').insert(add); if(error) return toast(error.message, true); }
+    if(rm.length){ const {error} = await db.from('workspace_members').delete().eq('user_id',uid).in('workspace_id',rm); if(error) return toast(error.message, true); }
+    closeModals(); toast(`${p.full_name} is now in ${want.size} workspace${want.size===1?'':'s'}`);
+    await refreshCore(); renderSidebar(); if(S.route.view==='admin') renderAdmin();
   };
 }
 function newProjectModal(wsId){
@@ -2060,14 +2118,26 @@ async function renderAdmin(){
     <div id="admin-body"></div>`;
   const B=$('#admin-body');
   if(adminTab==='users'){
-    B.innerHTML = `<div class="card"><table class="tbl"><thead><tr><th>User</th><th>Email</th><th>Role</th><th>Status</th><th></th></tr></thead><tbody>
+    const {data:wm} = await db.from('workspace_members').select('user_id, workspace_id');
+    const byUser = {}; (wm||[]).forEach(r=>{ (byUser[r.user_id]||(byUser[r.user_id]=[])).push(r.workspace_id); });
+    const wsCell = p=>{
+      if(p.role==='admin'||p.role==='management') return '<span class="chip" style="background:var(--accent-soft);color:var(--accent-ink)">All workspaces</span>';
+      const ids = byUser[p.id]||[];
+      if(!ids.length) return '<span style="color:var(--ink3)">none yet</span>';
+      const names = ids.map(i=>wsById(i)).filter(Boolean);
+      return names.slice(0,2).map(w=>`<span class="chip" style="background:var(--gray-soft);color:var(--ink2)"><span class="ws-dot" style="display:inline-block;background:${w.color}"></span> ${esc(w.name)}</span>`).join(' ')
+        + (names.length>2? ` <span class="chip" style="background:var(--gray-soft);color:var(--ink3)">+${names.length-2}</span>`:'');
+    };
+    B.innerHTML = `<div class="card"><table class="tbl"><thead><tr><th>User</th><th>Email</th><th>Role</th><th>Workspaces</th><th>Status</th><th></th></tr></thead><tbody>
       ${S.profiles.map(p=>`<tr>
         <td style="font-weight:600">${avatar(p,true)} ${esc(p.full_name)}${p.id===S.me.id?' <span style="color:var(--ink3)">(you)</span>':''}</td>
         <td style="color:var(--ink2)">${esc(p.email)}</td>
         <td><select onchange="setRole('${p.id}', this.value)" style="width:auto;padding:5px 8px" ${p.id===S.me.id?'disabled':''}>
           ${['admin','management','internal','requester','partner','freelancer'].map(r=>`<option ${r===p.role?'selected':''}>${r}</option>`).join('')}</select></td>
+        <td style="line-height:2">${wsCell(p)}</td>
         <td><span class="chip" style="background:${p.active?'var(--green-soft);color:var(--green)':'var(--gray-soft);color:var(--ink3)'}">${p.active?'active':'inactive'}</span></td>
         <td style="text-align:right;white-space:nowrap">
+          <button class="btn btn-ghost btn-sm" onclick="userWorkspacesModal('${p.id}')">Workspaces</button>
           <button class="btn btn-ghost btn-sm" onclick="resetPassword('${p.id}','${esc(p.full_name).replace(/'/g,"\\'")}')">Reset password</button>
           ${p.id!==S.me.id? `<button class="btn btn-ghost btn-sm" onclick="toggleActive('${p.id}', ${!p.active})">${p.active?'Deactivate':'Activate'}</button>`:''}</td>
       </tr>`).join('')}</tbody></table></div>
@@ -2137,9 +2207,21 @@ function inviteUserModal(){
           <option value="admin">Admin — everything</option></select></div>
         <div><label>Temporary password <span class="req">*</span></label><input id="iu-pass" value="${'Crea'+Math.random().toString(36).slice(2,8)+'!'}"></div>
       </div>
+      <label style="margin-top:14px">Workspaces they can open <span style="font-weight:400;color:var(--ink3)">— tick as many as you need</span></label>
+      <div id="iu-ws">${S.workspaces.map(w=>`<div class="chk"><input type="checkbox" data-wid="${w.id}">
+        <span class="ws-dot" style="display:inline-block;background:${w.color}"></span><span>${esc(w.name)}</span></div>`).join('') || '<div style="font-size:12.5px;color:var(--ink3)">No workspaces yet.</div>'}</div>
+      <p id="iu-wsnote" style="margin-top:8px;font-size:12px;color:var(--ink3);display:none">Admin and management see every workspace — these ticks are ignored for those roles.</p>
       <p style="margin-top:12px;font-size:12.5px;color:var(--ink2)">Share the email + temporary password with them directly. They can change it after signing in with the key button in the sidebar.</p>
     </div>
     <div class="modal-foot"><button class="btn btn-ghost" onclick="closeModals()">Cancel</button><button class="btn btn-primary" id="iu-save">Create account</button></div>`);
+  const roleSel = m.querySelector('#iu-role');
+  const syncWsNote = ()=>{
+    const sup = roleSel.value==='admin' || roleSel.value==='management';
+    m.querySelector('#iu-ws').style.opacity = sup? '.4':'1';
+    m.querySelectorAll('#iu-ws input').forEach(i=> i.disabled = sup);
+    m.querySelector('#iu-wsnote').style.display = sup? 'block':'none';
+  };
+  roleSel.onchange = syncWsNote; syncWsNote();
   m.querySelector('#iu-save').onclick = async ()=>{
     const full_name=m.querySelector('#iu-name').value.trim(), email=m.querySelector('#iu-email').value.trim(),
           role=m.querySelector('#iu-role').value, password=m.querySelector('#iu-pass').value;
@@ -2153,7 +2235,13 @@ function inviteUserModal(){
       if(!res.ok) throw new Error(out.error||'Failed');
       // roles the server does not yet know about are applied straight to the profile
       if(out.user_id && role==='requester') await db.from('profiles').update({role:'requester'}).eq('id', out.user_id);
-      closeModals(); toast('User created'); await refreshCore(); renderAdmin();
+      // assign every ticked workspace — one person, as many workspaces as needed
+      const wids = [...m.querySelectorAll('#iu-ws input[data-wid]:checked')].map(i=>i.dataset.wid);
+      if(out.user_id && wids.length && role!=='admin' && role!=='management'){
+        const {error:wmErr} = await db.from('workspace_members').insert(wids.map(workspace_id=>({workspace_id, user_id:out.user_id})));
+        if(wmErr) toast('User created, but workspaces failed: '+wmErr.message, true);
+      }
+      closeModals(); toast('User created'+(wids.length&&role!=='admin'&&role!=='management'? ` · ${wids.length} workspace${wids.length>1?'s':''}`:'')); await refreshCore(); renderAdmin();
     }catch(e){ toast(e.message, true); btn.disabled=false; btn.textContent='Create account'; }
   };
 }
