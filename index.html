@@ -1270,11 +1270,13 @@ function wsTabsHTML(wsId, active){
   return `<div class="tabs" style="margin-bottom:18px;width:fit-content">
     <button class="tab ${active==='boards'?'active':''}" onclick="location.hash='#/ws/${wsId}'">Boards</button>
     <button class="tab ${active==='report'?'active':''}" onclick="location.hash='#/ws/${wsId}/report'">Report</button>
+    ${isStaff()? `<button class="tab ${active==='automations'?'active':''}" onclick="location.hash='#/ws/${wsId}/automations'">Automations</button>`:''}
   </div>`;
 }
 async function renderWorkspace(id, tab){
   const w = wsById(id); if(!w){ location.hash='#/home'; return; }
   if(tab==='report') return renderWorkspaceReport(id);
+  if(tab==='automations') return renderWorkspaceAutomations(id);
   widgetScope = null; widgetProjScope = null;
   setTopbar(esc(w.name), (canEdit()? `<button class="btn btn-ghost btn-sm" onclick="editWorkspaceModal('${w.id}')">Edit workspace</button>`:'')
     + (isStaff()? `<button class="btn btn-ghost btn-sm" onclick="teamMembersModal('${w.id}')">Members</button>
@@ -3387,42 +3389,56 @@ const AUTO_RULES = [
   {key:'task_overdue',      label:'Overdue task nudges its owner',   how:'A task past its due date notifies its assignee, once. Checked every 15 minutes.'},
 ];
 let autoWs = '';   // '' = everywhere
-async function renderAutomationsTab(B){
+let _autoPin = null;                       // set when the tab lives inside one workspace
+let autoRerender = ()=>renderAdmin();      // whoever hosts the tab decides how to redraw it
+/* Automations tab — hosted by Admin (pick any scope) or by a workspace (pinned to it). */
+async function renderAutomationsTab(B, pinnedWs){
+  _autoPin = pinnedWs||null;
+  autoRerender = pinnedWs? ()=>renderWorkspaceAutomations(pinnedWs) : ()=>renderAdmin();
+  const effWs = pinnedWs || autoWs;
+  const canA = isAdmin();
+  const runsQ = db.from('automation_runs').select('*');
   const [{data:rules},{data:runs},{data:customs}] = await Promise.all([
     db.from('automation_rules').select('*'),
-    db.from('automation_runs').select('*').order('created_at',{ascending:false}).limit(30),
+    (pinnedWs? runsQ.eq('workspace_id',pinnedWs) : runsQ).order('created_at',{ascending:false}).limit(30),
     db.from('custom_automations').select('*').order('created_at'),
   ]);
   S._autoRules = rules||[]; S._customAutos = customs||[];
+  const wsBoards = pinnedWs? new Set(S.projects.filter(p=>p.workspace_id===pinnedWs).map(p=>p.id)) : null;
+  const caList = pinnedWs
+    ? S._customAutos.filter(c=> (!c.workspace_id && !c.project_id) || c.workspace_id===pinnedWs || (c.project_id && wsBoards.has(c.project_id)))
+    : S._customAutos;
   const stateOf = (key)=>{
-    const wsRow = autoWs? S._autoRules.find(r=>r.rule_key===key && r.workspace_id===autoWs) : null;
+    const wsRow = effWs? S._autoRules.find(r=>r.rule_key===key && r.workspace_id===effWs) : null;
     const glRow = S._autoRules.find(r=>r.rule_key===key && !r.workspace_id);
     if(wsRow) return {on:wsRow.enabled, src:'custom'};
-    if(glRow) return {on:glRow.enabled, src: autoWs? 'inherited':'set'};
-    return {on:true, src: autoWs? 'inherited':'default'};
+    if(glRow) return {on:glRow.enabled, src: effWs? 'inherited':'set'};
+    return {on:true, src: effWs? 'inherited':'default'};
   };
   const ruleLabel = k => (AUTO_RULES.find(r=>r.key===k)||{}).label || k;
   B.innerHTML = `
     <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;flex-wrap:wrap">
-      <label style="margin:0">Rules apply to</label>
+      ${pinnedWs
+        ? `<span style="font-size:12.5px;color:var(--ink2)">Rules for this workspace — anything you don't change here follows the Everywhere setting.</span>`
+        : `<label style="margin:0">Rules apply to</label>
       <select style="width:auto;min-width:200px" onchange="autoWs=this.value;renderAdmin()">
         <option value="">Everywhere</option>
         ${S.workspaces.map(w=>`<option value="${w.id}" ${autoWs===w.id?'selected':''}>${esc(w.name)}</option>`).join('')}
-      </select>
+      </select>`}
       <span style="flex:1"></span>
-      <button class="btn btn-ghost btn-sm" onclick="runSweepNow(this)">Run timed checks now</button>
+      ${canA? `<button class="btn btn-ghost btn-sm" onclick="runSweepNow(this)">Run timed checks now</button>`:''}
     </div>
     <div class="section-title" style="display:flex;align-items:center;gap:10px;margin-top:4px">Your automations
-      <span style="flex:1"></span><button class="btn btn-primary btn-sm" onclick="caModal()">＋ Add automation</button></div>
+      <span style="flex:1"></span>${canA? `<button class="btn btn-primary btn-sm" onclick="caModal(null,'${pinnedWs? 'w:'+pinnedWs:''}')">＋ Add automation</button>`:''}</div>
     <div class="card" style="margin-bottom:24px">
-      ${S._customAutos.length? `<table class="tbl"><tbody>
-        ${S._customAutos.map(c=>`<tr>
-          <td style="width:40px"><label class="sw"><input type="checkbox" ${c.enabled?'checked':''} onchange="caToggle('${c.id}', this.checked)"><span></span></label></td>
+      ${caList.length? `<table class="tbl"><tbody>
+        ${caList.map(c=>`<tr>
+          <td style="width:40px"><label class="sw"><input type="checkbox" ${c.enabled?'checked':''} ${canA?'':'disabled'} onchange="caToggle('${c.id}', this.checked)"><span></span></label></td>
           <td style="font-weight:600">${esc(c.name||'Untitled automation')}</td>
           <td style="width:160px;color:var(--ink3);font-size:12px">${caScopeLabel(c)}</td>
-          <td style="text-align:right;white-space:nowrap;width:140px">
+          <td style="text-align:right;white-space:nowrap;width:140px">${canA? `
             <button class="btn btn-ghost btn-sm" onclick="caModal('${c.id}')">Edit</button>
-            <button class="btn btn-ghost btn-sm" onclick="caDelete('${c.id}')">Remove</button></td>
+            <button class="btn btn-ghost btn-sm" onclick="caDelete('${c.id}')">Remove</button>`:''}</td>
         </tr>`).join('')}</tbody></table>`
       : `<div class="empty" style="padding:26px">Build your own rule — when something happens on a task, WorkOS reacts for you.</div>`}
     </div>
@@ -3431,15 +3447,15 @@ async function renderAutomationsTab(B){
       ${AUTO_RULES.map(r=>{
         const st = stateOf(r.key);
         return `<tr>
-          <td><label class="sw"><input type="checkbox" ${st.on?'checked':''} onchange="setAutoRule('${r.key}', this.checked)"><span></span></label></td>
+          <td><label class="sw"><input type="checkbox" ${st.on?'checked':''} ${canA?'':'disabled'} onchange="setAutoRule('${r.key}', this.checked)"><span></span></label></td>
           <td style="font-weight:600">${esc(r.label)}</td>
           <td style="color:var(--ink2)">${esc(r.how)}</td>
-          <td style="text-align:right">${autoWs? (st.src==='custom'
-              ? `<button class="btn btn-ghost btn-sm" onclick="clearAutoRule('${r.key}')" title="Follow the Everywhere setting again">Reset</button>`
+          <td style="text-align:right">${effWs? (st.src==='custom'
+              ? (canA? `<button class="btn btn-ghost btn-sm" onclick="clearAutoRule('${r.key}')" title="Follow the Everywhere setting again">Reset</button>` : '<span style="font-size:11px;color:var(--ink3)">customized</span>')
               : '<span style="font-size:11px;color:var(--ink3)">inherited</span>') : ''}</td>
         </tr>`;}).join('')}
     </tbody></table></div>
-    <p style="margin-top:10px;font-size:12.5px;color:var(--ink2)">Switching a rule off here stops it ${autoWs? 'for this workspace only — everywhere else follows the global setting':'everywhere, unless a workspace has its own setting'}. Timed rules run every 15 minutes on their own.</p>
+    <p style="margin-top:10px;font-size:12.5px;color:var(--ink2)">Switching a rule off here stops it ${effWs? 'for this workspace only — everywhere else follows the global setting':'everywhere, unless a workspace has its own setting'}. Timed rules run every 15 minutes on their own.</p>
     <div class="section-title" style="margin-top:24px">Recent runs</div>
     <div class="card"><table class="tbl"><thead><tr><th>When</th><th>Rule</th><th>On</th><th>Result</th></tr></thead><tbody>
       ${(runs||[]).length? runs.map(x=>`<tr>
@@ -3451,21 +3467,23 @@ async function renderAutomationsTab(B){
     </tbody></table></div>`;
 }
 async function setAutoRule(key, on){
-  const payload = {rule_key:key, workspace_id: autoWs||null, enabled:on};
-  const existing = (S._autoRules||[]).find(r=>r.rule_key===key && (r.workspace_id||'')===(autoWs||''));
+  const scopeWs = _autoPin || autoWs;
+  const payload = {rule_key:key, workspace_id: scopeWs||null, enabled:on};
+  const existing = (S._autoRules||[]).find(r=>r.rule_key===key && (r.workspace_id||'')===(scopeWs||''));
   const {error} = existing
     ? await db.from('automation_rules').update({enabled:on}).eq('id',existing.id)
     : await db.from('automation_rules').insert(payload);
-  if(error){ toast(error.message, true); renderAdmin(); return; }
-  toast(`${(AUTO_RULES.find(r=>r.key===key)||{}).label||key} ${on?'on':'off'}${autoWs? ' for this workspace':''}`);
-  renderAdmin();
+  if(error){ toast(error.message, true); autoRerender(); return; }
+  toast(`${(AUTO_RULES.find(r=>r.key===key)||{}).label||key} ${on?'on':'off'}${scopeWs? ' for this workspace':''}`);
+  autoRerender();
 }
 async function clearAutoRule(key){
-  const existing = (S._autoRules||[]).find(r=>r.rule_key===key && r.workspace_id===autoWs);
+  const scopeWs = _autoPin || autoWs;
+  const existing = (S._autoRules||[]).find(r=>r.rule_key===key && r.workspace_id===scopeWs);
   if(!existing) return;
   const {error} = await db.from('automation_rules').delete().eq('id',existing.id);
   if(error) return toast(error.message, true);
-  toast('Back to the Everywhere setting'); renderAdmin();
+  toast('Back to the Everywhere setting'); autoRerender();
 }
 async function runSweepNow(btn){
   btn.disabled=true; btn.textContent='Checking…';
@@ -3474,7 +3492,19 @@ async function runSweepNow(btn){
   if(error) return toast(error.message, true);
   const n = (data?.sla_warning||0)+(data?.sla_breach||0)+(data?.task_overdue||0)+(data?.custom||0);
   toast(n? `${n} alert${n>1?'s':''} sent` : 'All clear — nothing new to flag');
-  renderAdmin();
+  autoRerender();
+}
+/* Each workspace carries the same Automations tab, pinned to itself. */
+async function renderWorkspaceAutomations(wsId){
+  const w = wsById(wsId); if(!w){ location.hash='#/home'; return; }
+  if(!isStaff()){ location.hash='#/ws/'+wsId; return; }
+  widgetScope = null; widgetProjScope = null;
+  setTopbar(esc(w.name), '');
+  const C = $('#content');
+  C.innerHTML = `${wsTabsHTML(wsId,'automations')}
+    <div class="page-head"><div><h1>Automations</h1><div class="sub">Rules that run by themselves in ${esc(w.name)}.</div></div></div>
+    <div id="ws-auto"><div class="empty">Loading…</div></div>`;
+  await renderAutomationsTab(C.querySelector('#ws-auto'), wsId);
 }
 /* ---------- Custom automations: build your own When → Then recipe ---------- */
 const CA_TRIGGERS = [
@@ -3536,12 +3566,12 @@ function caSentence(d){
   return `${when}, ${then}`;
 }
 let _ca = null;
-function caModal(id){
+function caModal(id, defScope){
   const rec = id? (S._customAutos||[]).find(x=>x.id===id) : null;
   _ca = rec? {id:rec.id, trigger:rec.trigger_key, cond:{...(rec.condition||{})}, action:rec.action_key,
               cfg:{...(rec.action_config||{})},
               scope: rec.project_id? 'p:'+rec.project_id : (rec.workspace_id? 'w:'+rec.workspace_id : '')}
-           : {id:null, trigger:'status_changed', cond:{}, action:'notify_assignee', cfg:{}, scope:''};
+           : {id:null, trigger:'status_changed', cond:{}, action:'notify_assignee', cfg:{}, scope:defScope||''};
   modal(`<div class="modal-head"><h2>${id? 'Edit automation':'Add automation'}</h2><button class="x" onclick="closeModals()">✕</button></div>
     <div class="modal-body" id="ca-body"></div>
     <div class="modal-foot"><button class="btn btn-ghost" onclick="closeModals()">Cancel</button>
@@ -3636,18 +3666,18 @@ async function caSave(){
     : await db.from('custom_automations').insert(payload);
   if(error) return toast(error.message, true);
   toast(_ca.id? 'Automation updated':'Automation added — it is live now');
-  closeModals(); renderAdmin();
+  closeModals(); autoRerender();
 }
 async function caToggle(id, on){
   const {error} = await db.from('custom_automations').update({enabled:on}).eq('id',id);
-  if(error){ toast(error.message, true); renderAdmin(); return; }
+  if(error){ toast(error.message, true); autoRerender(); return; }
   const c=(S._customAutos||[]).find(x=>x.id===id); if(c) c.enabled=on;
   toast(on? 'Automation on':'Automation off');
 }
 async function caDelete(id){
   const {error} = await db.from('custom_automations').delete().eq('id',id);
   if(error) return toast(error.message, true);
-  toast('Automation removed'); renderAdmin();
+  toast('Automation removed'); autoRerender();
 }
 function inviteUserModal(){
   const m = modal(`<div class="modal-head"><h2>Add user</h2><button class="x" onclick="closeModals()">✕</button></div>
