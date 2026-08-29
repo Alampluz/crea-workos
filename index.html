@@ -750,7 +750,7 @@ async function renderHome(){
   `;
 }
 function taskTable(tasks){
-  return `<table class="tbl"><thead><tr><th>Task</th><th>Project</th><th>Status</th><th>Priority</th><th>Due</th><th>Assignee</th></tr></thead><tbody>
+  return `<table class="tbl"><thead><tr><th>Task</th><th>Board</th><th>Status</th><th>Priority</th><th>Due</th><th>Assignee</th></tr></thead><tbody>
     ${tasks.map(t=>{
       const p=projById(t.project_id);
       return `<tr class="rowlink" onclick="openTask('${t.id}')">
@@ -792,7 +792,7 @@ async function renderWorkspace(id){
   const w = wsById(id); if(!w){ location.hash='#/home'; return; }
   setTopbar(esc(w.name), (canEdit()? `<button class="btn btn-ghost btn-sm" onclick="editWorkspaceModal('${w.id}')">Edit workspace</button>`:'')
     + (isStaff()? `<button class="btn btn-ghost btn-sm" onclick="teamMembersModal('${w.id}')">Members</button>
-    <button class="btn btn-primary btn-sm" onclick="newProjectModal('${w.id}')">＋ New project</button>`:''));
+    <button class="btn btn-primary btn-sm" onclick="newProjectModal('${w.id}')">＋ New board</button>`:''));
   const C=$('#content'); C.innerHTML='<div class="empty">Loading…</div>';
   const projects = S.projects.filter(p=>p.workspace_id===id && p.status!=='archived');
   const ids = projects.map(p=>p.id);
@@ -821,7 +821,7 @@ async function renderWorkspace(id){
             ${p.due_date? dueBadge(p.due_date,false):''}
           </div></div>`;
       }).join('')}</div>`
-    : `<div class="card empty">No projects yet in this workspace${isStaff()? ' — create the first one.':''}</div>`}`;
+    : `<div class="card empty">No boards yet in this workspace${isStaff()? ' — create the first one.':''}</div>`}`;
 }
 /* ---- Boards (projects): rename, recolour, delete ---- */
 const PJ_COLORS=['#00B894','#0984E3','#6C5CE7','#E17055','#E84393','#D63031','#FDCB6E','#00CEC9','#0F766E','#7D3C55'];
@@ -983,15 +983,15 @@ async function userWorkspacesModal(uid){
   };
 }
 function newProjectModal(wsId){
-  const m = modal(`<div class="modal-head"><h2>New project</h2><button class="x" onclick="closeModals()">✕</button></div>
+  const m = modal(`<div class="modal-head"><h2>New board</h2><button class="x" onclick="closeModals()">✕</button></div>
     <div class="modal-body">
-      <label>Project name <span class="req">*</span></label><input id="pj-name" placeholder="e.g. 9.9 Mega Sale — Brand X">
+      <label>Board name <span class="req">*</span></label><input id="pj-name" placeholder="e.g. Escalations — Q3">
       <label>Description</label><textarea id="pj-desc" rows="2"></textarea>
       <div class="field-grid">
         <div><label>Workspace</label><select id="pj-ws">${S.workspaces.map(w=>`<option value="${w.id}" ${w.id===wsId?'selected':''}>${esc(w.name)}</option>`).join('')}</select></div>
         <div><label>Due date</label><input id="pj-due" type="date"></div>
       </div></div>
-    <div class="modal-foot"><button class="btn btn-ghost" onclick="closeModals()">Cancel</button><button class="btn btn-primary" id="pj-save">Create project</button></div>`);
+    <div class="modal-foot"><button class="btn btn-ghost" onclick="closeModals()">Cancel</button><button class="btn btn-primary" id="pj-save">Create board</button></div>`);
   m.querySelector('#pj-save').onclick = async ()=>{
     const name=m.querySelector('#pj-name').value.trim(); if(!name) return toast('Name is required', true);
     const colors=['#00B894','#0984E3','#6C5CE7','#E17055','#E84393','#D63031','#FDCB6E','#00CEC9'];
@@ -1001,7 +1001,7 @@ function newProjectModal(wsId){
       color:colors[Math.floor(Math.random()*colors.length)]
     }).select().single();
     if(error) return toast(error.message, true);
-    S.projects.push(data); closeModals(); toast('Project created');
+    S.projects.push(data); closeModals(); toast('Board created');
     logActivity('project', data.id, 'created', {name});
     location.hash = '#/project/'+data.id;
   };
@@ -1501,9 +1501,9 @@ async function projectMembersModal(pid){
   const {data:members} = await db.from('project_members').select('*').eq('project_id',pid);
   const memberIds = new Set((members||[]).map(m=>m.user_id));
   const externals = S.profiles.filter(p=>['partner','freelancer'].includes(p.role));
-  const m = modal(`<div class="modal-head"><h2>Project members (partner access)</h2><button class="x" onclick="closeModals()">✕</button></div>
+  const m = modal(`<div class="modal-head"><h2>Board members (partner access)</h2><button class="x" onclick="closeModals()">✕</button></div>
     <div class="modal-body">
-      <p style="color:var(--ink2);font-size:13px;margin-top:8px">Internal staff can see every project. Add partners or freelancers here to give them access to <b>this project only</b>.</p>
+      <p style="color:var(--ink2);font-size:13px;margin-top:8px">Internal staff can see every board in their workspaces. Add partners or freelancers here to give them access to <b>this board only</b>.</p>
       ${externals.length? externals.map(p=>`
         <div class="chk"><input type="checkbox" data-uid="${p.id}" ${memberIds.has(p.id)?'checked':''}>
         ${avatar(p,true)} <span>${esc(p.full_name)} <span style="color:var(--ink3)">· ${p.role} · ${esc(p.email)}</span></span></div>`).join('')
@@ -1814,7 +1814,7 @@ async function openRequest(id){
         <select id="rv-assign" style="width:auto"><option value="">Unassigned</option>${S.profiles.filter(p=>p.active).map(p=>`<option value="${p.id}" ${p.id===r.assigned_to?'selected':''}>${esc(p.full_name)}</option>`).join('')}</select>
         <button class="btn btn-ghost btn-sm" id="rv-update">Update</button>
         <button class="btn btn-ghost btn-sm" id="rv-askappr">Ask approval</button>
-        ${!r.project_id? `<button class="btn btn-ghost btn-sm" onclick="convertToTask('${r.id}')">Convert to task</button>`:'<span class="chip" style="background:var(--green-soft);color:var(--green)">Linked to project task</span>'}
+        ${!r.project_id? `<button class="btn btn-ghost btn-sm" onclick="convertToTask('${r.id}')">Convert to task</button>`:'<span class="chip" style="background:var(--green-soft);color:var(--green)">Linked to a board task</span>'}
       </div>`:''}
       <label>Attachments</label>
       <div id="rv-atts">${(atts||[]).length? atts.map(attLink).join('') : '<span style="color:var(--ink3);font-size:13px">No files attached</span>'}</div>
@@ -1887,14 +1887,14 @@ async function convertToTask(reqId){
   const projs = S.projects.filter(p=>p.status==='active');
   const m = modal(`<div class="modal-head"><h2>Convert to task</h2><button class="x" onclick="closeModals()">✕</button></div>
     <div class="modal-body">
-      <label>Into project</label><select id="cv-proj">${projs.map(p=>{
+      <label>Into board</label><select id="cv-proj">${projs.map(p=>{
         const w=wsById(p.workspace_id);
         return `<option value="${p.id}" ${p.workspace_id===wsId?'selected':''}>${w?esc(w.name)+' · ':''}${esc(p.name)}</option>`;}).join('')}</select>
       <label>Assignee</label><select id="cv-assignee"><option value="">Unassigned</option>${S.profiles.filter(p=>p.active).map(p=>`<option value="${p.id}" ${p.id===r.assigned_to?'selected':''}>${esc(p.full_name)}</option>`).join('')}</select>
     </div>
     <div class="modal-foot"><button class="btn btn-ghost" onclick="closeModals()">Cancel</button><button class="btn btn-primary" id="cv-save">Create task</button></div>`);
   m.querySelector('#cv-save').onclick = async ()=>{
-    const project_id = m.querySelector('#cv-proj').value; if(!project_id) return toast('Pick a project', true);
+    const project_id = m.querySelector('#cv-proj').value; if(!project_id) return toast('Pick a board', true);
     const desc = (rt?.fields||[]).map(f=> r.data[f.key]? `${f.label}: ${r.data[f.key]}`:'').filter(Boolean).join('\n');
     const {data:task, error} = await db.from('tasks').insert({
       project_id, title:r.title, description:`From request (${rt?.name||'request'}):\n${desc}`,
@@ -2030,7 +2030,7 @@ async function renderDashboard(){
 /* ================= DASHBOARD WIDGETS ================= */
 const W_SHOWS_TASKS = [['open','Open'],['overdue','Overdue'],['due7','Due within 7 days'],['done','Done'],['blocked','Blocked'],['review','In review'],['all','All']];
 const W_SHOWS_REQS  = [['open','Open'],['sla','SLA breached'],['all','All']];
-const W_GROUPS_TASKS= [['status','Status'],['priority','Priority'],['workspace','Workspace'],['project','Project'],['assignee','Assignee']];
+const W_GROUPS_TASKS= [['status','Status'],['priority','Priority'],['workspace','Workspace'],['project','Board'],['assignee','Assignee']];
 const W_GROUPS_REQS = [['status','Status'],['type','Request type']];
 
 function widgetTaskRows(cfg){
@@ -2225,10 +2225,10 @@ async function renderAdmin(){
           <button class="btn btn-ghost btn-sm" onclick="resetPassword('${p.id}','${esc(p.full_name).replace(/'/g,"\\'")}')">Reset password</button>
           ${p.id!==S.me.id? `<button class="btn btn-ghost btn-sm" onclick="toggleActive('${p.id}', ${!p.active})">${p.active?'Deactivate':'Activate'}</button>`:''}</td>
       </tr>`).join('')}</tbody></table></div>
-      <p style="margin-top:12px;font-size:12.5px;color:var(--ink2)">Roles — <b>admin</b>: everything · <b>management</b>: sees all workspaces · <b>internal</b>: only the workspaces they are members of · <b>requester</b>: read-only in their workspaces — can raise tasks &amp; tickets and comment, but cannot edit anything · <b>partner / freelancer</b>: only projects they're added to + their own requests.</p>`;
+      <p style="margin-top:12px;font-size:12.5px;color:var(--ink2)">Roles — <b>admin</b>: everything · <b>management</b>: sees all workspaces · <b>internal</b>: only the workspaces they are members of · <b>requester</b>: read-only in their workspaces — can raise tasks &amp; tickets and comment, but cannot edit anything · <b>partner / freelancer</b>: only boards they're added to + their own requests.</p>`;
   }
   if(adminTab==='workspaces'){
-    B.innerHTML = `<div class="card"><table class="tbl"><thead><tr><th>Workspace</th><th>Description</th><th>Projects</th><th></th></tr></thead><tbody>
+    B.innerHTML = `<div class="card"><table class="tbl"><thead><tr><th>Workspace</th><th>Description</th><th>Boards</th><th></th></tr></thead><tbody>
       ${S.workspaces.map(w=>`<tr><td style="font-weight:600"><span class="ws-dot" style="display:inline-block;background:${w.color}"></span> ${esc(w.name)}</td>
         <td style="color:var(--ink2)">${esc(w.description)}</td>
         <td>${S.projects.filter(p=>p.workspace_id===w.id).length}</td>
@@ -2236,7 +2236,7 @@ async function renderAdmin(){
           <button class="btn btn-ghost btn-sm" onclick="editWorkspaceModal('${w.id}')">Edit</button>
           <button class="btn btn-ghost btn-sm" onclick="teamMembersModal('${w.id}')">Members</button>
           <button class="btn btn-ghost btn-sm" style="color:var(--red)" onclick="deleteWorkspaceModal('${w.id}')">Delete</button></td></tr>`).join('')}</tbody></table></div>
-      <p style="margin-top:12px;font-size:12.5px;color:var(--ink2)">Internal staff only see workspaces they are members of. Admin and Management see everything. Deleting a workspace also deletes its projects and tasks — you'll be asked to type the name to confirm.</p>`;
+      <p style="margin-top:12px;font-size:12.5px;color:var(--ink2)">Internal staff only see workspaces they are members of. Admin and Management see everything. Deleting a workspace also deletes its boards and tasks — you'll be asked to type the name to confirm.</p>`;
   }
   if(adminTab==='brands'){
     const brs = S.brandsList||[];
@@ -2463,10 +2463,10 @@ async function deleteWorkspaceModal(wid){
     <div class="modal-body">
       <div class="danger-note"><b>This cannot be undone.</b> Deleting this workspace also deletes everything inside it.</div>
       <div style="display:flex;gap:26px;margin:14px 0 16px">
-        <div><div style="font-size:26px;font-weight:800;line-height:1">${projs.length}</div><div style="font-size:12px;color:var(--ink3)">project${projs.length===1?'':'s'}</div></div>
+        <div><div style="font-size:26px;font-weight:800;line-height:1">${projs.length}</div><div style="font-size:12px;color:var(--ink3)">board${projs.length===1?'':'s'}</div></div>
         <div><div style="font-size:26px;font-weight:800;line-height:1;color:${nTasks?'var(--red)':'inherit'}">${nTasks}</div><div style="font-size:12px;color:var(--ink3)">task${nTasks===1?'':'s'}</div></div>
       </div>
-      ${projs.length? `<div style="font-size:13px;color:var(--ink2);margin-bottom:14px">Projects that will go: ${projs.slice(0,6).map(p=>'<b>'+esc(p.name)+'</b>').join(', ')}${projs.length>6?' and '+(projs.length-6)+' more':''}.</div>`:''}
+      ${projs.length? `<div style="font-size:13px;color:var(--ink2);margin-bottom:14px">Boards that will go: ${projs.slice(0,6).map(p=>'<b>'+esc(p.name)+'</b>').join(', ')}${projs.length>6?' and '+(projs.length-6)+' more':''}.</div>`:''}
       <label>Type the workspace name to confirm</label>
       <input id="dw-confirm" autocomplete="off" placeholder="${esc(w.name)}">
     </div>
