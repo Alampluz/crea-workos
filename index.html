@@ -203,6 +203,48 @@ tr.tv-arch .tv-name .tv-open{text-decoration:line-through}
 .bfbar .bf-clear:hover{background:var(--accent-soft)}
 .bfbar .bf-count{font-size:12px;color:var(--ink3);margin-left:auto}
 .ro-field{padding:9px 12px;border:1px solid var(--line);border-radius:8px;background:var(--gray-soft);font-size:13.5px;font-weight:600;color:var(--ink2);display:flex;align-items:center;gap:8px}
+/* ---- attachments ---- */
+.att-none{color:var(--ink3);font-size:13px}
+.att-list{display:flex;flex-wrap:wrap;gap:8px;margin-top:2px}
+.att-list.in-comment{margin-top:8px}
+.att{position:relative;display:inline-flex}
+.att a{display:inline-flex;align-items:center;gap:7px;text-decoration:none}
+.att-file a{border:1px solid var(--line);background:#fff;border-radius:9px;padding:7px 11px;font-size:12.5px;color:var(--ink);max-width:250px}
+.att-file a:hover{border-color:var(--accent);background:var(--accent-soft)}
+.att-file svg{width:15px;height:15px;color:var(--ink3);flex:none}
+.att-file .att-n{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600}
+.att-file .att-s{color:var(--ink3);font-size:11px;flex:none}
+.att-img img{width:84px;height:84px;object-fit:cover;border-radius:10px;border:1px solid var(--line);display:block;background:var(--gray-soft)}
+.att-img a:hover img{border-color:var(--accent)}
+.att-x{position:absolute;top:-6px;right:-6px;width:19px;height:19px;border-radius:50%;background:var(--ink);color:#fff;
+  font-size:10px;line-height:1;display:none;align-items:center;justify-content:center;box-shadow:0 0 0 2px #fff}
+.att:hover .att-x{display:flex}
+.att-x:hover{background:var(--red)}
+.att-drop{margin-top:9px;border:1.5px dashed var(--line);border-radius:11px;padding:16px;text-align:center;
+  font-size:12.5px;color:var(--ink3);cursor:pointer;transition:border-color .14s,background .14s,color .14s}
+.att-drop:hover{border-color:var(--accent);color:var(--ink2);background:var(--accent-soft)}
+.att-drop.over{border-color:var(--accent);background:var(--accent-soft);color:var(--accent-ink)}
+.att-drop.busy{cursor:progress}
+.att-drop b{color:var(--accent);font-weight:700}
+/* ---- comment composer ---- */
+.cmp{margin-top:10px;border-radius:11px;transition:box-shadow .14s}
+.cmp.over{box-shadow:0 0 0 2px var(--accent)}
+.cmp-row{display:flex;gap:8px;align-items:center}
+.cmp-row input[type=text],.cmp-row input:not([type]){flex:1}
+.cmp-row>input{flex:1}
+.cmp-clip{display:flex;align-items:center;justify-content:center;width:34px;height:34px;flex:none;
+  border:1px solid var(--line);border-radius:8px;background:#fff;color:var(--ink3);transition:all .14s}
+.cmp-clip svg{width:16px;height:16px}
+.cmp-clip:hover{color:var(--accent-ink);border-color:var(--accent);background:var(--accent-soft)}
+.cmp-staged{display:flex;flex-wrap:wrap;gap:7px;margin-top:8px}
+.stg{position:relative;display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line);background:var(--gray-soft);
+  border-radius:9px;padding:5px 9px 5px 6px;font-size:12px;max-width:230px}
+.stg img{width:26px;height:26px;object-fit:cover;border-radius:5px;flex:none}
+.stg-ic{width:26px;height:26px;display:flex;align-items:center;justify-content:center;color:var(--ink3);flex:none}
+.stg-n{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600}
+.stg-s{color:var(--ink3);font-size:10.5px;flex:none}
+.stg-x{color:var(--ink3);font-size:11px;padding:0 2px;flex:none}
+.stg-x:hover{color:var(--red)}
 .ws-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .danger-note{background:var(--red-soft);border:1px solid var(--red);border-radius:8px;padding:10px 12px;margin-bottom:12px;font-size:13px;color:var(--red)}
 .tv .subchip{font-size:11.5px;font-weight:700;color:var(--ink3);background:var(--gray-soft);border-radius:6px;padding:2px 7px;margin-left:8px;white-space:nowrap}
@@ -653,21 +695,99 @@ async function refreshCore(){
   S.allCompanies = co.data||[];
   S.company = S.allCompanies.find(c=>c.id===S.me?.company_id) || null;
 }
-async function uploadAttachments(entity_type, entity_id, fileInput){
-  const files = fileInput && fileInput.files ? [...fileInput.files] : [];
-  let ok = 0;
-  for(const f of files){
-    const path = entity_type + '/' + entity_id + '/' + Date.now() + '_' + f.name.replace(/[^\w.\-]+/g,'_');
-    const {error} = await db.storage.from('attachments').upload(path, f);
-    if(error){ toast('Upload failed: ' + error.message, true); continue; }
-    await db.from('attachments').insert({entity_type, entity_id, file_name:f.name, storage_path:path, size_bytes:f.size, uploaded_by:S.me.id});
-    ok++;
-  }
-  return ok;
+const MAX_UPLOAD = 25 * 1024 * 1024;   // 25 MB per file
+const isImageName = n => /\.(png|jpe?g|gif|webp|avif|bmp|svg)$/i.test(n||'');
+function fileSize(b){
+  if(b==null) return '';
+  if(b < 1024) return b+' B';
+  if(b < 1048576) return (b/1024).toFixed(0)+' KB';
+  return (b/1048576).toFixed(1)+' MB';
 }
-function attLink(a){
-  const {data} = db.storage.from('attachments').getPublicUrl(a.storage_path);
-  return `<a href="${data.publicUrl}" target="_blank" rel="noopener" style="display:inline-flex;align-items:center;gap:5px;margin:2px 10px 2px 0;font-size:12.5px;text-decoration:underline;text-underline-offset:3px">${esc(a.file_name)}</a>`;
+function attUrl(path){ return db.storage.from('attachments').getPublicUrl(path).data.publicUrl; }
+
+/* Uploads a list of File objects and returns the attachment rows that stuck. */
+async function uploadFiles(entity_type, entity_id, files){
+  const list = [...(files||[])];
+  const made = [];
+  for(const f of list){
+    if(f.size > MAX_UPLOAD){ toast(`${f.name} is ${fileSize(f.size)} — the limit is 25 MB`, true); continue; }
+    const path = entity_type + '/' + entity_id + '/' + Date.now() + '_' + Math.random().toString(36).slice(2,7)
+      + '_' + (f.name||'file').replace(/[^\w.\-]+/g,'_');
+    const {error} = await db.storage.from('attachments').upload(path, f, {contentType:f.type||undefined});
+    if(error){ toast(`Couldn't upload ${f.name}: ${error.message}`, true); continue; }
+    const {data, error:dbErr} = await db.from('attachments')
+      .insert({entity_type, entity_id, file_name:f.name||'file', storage_path:path, size_bytes:f.size, uploaded_by:S.me.id})
+      .select().single();
+    if(dbErr){ toast(`Saved the file but couldn't attach it: ${dbErr.message}`, true); continue; }
+    made.push(data);
+  }
+  return made;
+}
+/* Back-compat for any caller still passing an <input type=file>. */
+async function uploadAttachments(entity_type, entity_id, fileInput){
+  const made = await uploadFiles(entity_type, entity_id, fileInput?.files);
+  if(fileInput) fileInput.value = '';
+  return made.length;
+}
+function attLink(a, opts={}){
+  const url = attUrl(a.storage_path);
+  const rm = opts.canRemove
+    ? `<button class="att-x" title="Remove" onclick="event.preventDefault();event.stopPropagation();removeAttachment('${a.id}','${a.storage_path.replace(/'/g,"\\'")}')">✕</button>` : '';
+  if(isImageName(a.file_name)){
+    return `<span class="att att-img" data-aid="${a.id}">
+      <a href="${url}" target="_blank" rel="noopener" title="${esc(a.file_name)}"><img src="${url}" alt="${esc(a.file_name)}" loading="lazy"></a>${rm}</span>`;
+  }
+  return `<span class="att att-file" data-aid="${a.id}">
+    <a href="${url}" target="_blank" rel="noopener" title="${esc(a.file_name)}">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6"/></svg>
+      <span class="att-n">${esc(a.file_name)}</span><span class="att-s">${fileSize(a.size_bytes)}</span></a>${rm}</span>`;
+}
+function attListHTML(rows, canRemove){
+  if(!rows || !rows.length) return '<span class="att-none">No files attached</span>';
+  return `<div class="att-list">${rows.map(a=>attLink(a,{canRemove})).join('')}</div>`;
+}
+async function removeAttachment(id, path){
+  const box = document.querySelector(`[data-aid="${id}"]`);
+  const {error} = await db.from('attachments').delete().eq('id', id);
+  if(error) return toast(error.message, true);
+  db.storage.from('attachments').remove([path]);
+  box?.remove();
+  const list = document.querySelector('.att-list');
+  if(list && !list.children.length) list.outerHTML = '<span class="att-none">No files attached</span>';
+  toast('File removed');
+}
+/* A drop zone that uploads the moment a file arrives — no second button to press. */
+function attachZoneHTML(id){
+  return `<div class="att-drop" id="${id}">
+    <input type="file" multiple hidden>
+    <span class="att-cta">Drop files here, or <b>browse</b></span>
+    <span class="att-busy hidden">Uploading…</span>
+  </div>`;
+}
+function wireAttachZone(root, zoneId, entity_type, entity_id, listEl, onDone){
+  const z = root.querySelector('#'+zoneId); if(!z) return;
+  const input = z.querySelector('input[type=file]');
+  const busy = z.querySelector('.att-busy'), cta = z.querySelector('.att-cta');
+  const go = async (files)=>{
+    if(!files || !files.length) return;
+    busy.classList.remove('hidden'); cta.classList.add('hidden'); z.classList.add('busy');
+    const made = await uploadFiles(entity_type, entity_id, files);
+    busy.classList.add('hidden'); cta.classList.remove('hidden'); z.classList.remove('busy');
+    input.value = '';
+    if(!made.length) return;
+    if(listEl){
+      if(listEl.querySelector('.att-none')) listEl.innerHTML = '<div class="att-list"></div>';
+      const list = listEl.querySelector('.att-list') || listEl;
+      list.insertAdjacentHTML('beforeend', made.map(a=>attLink(a,{canRemove:true})).join(''));
+    }
+    toast(made.length===1? `${made[0].file_name} attached` : `${made.length} files attached`);
+    onDone?.(made);
+  };
+  z.onclick = ()=> input.click();
+  input.onchange = ()=> go(input.files);
+  z.ondragover = e=>{ e.preventDefault(); z.classList.add('over'); };
+  z.ondragleave = ()=> z.classList.remove('over');
+  z.ondrop = e=>{ e.preventDefault(); z.classList.remove('over'); go(e.dataTransfer.files); };
 }
 
 /* ================= ROUTER ================= */
@@ -812,19 +932,70 @@ function renderMentionText(body, mentions){
   names.forEach(n=>{ out = out.split(esc('@'+n)).join(`<span class="mention">@${esc(n)}</span>`); });
   return out;
 }
+/* ---- files staged on a comment before it is sent ---- */
+function commentComposerHTML(prefix){
+  return `<div class="cmp">
+    <div class="cmp-row">
+      <input id="${prefix}-comment" placeholder="Write a comment… type @ to tag someone" autocomplete="off">
+      <button class="cmp-clip" id="${prefix}-clip" title="Attach a file or image" aria-label="Attach a file">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
+      </button>
+      <input type="file" id="${prefix}-files" multiple hidden>
+      <button class="btn btn-primary btn-sm" id="${prefix}-comment-add">Send</button>
+    </div>
+    <div class="cmp-staged hidden" id="${prefix}-staged"></div>
+  </div>`;
+}
+/* Holds the File objects picked/pasted/dropped for a comment not yet sent. */
+function wireComposer(root, prefix){
+  const input = root.querySelector('#'+prefix+'-comment');
+  const clip  = root.querySelector('#'+prefix+'-clip');
+  const picker= root.querySelector('#'+prefix+'-files');
+  const tray  = root.querySelector('#'+prefix+'-staged');
+  input._staged = [];
+  const draw = ()=>{
+    tray.classList.toggle('hidden', !input._staged.length);
+    tray.innerHTML = input._staged.map((f,i)=>`<span class="stg">${
+      isImageName(f.name)? `<img src="${URL.createObjectURL(f)}" alt="">` : '<span class="stg-ic">▢</span>'
+    }<span class="stg-n">${esc(f.name)}</span><span class="stg-s">${fileSize(f.size)}</span>
+      <button class="stg-x" data-i="${i}" title="Remove">✕</button></span>`).join('');
+    tray.querySelectorAll('.stg-x').forEach(b=> b.onclick = ()=>{ input._staged.splice(+b.dataset.i,1); draw(); });
+  };
+  const add = files=>{ [...(files||[])].forEach(f=>input._staged.push(f)); draw(); };
+  clip.onclick = ()=> picker.click();
+  picker.onchange = ()=>{ add(picker.files); picker.value=''; };
+  // paste a screenshot straight into the box
+  input.addEventListener('paste', e=>{
+    const files = [...(e.clipboardData?.files||[])];
+    if(files.length){ e.preventDefault(); add(files); }
+  });
+  const zone = root.querySelector('.cmp');
+  zone.ondragover = e=>{ e.preventDefault(); zone.classList.add('over'); };
+  zone.ondragleave = ()=> zone.classList.remove('over');
+  zone.ondrop = e=>{ e.preventDefault(); zone.classList.remove('over'); add(e.dataTransfer.files); };
+  input._redrawStaged = draw;
+  return input;
+}
 /* Post a comment and ping everyone tagged in it. */
 async function postComment(entityType, entityId, entityTitle, input, box){
-  const body = input.value.trim(); if(!body) return null;
+  const staged = input._staged || [];
+  const body = input.value.trim();
+  if(!body && !staged.length) return null;
   const mentions = extractMentions(input);
   const {data, error} = await db.from('comments')
     .insert({entity_type:entityType, entity_id:entityId, author_id:S.me.id, body, mentions})
     .select().single();
   if(error){ toast(error.message, true); return null; }
+  if(staged.length){
+    const made = await uploadFiles('comment', data.id, staged);
+    data.atts = made;
+    input._staged = []; input._redrawStaged?.();
+  }
   if(mentions.length){
     const rows = mentions.map(uid=>({
       user_id:uid, actor_id:S.me.id, kind:'mention',
       entity_type:entityType, entity_id:entityId,
-      title:entityTitle, body: body.slice(0,180),
+      title:entityTitle, body: (body || `sent ${staged.length} file${staged.length>1?'s':''}`).slice(0,180),
     }));
     const {error:nErr} = await db.from('notifications').insert(rows);
     if(nErr) toast('Comment saved, but the notification failed: '+nErr.message, true);
@@ -1902,6 +2073,7 @@ async function openTask(id){
     db.from('subtasks').select('*').eq('task_id',id).order('position').order('created_at'),
   ]);
   if(!t) return toast('Task not found', true);
+  await hydrateCommentAtts(comments||[]);
   const p = projById(t.project_id);
   const m = modal(`<div class="modal-head">
       <h2><span id="tv-title-view">${esc(t.title)}</span></h2>
@@ -1926,13 +2098,11 @@ async function openTask(id){
       ${canEdit()? `<div style="display:flex;gap:8px;margin-top:6px"><input id="tv-chk-new" placeholder="Add checklist item…" style="flex:1">
         <button class="btn btn-ghost btn-sm" id="tv-chk-add">Add</button></div>`:''}
       <label>Attachments</label>
-      <div id="tv-atts">${(atts||[]).length? atts.map(attLink).join('') : '<span style="color:var(--ink3);font-size:13px">No files attached</span>'}</div>
-      <div style="display:flex;gap:8px;margin-top:8px;align-items:center"><input id="tv-files" type="file" multiple style="flex:1">
-        <button class="btn btn-ghost btn-sm" id="tv-files-add">Upload</button></div>
+      <div id="tv-atts">${attListHTML(atts, canEdit())}</div>
+      ${canCreate()? attachZoneHTML('tv-drop') : ''}
       <label>Comments</label>
       <div id="tv-comments">${(comments||[]).map(commentRow).join('')||'<div style="color:var(--ink3);font-size:13px">No comments yet</div>'}</div>
-      <div style="display:flex;gap:8px;margin-top:10px"><input id="tv-comment" placeholder="Write a comment… type @ to tag someone" autocomplete="off" style="flex:1">
-        <button class="btn btn-primary btn-sm" id="tv-comment-add">Send</button></div>
+      ${canCreate()? commentComposerHTML('tv') : ''}
       <div style="margin-top:14px;font-size:11.5px;color:var(--ink3)">Created ${fmtDateTime(t.created_at)} by ${esc(prof(t.created_by)?.full_name||'—')} · in ${esc(p?.name||'')}</div>
     </div>
     <div class="modal-foot"><button class="btn btn-ghost" onclick="closeModals()">Close</button>${canEdit()? `<button class="btn btn-primary" id="tv-save">Save changes</button>`:''}</div>`, true);
@@ -1963,15 +2133,14 @@ async function openTask(id){
     m.querySelector('#tv-chk').insertAdjacentHTML('beforeend', chkRow(data));
     m.querySelector('#tv-chk-new').value='';
   };
-  m.querySelector('#tv-files-add').onclick = async ()=>{
-    const n = await uploadAttachments('task', t.id, m.querySelector('#tv-files'));
-    if(n){ toast(n + ' file' + (n>1?'s':'') + ' uploaded'); const {data:na} = await db.from('attachments').select('*').eq('entity_type','task').eq('entity_id',t.id).order('created_at');
-      m.querySelector('#tv-atts').innerHTML = (na||[]).map(attLink).join(''); m.querySelector('#tv-files').value=''; }
-  };
+  wireAttachZone(m, 'tv-drop', 'task', t.id, m.querySelector('#tv-atts'));
   const cIn = m.querySelector('#tv-comment');
-  wireMentions(cIn);
-  cIn.addEventListener('keydown', e=>{ if(e.key==='Enter' && !document.querySelector('.mention-menu')) m.querySelector('#tv-comment-add').click(); });
-  m.querySelector('#tv-comment-add').onclick = ()=> postComment('task', t.id, t.title, cIn, m.querySelector('#tv-comments'));
+  if(cIn){
+    wireComposer(m, 'tv');
+    wireMentions(cIn);
+    cIn.addEventListener('keydown', e=>{ if(e.key==='Enter' && !document.querySelector('.mention-menu')) m.querySelector('#tv-comment-add').click(); });
+    m.querySelector('#tv-comment-add').onclick = ()=> postComment('task', t.id, t.title, cIn, m.querySelector('#tv-comments'));
+  }
 }
 function subProgressBar(subs){
   const total=subs.length, done=subs.filter(s=>s.status==='done').length;
@@ -2025,7 +2194,22 @@ async function delChk(id){
 }
 function commentRow(c){
   const a = prof(c.author_id);
-  return `<div class="comment">${avatar(a,true)}<div class="body"><b>${esc(a?.full_name||'Unknown')}</b><span class="when">${fmtDateTime(c.created_at)}</span><p>${renderMentionText(c.body, c.mentions)}</p></div></div>`;
+  const atts = c.atts || [];
+  return `<div class="comment">${avatar(a,true)}<div class="body">
+    <b>${esc(a?.full_name||'Unknown')}</b><span class="when">${fmtDateTime(c.created_at)}</span>
+    ${c.body? `<p>${renderMentionText(c.body, c.mentions)}</p>`:''}
+    ${atts.length? `<div class="att-list in-comment">${atts.map(x=>attLink(x)).join('')}</div>`:''}
+  </div></div>`;
+}
+/* Comments come back without their files; fetch them in one go and attach. */
+async function hydrateCommentAtts(comments){
+  const ids = (comments||[]).map(c=>c.id);
+  if(!ids.length) return comments||[];
+  const {data} = await db.from('attachments').select('*').eq('entity_type','comment').in('entity_id', ids).order('created_at');
+  const by = {};
+  (data||[]).forEach(a=> (by[a.entity_id] || (by[a.entity_id]=[])).push(a));
+  comments.forEach(c=> c.atts = by[c.id] || []);
+  return comments;
 }
 async function deleteTask(id, projectId){
   if(!confirm('Delete this task permanently?')) return;
@@ -2115,6 +2299,7 @@ async function openRequest(id){
     db.from('attachments').select('*').eq('entity_type','request').eq('entity_id',id).order('created_at'),
   ]);
   if(!r) return toast('Request not found', true);
+  await hydrateCommentAtts(comments||[]);
   const rt = S.requestTypes.find(x=>x.id===r.request_type_id);
   const staff = isStaff();
   const canEditStatus = staff || r.assigned_to===S.me.id;
@@ -2147,13 +2332,11 @@ async function openRequest(id){
         ${!r.project_id? `<button class="btn btn-ghost btn-sm" onclick="convertToTask('${r.id}')">Convert to task</button>`:'<span class="chip" style="background:var(--green-soft);color:var(--green)">Linked to a board task</span>'}
       </div>`:''}
       <label>Attachments</label>
-      <div id="rv-atts">${(atts||[]).length? atts.map(attLink).join('') : '<span style="color:var(--ink3);font-size:13px">No files attached</span>'}</div>
-      <div style="display:flex;gap:8px;margin-top:8px;align-items:center"><input id="rv-files" type="file" multiple style="flex:1">
-        <button class="btn btn-ghost btn-sm" id="rv-files-add">Upload</button></div>
+      <div id="rv-atts">${attListHTML(atts, isStaff())}</div>
+      ${attachZoneHTML('rv-drop')}
       <label>Comments</label>
       <div id="rv-comments">${(comments||[]).map(commentRow).join('')||'<div style="color:var(--ink3);font-size:13px">No comments yet</div>'}</div>
-      <div style="display:flex;gap:8px;margin-top:10px"><input id="rv-comment" placeholder="Write a comment… type @ to tag someone" autocomplete="off" style="flex:1">
-        <button class="btn btn-primary btn-sm" id="rv-comment-add">Send</button></div>
+      ${commentComposerHTML('rv')}
     </div>
     <div class="modal-foot">
       ${r.submitted_by===S.me.id && ['submitted','in_review'].includes(r.status)? `<button class="btn btn-danger" id="rv-cancel">Cancel request</button>`:''}
@@ -2176,12 +2359,9 @@ async function openRequest(id){
     closeModals(); toast('Request cancelled');
     if(S.route.view==='requests') renderRequests(); else renderHome();
   });
-  m.querySelector('#rv-files-add').onclick = async ()=>{
-    const n = await uploadAttachments('request', r.id, m.querySelector('#rv-files'));
-    if(n){ toast(n + ' file' + (n>1?'s':'') + ' uploaded'); const {data:na} = await db.from('attachments').select('*').eq('entity_type','request').eq('entity_id',r.id).order('created_at');
-      m.querySelector('#rv-atts').innerHTML = (na||[]).map(attLink).join(''); m.querySelector('#rv-files').value=''; }
-  };
+  wireAttachZone(m, 'rv-drop', 'request', r.id, m.querySelector('#rv-atts'));
   const rIn = m.querySelector('#rv-comment');
+  wireComposer(m, 'rv');
   wireMentions(rIn);
   rIn.addEventListener('keydown', e=>{ if(e.key==='Enter' && !document.querySelector('.mention-menu')) m.querySelector('#rv-comment-add').click(); });
   m.querySelector('#rv-comment-add').onclick = ()=> postComment('request', r.id, (r.ticket_no? r.ticket_no+' · ':'')+r.title, rIn, m.querySelector('#rv-comments'));
