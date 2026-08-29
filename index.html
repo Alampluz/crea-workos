@@ -261,6 +261,17 @@ tr.tv-arch .tv-name .tv-open{text-decoration:line-through}
 .hist-more{margin-top:8px;font-size:12px;font-weight:600;color:var(--accent);cursor:pointer;
   display:inline-block;padding:4px 8px;border-radius:7px}
 .hist-more:hover{background:var(--accent-soft)}
+/* ---- removable comments ---- */
+.comment .body{position:relative}
+.cmt-del{position:absolute;top:0;right:0;color:var(--ink3);font-size:11px;line-height:1;
+  padding:3px 5px;border-radius:6px;opacity:0;transition:opacity .14s,color .14s,background .14s}
+.comment:hover .cmt-del{opacity:1}
+.cmt-del:hover{background:var(--red-soft);color:var(--red)}
+.comment.gone .body{background:transparent;border:1px dashed var(--line)}
+.gone-txt{font-size:12.5px;color:var(--ink3);font-style:italic}
+.cmt-undo{margin-left:10px;font-size:11.5px;font-weight:700;color:var(--accent);
+  padding:2px 7px;border-radius:6px}
+.cmt-undo:hover{background:var(--accent-soft)}
 .ws-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .danger-note{background:var(--red-soft);border:1px solid var(--red);border-radius:8px;padding:10px 12px;margin-bottom:12px;font-size:13px;color:var(--red)}
 .tv .subchip{font-size:11.5px;font-weight:700;color:var(--ink3);background:var(--gray-soft);border-radius:6px;padding:2px 7px;margin-left:8px;white-space:nowrap}
@@ -2105,6 +2116,7 @@ async function openTask(id){
   S._taskHist = hist||[];
   if(!t) return toast('Task not found', true);
   await hydrateCommentAtts(comments||[]);
+  S._commentCache = {}; (comments||[]).forEach(c=> S._commentCache[c.id]=c);
   const p = projById(t.project_id);
   const m = modal(`<div class="modal-head">
       <h2><span id="tv-title-view">${esc(t.title)}</span></h2>
@@ -2225,14 +2237,47 @@ async function delChk(id){
   await db.from('task_checklist').delete().eq('id',id);
   document.getElementById('chk-'+id)?.remove();
 }
+function canRemoveComment(c){ return S.me && (c.author_id===S.me.id || isStaff()); }
 function commentRow(c){
   const a = prof(c.author_id);
   const atts = c.atts || [];
-  return `<div class="comment">${avatar(a,true)}<div class="body">
+  if(c.deleted_at){
+    const by = prof(c.deleted_by);
+    return `<div class="comment gone" data-cid="${c.id}">${avatar(a,true)}<div class="body">
+      <span class="gone-txt">Comment removed${by? ` by ${esc(by.full_name)}`:''}</span>
+      <span class="when">${timeAgo(c.deleted_at)}</span>
+      ${canRemoveComment(c)? `<button class="cmt-undo" onclick="undoDeleteComment('${c.id}')">Undo</button>`:''}
+    </div></div>`;
+  }
+  return `<div class="comment" data-cid="${c.id}">${avatar(a,true)}<div class="body">
     <b>${esc(a?.full_name||'Unknown')}</b><span class="when">${fmtDateTime(c.created_at)}</span>
+    ${canRemoveComment(c)? `<button class="cmt-del" title="Remove this comment" onclick="deleteComment('${c.id}')">✕</button>`:''}
     ${c.body? `<p>${renderMentionText(c.body, c.mentions)}</p>`:''}
     ${atts.length? `<div class="att-list in-comment">${atts.map(x=>attLink(x)).join('')}</div>`:''}
   </div></div>`;
+}
+/* Removing hides it and keeps the row, so History still shows it happened
+   and Undo can bring it straight back. */
+async function deleteComment(id){
+  const {data, error} = await db.from('comments')
+    .update({deleted_at:new Date().toISOString(), deleted_by:S.me.id}).eq('id',id).select().single();
+  if(error) return toast(error.message, true);
+  swapCommentRow(id, data);
+  toast('Comment removed — Undo is on the comment', false);
+}
+async function undoDeleteComment(id){
+  const {data, error} = await db.from('comments')
+    .update({deleted_at:null, deleted_by:null}).eq('id',id).select().single();
+  if(error) return toast(error.message, true);
+  swapCommentRow(id, data);
+  toast('Comment restored');
+}
+function swapCommentRow(id, row){
+  const el = document.querySelector(`.comment[data-cid="${id}"]`); if(!el || !row) return;
+  const prev = (S._commentCache||{})[id];
+  if(prev) row.atts = prev.atts;
+  (S._commentCache = S._commentCache||{})[id] = row;
+  el.outerHTML = commentRow(row);
 }
 /* ---- task history ---- */
 const statusLabel = k => (STATUSES.find(s=>s.k===k)||{}).label || k || '—';
@@ -2256,7 +2301,9 @@ function histLine(a){
   switch(a.action){
     case 'created':        return 'created this task';
     case 'deleted':        return 'deleted this task';
-    case 'commented':      return `commented${d.excerpt? ` — “${esc(d.excerpt)}”`:''}`;
+    case 'commented':        return `commented${d.excerpt? ` — “${esc(d.excerpt)}”`:''}`;
+    case 'comment_deleted':  return `removed a comment${d.excerpt? ` — “${esc(d.excerpt)}”`:''}`;
+    case 'comment_restored': return `restored a comment${d.excerpt? ` — “${esc(d.excerpt)}”`:''}`;
     case 'file_added':     return `attached <b>${esc(d.file||'a file')}</b>`;
     case 'file_removed':   return `removed <b>${esc(d.file||'a file')}</b>`;
     case 'subtask_added':  return `added subtask <b>${esc(d.title||'')}</b>`;
