@@ -156,23 +156,43 @@ tr.tv-arch .tv-name .tv-open{text-decoration:line-through}
 .mention-menu .mopt:hover,.mention-menu .mopt.on{background:var(--accent-soft)}
 .mention{background:var(--accent-soft);color:var(--accent-ink);font-weight:700;border-radius:5px;padding:0 3px}
 /* ---- notification bell ---- */
-#bell-wrap{position:relative;margin-left:10px;flex:none}
-#bell{position:relative;font-size:16px;line-height:1;padding:6px 8px;border-radius:9px;color:var(--ink2)}
-#bell:hover{background:var(--gray-soft)}
-#bell-count{position:absolute;top:0;right:0;min-width:16px;height:16px;padding:0 4px;border-radius:9px;background:var(--red);color:#fff;font-size:10px;font-weight:800;display:flex;align-items:center;justify-content:center}
-#notif-panel{position:absolute;top:40px;right:0;width:340px;background:#fff;border:1px solid var(--line);border-radius:13px;box-shadow:0 16px 48px rgba(20,22,40,.18);z-index:500;overflow:hidden;animation:pop .12s ease}
-.np-head{display:flex;align-items:center;justify-content:space-between;padding:11px 14px;border-bottom:1px solid var(--line);font-size:13.5px}
-.np-head button{font-size:11.5px;font-weight:700;color:var(--accent);padding:2px 4px;border-radius:5px}
-.np-head button:hover{background:var(--accent-soft)}
-.np-body{max-height:390px;overflow-y:auto}
-.np-item{display:flex;gap:9px;padding:11px 14px;border-bottom:1px solid var(--line);cursor:pointer}
+#bell-wrap{position:relative;margin-left:6px;flex:none}
+#bell{position:relative;display:flex;align-items:center;justify-content:center;width:34px;height:34px;
+  border-radius:10px;color:var(--ink3);transition:color .16s ease,background .16s ease}
+#bell svg{width:19px;height:19px;display:block}
+#bell:hover{color:var(--ink);background:var(--gray-soft)}
+#bell:active{transform:scale(.94)}
+#bell.has-unread{color:var(--ink)}
+/* a quiet accent dot, ringed so it stays crisp on hover */
+#bell-count{position:absolute;top:5px;right:5px;min-width:8px;height:8px;padding:0;border-radius:99px;
+  background:var(--accent);box-shadow:0 0 0 2px var(--panel);font-size:0;color:transparent;
+  display:block;transition:box-shadow .16s ease}
+#bell:hover #bell-count{box-shadow:0 0 0 2px var(--gray-soft)}
+/* the count itself lives in the panel header — the bell only says "there is something" */
+#notif-panel{position:absolute;top:42px;right:0;width:352px;background:var(--panel);
+  border:1px solid var(--line);border-radius:16px;z-index:500;overflow:hidden;
+  box-shadow:0 1px 2px rgba(22,24,29,.04),0 18px 48px -12px rgba(22,24,29,.16);
+  animation:npIn .16s cubic-bezier(.2,.8,.3,1)}
+@keyframes npIn{from{opacity:0;transform:translateY(-6px) scale(.985)}to{opacity:1;transform:none}}
+.np-head{display:flex;align-items:center;justify-content:space-between;padding:13px 16px 11px;
+  font-size:12px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--ink3)}
+.np-head button{font-size:11.5px;font-weight:600;letter-spacing:0;text-transform:none;color:var(--ink3);
+  padding:3px 7px;border-radius:7px;transition:color .14s,background .14s}
+.np-head button:hover{background:var(--gray-soft);color:var(--ink)}
+.np-body{max-height:400px;overflow-y:auto;padding:0 6px 6px}
+.np-item{position:relative;display:flex;gap:11px;padding:11px 12px 11px 22px;border-radius:11px;cursor:pointer;
+  transition:background .14s ease}
 .np-item:hover{background:var(--gray-soft)}
-.np-item.unread{background:var(--accent-soft)}
-.np-item.unread:hover{filter:brightness(.97)}
-.np-txt{font-size:12.5px;line-height:1.45;min-width:0}
-.np-body-txt{color:var(--ink2);margin-top:2px;overflow:hidden;text-overflow:ellipsis;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
-.np-when{color:var(--ink3);font-size:11px;margin-top:3px}
-.np-empty{padding:26px 18px;text-align:center;color:var(--ink3);font-size:12.5px;line-height:1.55}
+/* unread reads as a single accent dot, not a coloured block */
+.np-item.unread::before{content:'';position:absolute;left:9px;top:19px;width:6px;height:6px;
+  border-radius:99px;background:var(--accent)}
+.np-item.unread .np-txt>div:first-child{color:var(--ink)}
+.np-txt{font-size:12.5px;line-height:1.5;min-width:0;color:var(--ink2)}
+.np-txt b{font-weight:600;color:var(--ink)}
+.np-body-txt{color:var(--ink3);margin-top:1px;overflow:hidden;text-overflow:ellipsis;
+  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+.np-when{color:var(--ink3);font-size:11px;margin-top:4px;letter-spacing:.2px}
+.np-empty{padding:34px 26px;text-align:center;color:var(--ink3);font-size:12.5px;line-height:1.6}
 /* ---- per-board filter bar ---- */
 .bfbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:14px}
 .bfbar .bf-q{width:220px;padding:7px 11px;font-size:13px;border:1px solid var(--line);border-radius:8px;background:#fff}
@@ -393,7 +413,11 @@ tr.tv-arch .tv-name .tv-open{text-decoration:line-through}
     <div id="topbar">
       <div class="crumb" id="crumb">Home</div>
       <div class="topbar-right" id="topbar-actions"></div>
-      <div id="bell-wrap"><button id="bell" title="Notifications" onclick="toggleNotifPanel(event)">🔔<span id="bell-count" class="hidden">0</span></button></div>
+      <div id="bell-wrap"><button id="bell" title="Notifications" aria-label="Notifications" onclick="toggleNotifPanel(event)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M18 8.4A6 6 0 1 0 6 8.4c0 4.55-1.6 5.86-2.05 6.26a.62.62 0 0 0 .42 1.09h15.26a.62.62 0 0 0 .42-1.09C19.6 14.26 18 12.95 18 8.4Z"/>
+          <path d="M13.73 19.6a2 2 0 0 1-3.46 0"/>
+        </svg><span id="bell-count" class="hidden"></span></button></div>
     </div>
     <div id="ten-banner" class="hidden" style="padding:8px 24px;font-size:12.5px;font-weight:600;background:var(--amber-soft);color:var(--amber);border-bottom:1px solid var(--line)"></div>
     <div id="content"></div>
@@ -465,6 +489,15 @@ const wsById = id => S.workspaces.find(w=>w.id===id);
 const projById = id => S.projects.find(p=>p.id===id);
 function fmtDate(d){ if(!d) return ''; const dt=new Date(d); return dt.toLocaleDateString('en-GB',{day:'numeric',month:'short'}) + (dt.getFullYear()!==new Date().getFullYear()? ' '+dt.getFullYear():''); }
 function fmtDateTime(d){ if(!d) return ''; return new Date(d).toLocaleString('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}); }
+function timeAgo(d){
+  if(!d) return '';
+  const s = Math.max(0, (Date.now() - new Date(d).getTime())/1000);
+  if(s < 60) return 'just now';
+  const m = Math.floor(s/60);   if(m < 60) return m+'m ago';
+  const h = Math.floor(m/60);   if(h < 24) return h+'h ago';
+  const dd = Math.floor(h/24);  if(dd < 7) return dd+'d ago';
+  return fmtDateTime(d);
+}
 function daysDiff(d){ const a=new Date(d); a.setHours(0,0,0,0); const b=new Date(); b.setHours(0,0,0,0); return Math.round((a-b)/86400000); }
 function dueBadge(d, doneAlready){
   if(!d) return '';
@@ -814,8 +847,10 @@ async function refreshNotifs(){
   S._notifs = data||[];
   const unread = S._notifs.filter(n=>!n.read_at).length;
   const b = $('#bell-count'); if(!b) return;
-  b.textContent = unread > 99 ? '99+' : unread;
+  // the bell stays a quiet dot at any count; the number is in the panel header
   b.classList.toggle('hidden', unread===0);
+  b.title = unread ? `${unread} unread` : '';
+  $('#bell')?.classList.toggle('has-unread', unread>0);
   const panel = $('#notif-panel'); if(panel) panel.innerHTML = notifPanelHTML();
 }
 function startNotifPolling(){
@@ -826,16 +861,16 @@ function startNotifPolling(){
 function notifPanelHTML(){
   const list = S._notifs||[];
   const unread = list.filter(n=>!n.read_at).length;
-  return `<div class="np-head"><b>Notifications</b>${unread? `<button onclick="markAllNotifsRead()">Mark all read</button>`:''}</div>
+  return `<div class="np-head"><span>Notifications${unread? ` · ${unread}`:''}</span>${unread? `<button onclick="markAllNotifsRead()">Mark all read</button>`:''}</div>
     <div class="np-body">${list.length? list.map(n=>{
       const who = prof(n.actor_id);
       return `<div class="np-item ${n.read_at?'':'unread'}" onclick="openNotif('${n.id}')">
         ${avatar(who,true)}
         <div class="np-txt"><div><b>${esc(who?.full_name||'Someone')}</b> mentioned you${n.title? ` in <b>${esc(n.title)}</b>`:''}</div>
           <div class="np-body-txt">${esc(n.body||'')}</div>
-          <div class="np-when">${fmtDateTime(n.created_at)}</div></div>
+          <div class="np-when">${timeAgo(n.created_at)}</div></div>
       </div>`;
-    }).join('') : '<div class="np-empty">Nothing yet. When someone tags you with @ in a comment, it lands here.</div>'}</div>`;
+    }).join('') : '<div class="np-empty">Nothing yet.<br>When someone tags you with @ in a comment, it lands here.</div>'}</div>`;
 }
 function toggleNotifPanel(e){
   e?.stopPropagation();
@@ -1888,7 +1923,6 @@ async function openTask(id){
       <div id="tv-comments">${(comments||[]).map(commentRow).join('')||'<div style="color:var(--ink3);font-size:13px">No comments yet</div>'}</div>
       <div style="display:flex;gap:8px;margin-top:10px"><input id="tv-comment" placeholder="Write a comment… type @ to tag someone" autocomplete="off" style="flex:1">
         <button class="btn btn-primary btn-sm" id="tv-comment-add">Send</button></div>
-      <div style="font-size:11.5px;color:var(--ink3);margin-top:5px">Type <b>@</b> to tag a colleague — they get a notification.</div>
       <div style="margin-top:14px;font-size:11.5px;color:var(--ink3)">Created ${fmtDateTime(t.created_at)} by ${esc(prof(t.created_by)?.full_name||'—')} · in ${esc(p?.name||'')}</div>
     </div>
     <div class="modal-foot"><button class="btn btn-ghost" onclick="closeModals()">Close</button>${canEdit()? `<button class="btn btn-primary" id="tv-save">Save changes</button>`:''}</div>`, true);
@@ -2110,7 +2144,6 @@ async function openRequest(id){
       <div id="rv-comments">${(comments||[]).map(commentRow).join('')||'<div style="color:var(--ink3);font-size:13px">No comments yet</div>'}</div>
       <div style="display:flex;gap:8px;margin-top:10px"><input id="rv-comment" placeholder="Write a comment… type @ to tag someone" autocomplete="off" style="flex:1">
         <button class="btn btn-primary btn-sm" id="rv-comment-add">Send</button></div>
-      <div style="font-size:11.5px;color:var(--ink3);margin-top:5px">Type <b>@</b> to tag a colleague — they get a notification.</div>
     </div>
     <div class="modal-foot">
       ${r.submitted_by===S.me.id && ['submitted','in_review'].includes(r.status)? `<button class="btn btn-danger" id="rv-cancel">Cancel request</button>`:''}
