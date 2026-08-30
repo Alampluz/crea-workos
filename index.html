@@ -544,6 +544,7 @@ const REQ_STATUSES = [
   {k:'approved', label:'Approved', color:'var(--green)', soft:'var(--green-soft)'},
   {k:'rejected', label:'Rejected', color:'var(--red)', soft:'var(--red-soft)'},
   {k:'in_progress', label:'In Progress', color:'var(--purple)', soft:'var(--purple-soft)'},
+  {k:'pending_info', label:'Pending Information', color:'var(--amber)', soft:'var(--amber-soft)'},
   {k:'done', label:'Done', color:'var(--green)', soft:'var(--green-soft)'},
   {k:'cancelled', label:'Cancelled', color:'var(--ink3)', soft:'var(--gray-soft)'},
 ];
@@ -3504,9 +3505,9 @@ async function runSweepNow(btn){
 }
 /* ================= SLA (fully customizable) ================= */
 const SLA_DAYS = [[1,'Mon'],[2,'Tue'],[3,'Wed'],[4,'Thu'],[5,'Fri'],[6,'Sat'],[7,'Sun']];
-const SLA_PAUSABLE = ['submitted','in_review','approved','in_progress'];
+const SLA_PAUSABLE = ['submitted','in_review','approved','in_progress','pending_info'];
 const SLA_DEFAULTS = {use_working_time:false, work_start:'09:00', work_end:'18:00', work_days:[1,2,3,4,5],
-  warn_pct:80, pause_statuses:[], prio_pct:{urgent:50,high:75,normal:100,low:100}, tz:'Asia/Bangkok'};
+  warn_pct:80, pause_statuses:['pending_info'], prio_pct:{urgent:50,high:75,normal:100,low:100}, tz:'Asia/Bangkok'};
 let _sla = null;
 async function renderSlaTab(B){
   const [{data:setRows},{data:hols},{data:types}] = await Promise.all([
