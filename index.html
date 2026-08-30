@@ -404,6 +404,9 @@ td.tv-name .tv-open{padding-left:20px}
 .modal-head .x:hover{background:var(--gray-soft);color:var(--ink)}
 .modal-body{padding:6px 20px 20px}
 .modal-foot{display:flex;justify-content:flex-end;gap:8px;padding:14px 20px;border-top:1px solid var(--line)}
+.mi-info{width:16px;height:16px;flex:none;border-radius:50%;background:var(--gray-soft);color:var(--ink3);font-size:11px;font-weight:700;line-height:16px;text-align:center;cursor:pointer}
+.mi-info:hover{background:var(--accent);color:#fff}
+.mi-hint{font-size:12px;color:var(--ink3);background:var(--gray-soft);border-radius:8px;padding:8px 10px;margin-bottom:10px}
 
 /* login */
 #login-screen{position:fixed;inset:0;background:radial-gradient(1200px 700px at 18% -10%,#14403A 0%,#101114 58%);display:flex;align-items:center;justify-content:center;z-index:100}
@@ -2278,7 +2281,7 @@ async function tvMirrorEdit(el, tid, fid){
       o=>`${avatar(prof(o.v),true)}<span>${esc(o.l)}</span>${o.v===lt.assignee_id?'<span class="opt-cur">✓</span>':''}`,
       v=>save({assignee_id:v||null}), true, true);
   if(show==='due_date')
-    return miniInputModal(f.label, 'date', lt.due_date||'', v=>save({due_date:v||null}));
+    return miniInputModal(f.label, 'date', lt.due_date||'', v=>save({due_date:v||null}), 'Editing here updates the linked task on the other board.');
   const rf = (S._linkedFields||{})[show]; if(!rf) return;
   const saveRemoteCustom = v=>{
     const custom = Object.assign({}, lt.custom||{});
@@ -2292,12 +2295,15 @@ async function tvMirrorEdit(el, tid, fid){
   if(rf.ftype==='checkbox')
     return saveRemoteCustom(!( /^(true|yes|1)$/i.test(String((lt.custom||{})[show]||'')) ));
   miniInputModal(rf.label, rf.ftype==='number'?'number':rf.ftype==='date'?'date':'text',
-    (lt.custom||{})[show]||'', v=>saveRemoteCustom(v));
+    (lt.custom||{})[show]||'', v=>saveRemoteCustom(v), 'Editing here updates the linked task on the other board.');
 }
-/* One-field editor used for mirrored dates / text / numbers. */
-function miniInputModal(title, type, value, cb){
-  const m = modal(`<div class="modal-head"><h2 style="font-size:15px">${esc(title)}</h2><button class="x" onclick="closeModals()">✕</button></div>
-    <div class="modal-body"><input id="mi-val" type="${type}" value="${esc(value)}"></div>
+/* One-field editor used for mirrored dates / text / numbers.
+   Optional `hint` renders a "!" the user can click to read the explanation. */
+function miniInputModal(title, type, value, cb, hint){
+  const info = hint ? `<button class="mi-info" title="Read more" onclick="var h=this.parentNode.parentNode.querySelector('.mi-hint');h.hidden=!h.hidden;">!</button>` : '';
+  const hintRow = hint ? `<div class="mi-hint" hidden>${esc(hint)}</div>` : '';
+  const m = modal(`<div class="modal-head"><h2 style="font-size:15px;display:flex;align-items:center;gap:6px">${esc(title)}${info}</h2><button class="x" onclick="closeModals()">✕</button></div>
+    <div class="modal-body">${hintRow}<input id="mi-val" type="${type}" value="${esc(value)}"></div>
     <div class="modal-foot"><button class="btn btn-ghost" onclick="closeModals()">Cancel</button>
       <button class="btn btn-primary" id="mi-save">Save</button></div>`);
   const inp = m.querySelector('#mi-val'); inp.focus();
