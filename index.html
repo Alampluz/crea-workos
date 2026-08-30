@@ -2234,6 +2234,15 @@ function mirrorText(t, f){
   const rv = (lt.custom||{})[show];
   return rv==null? '' : String(rv);
 }
+/* A mirror is editable when the remote value has a sensible editor — edits save
+   straight to the LINKED task, so both boards stay in step. */
+function mirrorEditable(f, lt){
+  if(!lt) return false;
+  const show = (f.options||{}).show;
+  if(['status','priority','assignee','due_date'].includes(show)) return true;
+  const rf = (S._linkedFields||{})[show];
+  return !!rf && ['select','text','number','date','checkbox','brand'].includes(rf.ftype);
+}
 function tvMirrorCell(t, f){
   const lt = mirrorResolve(t, f), show = (f.options||{}).show;
   let inner = `<span class="tv-empty">—</span>`;
@@ -2244,7 +2253,57 @@ function tvMirrorCell(t, f){
     else if(show==='due_date') inner = lt.due_date? esc(fmtDate(lt.due_date)) : inner;
     else { const s = mirrorText(t, f); inner = s? esc(s) : inner; }
   }
+  if(canEdit() && mirrorEditable(f, lt))
+    return `<div class="tv-pickv tv-mirror" title="Mirrored — editing here updates the linked task" onclick="tvMirrorEdit(this,'${t.id}','${f.id}')">${inner}</div>`;
   return `<div class="tv-pickv ro tv-mirror" title="Mirrored from the linked task">${inner}</div>`;
+}
+async function tvMirrorEdit(el, tid, fid){
+  const f = (S._fields||[]).find(x=>x.id===fid); if(!f) return;
+  const t = (S._tasks||[]).find(x=>x.id===tid); if(!t) return;
+  const lt = mirrorResolve(t, f); if(!lt) return toast('Link this row to a task first', true);
+  const show = (f.options||{}).show;
+  const save = async patch=>{
+    const {error} = await db.from('tasks').update(patch).eq('id', lt.id);
+    if(error) return toast(error.message, true);
+    Object.assign(lt, patch);
+    const y=scrollY; renderBoardBody(tvPid); scrollTo(0,y);
+    toast('Updated on the linked board');
+  };
+  if(show==='status')
+    return tvShowMenu(el, STATUSES.map(s=>({v:s.k,l:s.label})), o=>tvDotOpt(o, STATUSES, lt.status), v=>v&&save({status:v}));
+  if(show==='priority')
+    return tvShowMenu(el, PRIORITIES.map(p=>({v:p.k,l:p.label})), o=>tvDotOpt(o, PRIORITIES, lt.priority), v=>v&&save({priority:v}));
+  if(show==='assignee')
+    return tvShowMenu(el, S.profiles.filter(p=>p.active).map(p=>({v:p.id,l:p.full_name})),
+      o=>`${avatar(prof(o.v),true)}<span>${esc(o.l)}</span>${o.v===lt.assignee_id?'<span class="opt-cur">✓</span>':''}`,
+      v=>save({assignee_id:v||null}), true, true);
+  if(show==='due_date')
+    return miniInputModal(`${f.label} — on the linked task`, 'date', lt.due_date||'', v=>save({due_date:v||null}));
+  const rf = (S._linkedFields||{})[show]; if(!rf) return;
+  const saveRemoteCustom = v=>{
+    const custom = Object.assign({}, lt.custom||{});
+    if(v===''||v==null){ delete custom[show]; } else { custom[show]=v; }
+    return save({custom});
+  };
+  if(rf.ftype==='select')
+    return tvShowMenu(el, (rf.options||[]).map(o=>({v:o,l:o})),
+      o=>`<span>${esc(o.l)}</span>${o.v===(lt.custom||{})[show]?'<span class="opt-cur">✓</span>':''}`,
+      v=>saveRemoteCustom(v), (rf.options||[]).length>5, true);
+  if(rf.ftype==='checkbox')
+    return saveRemoteCustom(!( /^(true|yes|1)$/i.test(String((lt.custom||{})[show]||'')) ));
+  miniInputModal(`${rf.label} — on the linked task`, rf.ftype==='number'?'number':rf.ftype==='date'?'date':'text',
+    (lt.custom||{})[show]||'', v=>saveRemoteCustom(v));
+}
+/* One-field editor used for mirrored dates / text / numbers. */
+function miniInputModal(title, type, value, cb){
+  const m = modal(`<div class="modal-head"><h2 style="font-size:15px">${esc(title)}</h2><button class="x" onclick="closeModals()">✕</button></div>
+    <div class="modal-body"><input id="mi-val" type="${type}" value="${esc(value)}"></div>
+    <div class="modal-foot"><button class="btn btn-ghost" onclick="closeModals()">Cancel</button>
+      <button class="btn btn-primary" id="mi-save">Save</button></div>`);
+  const inp = m.querySelector('#mi-val'); inp.focus();
+  const go = ()=>{ const v=inp.value.trim(); closeModals(); cb(v); };
+  m.querySelector('#mi-save').onclick = go;
+  inp.onkeydown = e=>{ if(e.key==='Enter') go(); };
 }
 function tvCell(t, f){
   if(f.ftype==='formula') return fxDisplay(f, t);
