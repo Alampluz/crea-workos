@@ -3414,6 +3414,9 @@ function histLine(a){
     case 'subtask_added':  return `added subtask <b>${esc(d.title||'')}</b>`;
     case 'subtask_removed':return `removed subtask <b>${esc(d.title||'')}</b>`;
     case 'subtask_status': return `marked subtask <b>${esc(d.title||'')}</b> ${esc(d.to==='done'?'done':'not done')}`;
+    case 'checklist_added':  return `added checklist item <b>${esc(d.label||'')}</b>`;
+    case 'checklist_removed':return `removed checklist item <b>${esc(d.label||'')}</b>`;
+    case 'checklist_toggled':return `${d.done?'checked':'unchecked'} <b>${esc(d.label||'')}</b>`;
     case 'signoff_requested': return `requested a sign-off from <b>${esc(prof(d.approver)?.full_name||'someone')}</b>`;
     case 'signoff_approved':  return `approved the sign-off${d.note? ` — “${esc(d.note)}”`:''}`;
     case 'signoff_rejected':  return `rejected the sign-off${d.note? ` — “${esc(d.note)}”`:''}`;
