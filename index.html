@@ -234,7 +234,8 @@ tr.tv-arch .tv-name .tv-open{text-decoration:line-through}
 /* ---- comment composer ---- */
 .cmp{margin-top:10px;border-radius:11px;transition:box-shadow .14s}
 .cmp.over{box-shadow:0 0 0 2px var(--accent)}
-.cmp-row{display:flex;gap:8px;align-items:center}
+.cmp-row{display:flex;gap:8px;align-items:flex-end}
+.cmp-row textarea{flex:1;resize:vertical;min-height:78px;font-size:13.5px;line-height:1.5;padding:10px 12px;font-family:inherit}
 .cmp-row input[type=text],.cmp-row input:not([type]){flex:1}
 .cmp-row>input{flex:1}
 .cmp-clip{display:flex;align-items:center;justify-content:center;width:34px;height:34px;flex:none;
@@ -449,8 +450,12 @@ td.tv-name .tv-open{padding-left:20px}
 .rt-pick span{font-size:12px;color:var(--ink2);line-height:1.35}
 
 /* comments */
-.comment{display:flex;gap:10px;margin-bottom:12px}
-.comment .body{flex:1;background:var(--gray-soft);border-radius:0 10px 10px 10px;padding:9px 12px;font-size:13.5px}
+.comment{display:flex;gap:10px;margin-bottom:14px}
+.comment .body{flex:1;background:var(--gray-soft);border-radius:0 10px 10px 10px;padding:11px 14px;font-size:14px}
+.hist-toggle{display:flex;align-items:center;gap:8px;margin-top:18px;padding:8px 0;cursor:pointer;user-select:none;border-top:1px solid var(--line)}
+.hist-toggle:hover label{color:var(--accent-ink)}
+.hist-count{font-size:11px;color:var(--ink3);background:var(--gray-soft);border-radius:9px;padding:1px 7px}
+.hist-chev{color:var(--ink3);font-size:11px;margin-left:auto}
 .comment .body b{font-size:12.5px}
 .comment .body .when{color:var(--ink3);font-size:11px;font-weight:500;margin-left:6px}
 .comment .body p{margin-top:3px;white-space:pre-wrap}
@@ -994,7 +999,7 @@ function renderMentionText(body, mentions){
 function commentComposerHTML(prefix){
   return `<div class="cmp">
     <div class="cmp-row">
-      <input id="${prefix}-comment" placeholder="Write a comment… type @ to tag someone" autocomplete="off">
+      <textarea id="${prefix}-comment" rows="3" placeholder="Write a comment… type @ to tag someone (Shift+Enter for a new line)"></textarea>
       <button class="cmp-clip" id="${prefix}-clip" title="Attach a file or image" aria-label="Attach a file">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
       </button>
@@ -2452,8 +2457,7 @@ async function openTask(id){
       <label>Comments</label>
       <div id="tv-comments">${(comments||[]).map(commentRow).join('')||'<div style="color:var(--ink3);font-size:13px">No comments yet</div>'}</div>
       ${canCreate()? commentComposerHTML('tv') : ''}
-      <label>History</label>
-      <div id="tv-history">${historyHTML(S._taskHist)}</div>
+      ${historySectionHTML()}
       <div style="margin-top:14px;font-size:11.5px;color:var(--ink3)">Created ${fmtDateTime(t.created_at)} by ${esc(prof(t.created_by)?.full_name||'—')} · in ${esc(p?.name||'')}</div>
     </div>
     <div class="modal-foot"><button class="btn btn-ghost" onclick="closeModals()">Close</button>${canEdit()? `<button class="btn btn-primary" id="tv-save">Save changes</button>`:''}</div>`, true);
@@ -2489,7 +2493,7 @@ async function openTask(id){
   if(cIn){
     wireComposer(m, 'tv');
     wireMentions(cIn);
-    cIn.addEventListener('keydown', e=>{ if(e.key==='Enter' && !document.querySelector('.mention-menu')) m.querySelector('#tv-comment-add').click(); });
+    cIn.addEventListener('keydown', e=>{ if(e.key==='Enter' && !e.shiftKey && !document.querySelector('.mention-menu')){ e.preventDefault(); m.querySelector('#tv-comment-add').click(); } });
     m.querySelector('#tv-comment-add').onclick = ()=> postComment('task', t.id, t.title, cIn, m.querySelector('#tv-comments'));
   }
 }
@@ -2692,6 +2696,20 @@ function showAllHistory(){
   const box = document.getElementById('tv-history'); if(!box) return;
   box.innerHTML = historyHTML(S._taskHist||[], true);
 }
+/* The activity log stays folded until asked for — a click on the header opens it. */
+function historySectionHTML(){
+  const n = (S._taskHist||[]).length;
+  return `<div class="hist-toggle" onclick="toggleHistoryPanel(this)">
+      <label style="cursor:pointer;margin:0">Activity log</label>
+      <span class="hist-count">${n||''}</span><span class="hist-chev">▸</span>
+    </div>
+    <div id="tv-history" hidden>${historyHTML(S._taskHist)}</div>`;
+}
+function toggleHistoryPanel(head){
+  const box = document.getElementById('tv-history'); if(!box) return;
+  box.hidden = !box.hidden;
+  const ch = head.querySelector('.hist-chev'); if(ch) ch.textContent = box.hidden? '▸' : '▾';
+}
 /* Comments come back without their files; fetch them in one go and attach. */
 async function hydrateCommentAtts(comments){
   const ids = (comments||[]).map(c=>c.id);
@@ -2831,8 +2849,7 @@ async function openRequest(id){
       <label>Comments</label>
       <div id="rv-comments">${(comments||[]).map(commentRow).join('')||'<div style="color:var(--ink3);font-size:13px">No comments yet</div>'}</div>
       ${commentComposerHTML('rv')}
-      <label>History</label>
-      <div id="tv-history">${historyHTML(S._taskHist)}</div>
+      ${historySectionHTML()}
     </div>
     <div class="modal-foot">
       ${r.submitted_by===S.me.id && ['submitted','in_review'].includes(r.status)? `<button class="btn btn-danger" id="rv-cancel">Cancel request</button>`:''}
@@ -2859,7 +2876,7 @@ async function openRequest(id){
   const rIn = m.querySelector('#rv-comment');
   wireComposer(m, 'rv');
   wireMentions(rIn);
-  rIn.addEventListener('keydown', e=>{ if(e.key==='Enter' && !document.querySelector('.mention-menu')) m.querySelector('#rv-comment-add').click(); });
+  rIn.addEventListener('keydown', e=>{ if(e.key==='Enter' && !e.shiftKey && !document.querySelector('.mention-menu')){ e.preventDefault(); m.querySelector('#rv-comment-add').click(); } });
   m.querySelector('#rv-comment-add').onclick = ()=> postComment('request', r.id, (r.ticket_no? r.ticket_no+' · ':'')+r.title, rIn, m.querySelector('#rv-comments'));
 }
 function requestApprovalModal(reqId, title){
