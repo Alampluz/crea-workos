@@ -2278,7 +2278,7 @@ async function tvMirrorEdit(el, tid, fid){
       o=>`${avatar(prof(o.v),true)}<span>${esc(o.l)}</span>${o.v===lt.assignee_id?'<span class="opt-cur">✓</span>':''}`,
       v=>save({assignee_id:v||null}), true, true);
   if(show==='due_date')
-    return miniInputModal(`${f.label} — on the linked task`, 'date', lt.due_date||'', v=>save({due_date:v||null}));
+    return miniInputModal(f.label, 'date', lt.due_date||'', v=>save({due_date:v||null}));
   const rf = (S._linkedFields||{})[show]; if(!rf) return;
   const saveRemoteCustom = v=>{
     const custom = Object.assign({}, lt.custom||{});
@@ -2291,7 +2291,7 @@ async function tvMirrorEdit(el, tid, fid){
       v=>saveRemoteCustom(v), (rf.options||[]).length>5, true);
   if(rf.ftype==='checkbox')
     return saveRemoteCustom(!( /^(true|yes|1)$/i.test(String((lt.custom||{})[show]||'')) ));
-  miniInputModal(`${rf.label} — on the linked task`, rf.ftype==='number'?'number':rf.ftype==='date'?'date':'text',
+  miniInputModal(rf.label, rf.ftype==='number'?'number':rf.ftype==='date'?'date':'text',
     (lt.custom||{})[show]||'', v=>saveRemoteCustom(v));
 }
 /* One-field editor used for mirrored dates / text / numbers. */
