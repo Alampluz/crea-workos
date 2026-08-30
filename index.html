@@ -8,6 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700&family=Fraunces:opsz,wght@9..144,600&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <style>
 :root{
   --bg:#F7F7F4; --panel:#FFFFFF; --ink:#16181D; --ink2:#5D6167; --ink3:#9DA1A7;
@@ -622,6 +623,18 @@ function downloadCSV(filename, rows){
 function csvFilename(name){
   return String(name||'export').replace(/[\\/:*?"<>|]+/g,'-').trim()
     + ' - ' + new Date().toISOString().slice(0,10) + '.csv';
+}
+/* Real .xlsx via SheetJS; falls back to CSV if the library hasn't loaded. */
+function downloadXLSX(filename, rows){
+  if(typeof XLSX === 'undefined') return downloadCSV(filename.replace(/\.xlsx$/i,'.csv'), rows);
+  const ws = XLSX.utils.aoa_to_sheet(rows);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Export');
+  XLSX.writeFile(wb, filename);
+}
+function xlsxFilename(name){
+  return String(name||'export').replace(/[\\/:*?"<>|]+/g,'-').trim()
+    + ' - ' + new Date().toISOString().slice(0,10) + '.xlsx';
 }
 function dueBadge(d, doneAlready){
   if(!d) return '';
@@ -1643,9 +1656,10 @@ function filterBarHTML(pid){
     <button class="bf-sel ${f.assignee?'on':''}" onclick="bfPickPerson(this,'${pid}')">${f.assignee? esc(f.assignee==='__none__'?'Unassigned':(prof(f.assignee)?.full_name||'Person')) : 'Person'} ▾</button>
     ${(S._groups||[]).length? sel('group','Group', (S._groups||[]).map(g=>({v:g.id,l:g.name})).concat([{v:'__none__',l:'No group'}])) : ''}
     ${n? `<button class="bf-clear" onclick="bfClear('${pid}')">Clear ${n} filter${n>1?'s':''}</button>`:''}
-    ${isStaff()? `<button class="btn btn-ghost btn-sm" onclick="exportBoardCSV('${pid}')">Export CSV</button>
-    <button class="btn btn-ghost btn-sm" onclick="boardActivityModal('${pid}')">Activity</button>`:''}
     <span class="bf-count" id="bf-count"></span>
+    ${isStaff()? `<button class="btn btn-ghost btn-sm" onclick="importExcel('${pid}')">Import Excel</button>
+    <button class="btn btn-ghost btn-sm" onclick="exportBoardCSV('${pid}')">Export Excel</button>
+    <button class="btn btn-ghost btn-sm" onclick="boardActivityModal('${pid}')">Activity</button>`:''}
   </div>`;
 }
 async function renderProject(id){
@@ -2008,7 +2022,103 @@ function exportBoardCSV(pid){
     ...flds.map(f=>cell(t,f)),
     (t.created_at||'').slice(0,10),
   ]));
-  downloadCSV(csvFilename(p? p.name : 'Board'), out);
+  downloadXLSX(xlsxFilename(p? p.name : 'Board'), out);
+}
+/* ---- Import Excel: first sheet, header row with a "Task" column, columns matched by name ---- */
+function importExcel(pid){
+  if(typeof XLSX === 'undefined') return toast('The Excel engine is still loading — try again in a second', true);
+  const inp = document.createElement('input');
+  inp.type = 'file'; inp.accept = '.xlsx,.xls,.csv';
+  inp.onchange = async ()=>{
+    const f = inp.files[0]; if(!f) return;
+    try{
+      const wb = XLSX.read(await f.arrayBuffer(), {cellDates:true});
+      const aoa = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], {header:1, raw:true, defval:''});
+      const res = mapImportRows(aoa, pid);
+      if(!res.tasks.length) return toast('Nothing to import — the first sheet needs a header row with a "Task" column and at least one row under it', true);
+      importPreviewModal(pid, res);
+    }catch(e){ toast('Could not read that file: '+e.message, true); }
+  };
+  inp.click();
+}
+/* Pure mapping: array-of-arrays -> task rows + warnings. Kept separate so it is testable. */
+function mapImportRows(aoa, pid){
+  const warnings = []; const tasks = []; let skipped = 0;
+  const hi = (aoa||[]).findIndex(r=> (r||[]).some(c=> String(c).trim().toLowerCase()==='task'));
+  if(hi < 0) return {tasks, warnings:['No "Task" column found in the header row'], skipped};
+  const head = aoa[hi].map(c=> String(c).trim());
+  const low  = head.map(h=> h.toLowerCase());
+  const col  = name => low.indexOf(name);
+  const flds = S._fields||[], groups = S._groups||[];
+  const fieldByLabel = {}; flds.forEach(f=>{ fieldByLabel[f.label.trim().toLowerCase()] = f; });
+  const known = new Set(['task','group','status','priority','assignee','due date','created']);
+  const unknown = [];
+  head.forEach((h,i)=>{ if(h && !known.has(low[i]) && !fieldByLabel[low[i]]) unknown.push(h); });
+  if(unknown.length) warnings.push(`Ignored column${unknown.length>1?'s':''}: ${unknown.join(', ')}`);
+  if(head.some((h,i)=> fieldByLabel[low[i]] && fieldByLabel[low[i]].ftype==='formula'))
+    warnings.push('Formula columns are computed automatically and were skipped');
+  const statusOf = v=>{ const s=String(v).trim().toLowerCase(); if(!s) return 'todo';
+    const m = STATUSES.find(x=> x.k===s || x.label.toLowerCase()===s); return m? m.k : 'todo'; };
+  const prioOf = v=>{ const s=String(v).trim().toLowerCase(); if(!s) return 'normal';
+    const m = PRIORITIES.find(x=> x.k===s || x.label.toLowerCase()===s); return m? m.k : 'normal'; };
+  const personOf = v=>{ const s=String(v).trim().toLowerCase(); if(!s) return null;
+    const m = (S.profiles||[]).find(p=> p.active && (p.full_name||'').trim().toLowerCase()===s); return m? m.id : null; };
+  const groupOf = v=>{ const s=String(v).trim().toLowerCase(); if(!s) return null;
+    const m = groups.find(g=> (g.name||'').trim().toLowerCase()===s); return m? m.id : null; };
+  const dateOf = v=>{
+    if(v instanceof Date && !isNaN(v)) return v.toISOString().slice(0,10);
+    if(typeof v === 'number' && v > 20000) return new Date(Math.round((v-25569)*86400000)).toISOString().slice(0,10);
+    const s = String(v).trim(); if(!s) return null;
+    const d = new Date(s); return isNaN(d)? null : d.toISOString().slice(0,10);
+  };
+  let misses = 0;
+  for(let i=hi+1; i<aoa.length; i++){
+    const r = aoa[i]||[];
+    const title = String(r[col('task')]??'').trim();
+    if(!title){ skipped++; continue; }
+    const t = {project_id:pid, title, status:'todo', priority:'normal', assignee_id:null, group_id:null, due_date:null, custom:{}, created_by:S.me.id};
+    if(col('status')>=0)   t.status = statusOf(r[col('status')]);
+    if(col('priority')>=0) t.priority = prioOf(r[col('priority')]);
+    if(col('assignee')>=0){ t.assignee_id = personOf(r[col('assignee')]);
+      if(!t.assignee_id && String(r[col('assignee')]).trim()) misses++; }
+    if(col('group')>=0)    t.group_id = groupOf(r[col('group')]);
+    if(col('due date')>=0) t.due_date = dateOf(r[col('due date')]);
+    head.forEach((h,ci)=>{
+      const f = fieldByLabel[low[ci]]; if(!f || f.ftype==='formula') return;
+      const v = r[ci]; if(v===''||v==null) return;
+      t.custom[f.id] = f.ftype==='checkbox'? /^(yes|true|1|y|✓)$/i.test(String(v).trim())
+        : f.ftype==='date'? (dateOf(v)||'') : String(v instanceof Date? v.toISOString().slice(0,10) : v);
+    });
+    tasks.push(t);
+  }
+  if(misses) warnings.push(`${misses} assignee name${misses>1?'s':''} didn't match anyone — those rows import unassigned`);
+  return {tasks, warnings, skipped};
+}
+function importPreviewModal(pid, res){
+  S._pendingImport = {pid, tasks:res.tasks};
+  const p = projById(pid);
+  modal(`<div class="modal-head"><h2>Import into ${esc(p? p.name:'this board')}</h2><button class="x" onclick="closeModals()">✕</button></div>
+    <div class="modal-body">
+      <p style="font-size:14px"><b>${res.tasks.length}</b> task${res.tasks.length>1?'s':''} ready to import${res.skipped? ` · ${res.skipped} empty row${res.skipped>1?'s':''} skipped`:''}.</p>
+      <div style="background:var(--gray-soft);border-radius:10px;padding:10px 14px;margin-top:10px;font-size:13px;color:var(--ink2)">
+        ${res.tasks.slice(0,6).map(t=>`<div>· ${esc(t.title)}</div>`).join('')}
+        ${res.tasks.length>6? `<div style="color:var(--ink3)">…and ${res.tasks.length-6} more</div>`:''}
+      </div>
+      ${res.warnings.length? `<div style="margin-top:12px;font-size:12.5px;color:var(--amber)">${res.warnings.map(w=>`<div>⚠ ${esc(w)}</div>`).join('')}</div>`:''}
+    </div>
+    <div class="modal-foot"><button class="btn btn-ghost" onclick="closeModals()">Cancel</button>
+      <button class="btn btn-primary" id="imp-go" onclick="doImportExcel()">Import ${res.tasks.length} task${res.tasks.length>1?'s':''}</button></div>`);
+}
+async function doImportExcel(){
+  const im = S._pendingImport; if(!im || !im.tasks.length) return;
+  const btn = document.getElementById('imp-go'); if(btn){ btn.disabled = true; btn.textContent = 'Importing…'; }
+  const base = Math.max(0, ...(S._tasks||[]).map(t=>t.position||0));
+  const payload = im.tasks.map((t,i)=> ({...t, position: base + i + 1}));
+  const {error} = await db.from('tasks').insert(payload);
+  if(error){ if(btn){ btn.disabled=false; btn.textContent='Import'; } return toast(error.message, true); }
+  toast(`${payload.length} task${payload.length>1?'s':''} imported`);
+  S._pendingImport = null;
+  closeModals(); renderProject(im.pid);
 }
 /* The board's own activity log — every task created, changed or removed here,
    with Restore on removed tasks (the row itself comes back; comments and files don't). */
@@ -2852,7 +2962,7 @@ async function renderRequests(){
         <button class="tab ${reqTab==='all'?'active':''}" onclick="reqTab='all';renderRequests()">All</button>
         <button class="tab ${reqTab==='mine'?'active':''}" onclick="reqTab='mine';renderRequests()">Mine</button>
       </div>`:''}
-      <div class="actions">${isStaff()? `<button class="btn btn-ghost" onclick="exportRequestsCSV()">Export CSV</button>`:''}<button class="btn btn-primary" onclick="newRequestFlow()">＋ New request</button></div></div>
+      <div class="actions">${isStaff()? `<button class="btn btn-ghost" onclick="exportRequestsCSV()">Export Excel</button>`:''}<button class="btn btn-primary" onclick="newRequestFlow()">＋ New request</button></div></div>
     <div class="card">${(reqs||[]).length? requestTable(reqs) : `<div class="empty">No requests here yet</div>`}</div>`;
 }
 function exportRequestsCSV(){
@@ -2872,7 +2982,7 @@ function exportRequestsCSV(){
       r.sla_paused_at? 'Yes':'No',
     ]);
   });
-  downloadCSV(csvFilename('Requests'), out);
+  downloadXLSX(xlsxFilename('Requests'), out);
 }
 function newRequestFlow(){
   const m = modal(`<div class="modal-head"><h2>What do you need?</h2><button class="x" onclick="closeModals()">✕</button></div>
@@ -3355,7 +3465,7 @@ function widgetCard(w){
     else rows=[...rows].sort((a,b)=>(a.due_date||'9999').localeCompare(b.due_date||'9999')).slice(0,6);
     body = rows.length? (cfg.entity==='requests'? requestTable(rows): taskTable(rows)) : '<div style="color:var(--ink3);font-size:13px;padding:8px 0">Nothing here</div>';
   }
-  const acts = (isStaff()? `<span onclick="exportWidgetCSV('${w.id}')">CSV</span>`:'')
+  const acts = (isStaff()? `<span onclick="exportWidgetCSV('${w.id}')">Excel</span>`:'')
     + (widgetsEditable()? `<span onclick="widgetModal('${w.id}')">Edit</span><span onclick="deleteWidget('${w.id}')">Remove</span>`:'');
   return `<div class="card widget-card ${w.wtype==='list'?'w-wide':''}" draggable="${widgetsEditable()}" data-wid="${w.id}"
       ondragstart="wDragStart(event,'${w.id}')" ondragover="event.preventDefault()" ondrop="wDrop(event,'${w.id}')">
@@ -3365,7 +3475,7 @@ function widgetCard(w){
 }
 function exportWidgetCSV(id){
   const w = (S._widgets||[]).find(x=>x.id===id); if(!w) return;
-  downloadCSV(csvFilename(w.title||'Widget'),
+  downloadXLSX(xlsxFilename(w.title||'Widget'),
     [['Label','Count'], ...widgetGroups(w.config||{}).map(g=>[g.label, g.n])]);
 }
 /* Stat tiles, a blank line, then every widget's grouped numbers — one file. */
@@ -3375,7 +3485,7 @@ function exportReportCSV(){
     out.push([], [w.title], ['Label','Count']);
     widgetGroups(w.config||{}).forEach(g=>out.push([g.label, g.n]));
   });
-  downloadCSV(csvFilename(S._reportName||'Report'), out);
+  downloadXLSX(xlsxFilename(S._reportName||'Report'), out);
 }
 let wDragId=null;
 function wDragStart(e,id){ wDragId=id; }
