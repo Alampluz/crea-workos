@@ -1433,8 +1433,125 @@ function projMenu(anchor, pid){
   const p = (S.projects||[]).find(x=>x.id===pid); if(!p) return;
   const items = [{label:'Rename / edit board', fn:()=>editProjectModal(pid)},
                  {label:'Partner access', fn:()=>projectMembersModal(pid)}];
+  if(isStaff()){ items.push({label:'Save as template', fn:()=>saveTemplateModal(pid)});
+                 items.push({label:'Recurring tasks', fn:()=>recurringModal(pid)}); }
   if(canDeleteBoard()){ items.push('-'); items.push({label:'Delete board', danger:true, fn:()=>deleteProjectModal(pid)}); }
   ctxMenu(anchor, items);
+}
+/* ---- Board templates: snapshot groups/columns/tasks, replay onto a new board ---- */
+async function saveTemplateModal(pid){
+  const p = projById(pid); if(!p) return;
+  // Use the loaded board when we're on it; otherwise fetch a fresh snapshot.
+  let groups=S._groups||[], fields=S._fields||[], tasks=S._tasksAll||[];
+  if(!(S.route.view==='project' && S.route.id===pid)){
+    const [{data:g},{data:f},{data:t}] = await Promise.all([
+      db.from('project_groups').select('*').eq('project_id',pid).order('position').order('created_at'),
+      db.from('project_fields').select('*').eq('project_id',pid).order('position').order('created_at'),
+      db.from('tasks').select('*').eq('project_id',pid).order('position'),
+    ]);
+    groups=g||[]; fields=f||[]; tasks=t||[];
+  }
+  const m = modal(`<div class="modal-head"><h2>Save as template</h2><button class="x" onclick="closeModals()">✕</button></div>
+    <div class="modal-body">
+      <label>Template name <span class="req">*</span></label><input id="tp-name" value="${esc(p.name)}">
+      <div style="font-size:12.5px;color:var(--ink3);margin-top:8px">Saves this board's groups, columns and tasks (statuses and priorities included, archived tasks left out). Pick it under "Start from" when creating a board.</div>
+    </div>
+    <div class="modal-foot"><button class="btn btn-ghost" onclick="closeModals()">Cancel</button><button class="btn btn-primary" id="tp-save">Save template</button></div>`);
+  m.querySelector('#tp-save').onclick = async ()=>{
+    const name = m.querySelector('#tp-name').value.trim(); if(!name) return toast('Name is required', true);
+    const gidx = {}; groups.forEach((g,i)=> gidx[g.id]=i);
+    const spec = {
+      groups: groups.map(g=>({name:g.name, color:g.color, position:g.position})),
+      fields: fields.map(f=>({label:f.label, ftype:f.ftype, options:f.options, position:f.position})),
+      tasks: tasks.filter(t=>!t.archived_at).map(t=>({title:t.title, status:t.status, priority:t.priority,
+        group_index: gidx[t.group_id] ?? null})),
+    };
+    const {error} = await db.from('board_templates').insert({name, spec});
+    if(error) return toast(error.message, true);
+    closeModals(); toast('Template saved');
+  };
+}
+/* Replays a template spec onto a freshly created board. Errors toast but the
+   board stays — a partial start beats losing the board. */
+async function applyTemplate(pid, spec){
+  let gids = [];
+  if((spec.groups||[]).length){
+    const {data:gs, error} = await db.from('project_groups').insert(spec.groups.map((g,i)=>(
+      {project_id:pid, name:g.name, color:g.color, position:g.position ?? i}))).select();
+    if(error) return toast(error.message, true);
+    gids = (gs||[]).map(g=>g.id);
+  }
+  if((spec.fields||[]).length){
+    const {error} = await db.from('project_fields').insert(spec.fields.map((f,i)=>(
+      {project_id:pid, label:f.label, ftype:f.ftype, options:f.options||[], position:f.position ?? i, created_by:S.me.id})));
+    if(error) return toast(error.message, true);
+  }
+  if((spec.tasks||[]).length){
+    const {error} = await db.from('tasks').insert(spec.tasks.map((t,i)=>(
+      {project_id:pid, title:t.title, status:t.status||'todo', priority:t.priority||'normal',
+       group_id: t.group_index==null? null : (gids[t.group_index]||null),
+       created_by:S.me.id, position:i+1})));
+    if(error) return toast(error.message, true);
+  }
+}
+/* ---- Recurring tasks: rules only — a 15-min DB sweep creates the tasks ---- */
+const RC_EVERY = {daily:'Every day', weekly:'Every week', monthly:'Every month'};
+function rcRow(r, groups){
+  const g = (groups||[]).find(x=>x.id===r.group_id);
+  return `<div class="rc-row" style="display:flex;align-items:center;gap:8px;padding:7px 0;font-size:13px;border-bottom:1px solid var(--line)">
+    <label class="sw"><input type="checkbox" ${r.enabled?'checked':''} onchange="rcToggle('${r.id}',this.checked,'${r.project_id}')"><span></span></label>
+    <b>${esc(r.title)}</b> ${prioChip(r.priority)}
+    <span style="color:var(--ink3);font-size:12px">${RC_EVERY[r.every]||esc(r.every)} · next ${esc(r.next_run||'—')}${g? ' · '+esc(g.name):''}${r.due_in_days? ` · due +${r.due_in_days}d`:''}</span>
+    <span style="margin-left:auto;display:flex;align-items:center;gap:8px">${avatar(prof(r.assignee_id), true)}
+      <span style="cursor:pointer;color:var(--ink3)" title="Delete rule" onclick="rcDelete('${r.id}','${r.project_id}')">✕</span></span>
+  </div>`;
+}
+async function recurringModal(pid){
+  const p = projById(pid); if(!p) return;
+  const [{data:rules},{data:groups}] = await Promise.all([
+    db.from('recurring_tasks').select('*').eq('project_id',pid).order('created_at'),
+    db.from('project_groups').select('*').eq('project_id',pid).order('position').order('created_at'),
+  ]);
+  S._rcGroups = groups||[];
+  const people = S.profiles.filter(u=>u.active && !(u.email||'').startsWith('forms+'));
+  const today = new Date().toISOString().slice(0,10);
+  const m = modal(`<div class="modal-head"><h2>Recurring tasks — ${esc(p.name)}</h2><button class="x" onclick="closeModals()">✕</button></div>
+    <div class="modal-body">
+      <div style="font-size:12.5px;color:var(--ink3);margin-bottom:6px">Each rule creates a fresh task on schedule — within 15 minutes of its next-run date.</div>
+      <div id="rc-list">${(rules||[]).map(r=>rcRow(r, groups||[])).join('') || '<div style="color:var(--ink3);font-size:13px;padding:6px 0">No recurring tasks on this board yet</div>'}</div>
+      <label style="margin-top:14px">New rule</label>
+      <input id="rc-title" placeholder="Task title, e.g. Weekly stock check">
+      <div class="field-grid">
+        <div><label>Group</label><select id="rc-group"><option value="">No group</option>${(groups||[]).map(g=>`<option value="${g.id}">${esc(g.name)}</option>`).join('')}</select></div>
+        <div><label>Priority</label><select id="rc-prio">${PRIORITIES.map(x=>`<option value="${x.k}" ${x.k==='normal'?'selected':''}>${x.label}</option>`).join('')}</select></div>
+        <div><label>Assignee</label><select id="rc-assignee"><option value="">Unassigned</option>${people.map(u=>`<option value="${u.id}">${esc(u.full_name)}</option>`).join('')}</select></div>
+        <div><label>Repeats</label><select id="rc-every">${Object.entries(RC_EVERY).map(([k,l])=>`<option value="${k}">${l}</option>`).join('')}</select></div>
+        <div><label>First run</label><input id="rc-next" type="date" value="${today}"></div>
+        <div><label>Due (days after created — 0 = none)</label><input id="rc-due" type="number" min="0" max="365" value="0"></div>
+      </div>
+    </div>
+    <div class="modal-foot"><button class="btn btn-ghost" onclick="closeModals()">Close</button><button class="btn btn-primary" id="rc-add">Add rule</button></div>`, true);
+  m.querySelector('#rc-add').onclick = async ()=>{
+    const title = m.querySelector('#rc-title').value.trim(); if(!title) return toast('Title is required', true);
+    const next_run = m.querySelector('#rc-next').value; if(!next_run) return toast('Pick a first run date', true);
+    const due_in_days = Math.min(365, Math.max(0, parseInt(m.querySelector('#rc-due').value,10)||0));
+    const {error} = await db.from('recurring_tasks').insert({
+      project_id:pid, group_id:m.querySelector('#rc-group').value||null, title, description:'',
+      priority:m.querySelector('#rc-prio').value, assignee_id:m.querySelector('#rc-assignee').value||null,
+      every:m.querySelector('#rc-every').value, next_run, due_in_days, enabled:true});
+    if(error) return toast(error.message, true);
+    toast('Recurring task added'); closeModals(); recurringModal(pid);
+  };
+}
+async function rcToggle(id, enabled, pid){
+  const {error} = await db.from('recurring_tasks').update({enabled}).eq('id',id);
+  if(error){ toast(error.message, true); closeModals(); recurringModal(pid); return; }
+  toast(enabled? 'Rule switched on':'Rule paused');
+}
+async function rcDelete(id, pid){
+  const {error} = await db.from('recurring_tasks').delete().eq('id',id);
+  if(error) return toast(error.message, true);
+  toast('Rule deleted'); closeModals(); recurringModal(pid);
 }
 function editProjectModal(pid){
   const p = (S.projects||[]).find(x=>x.id===pid); if(!p) return;
@@ -1622,6 +1739,8 @@ function newProjectModal(wsId){
     <div class="modal-body">
       <label>Board name <span class="req">*</span></label><input id="pj-name" placeholder="e.g. Escalations — Q3">
       <label>Description</label><textarea id="pj-desc" rows="2"></textarea>
+      <div id="pj-tpl-wrap" hidden><label>Start from</label>
+        <select id="pj-tpl"><option value="">Blank board</option></select></div>
       ${fixedWs
         ? `<label>Workspace</label><div class="ro-field"><span class="ws-dot" style="display:inline-block;background:${fixedWs.color}"></span> ${esc(fixedWs.name)}</div>
            <input type="hidden" id="pj-ws" value="${fixedWs.id}">`
@@ -1631,6 +1750,16 @@ function newProjectModal(wsId){
       </div>
     <div class="modal-foot"><button class="btn btn-ghost" onclick="closeModals()">Cancel</button><button class="btn btn-primary" id="pj-save">Create board</button></div>`);
   wireVisPicker(m,'pj-vis');
+  // Saved templates power "Start from" — fetched after paint so the modal opens instantly.
+  let tpls = [];
+  if(isStaff()) db.from('board_templates').select('*').order('created_at',{ascending:false}).then(({data})=>{
+    tpls = data||[];
+    const sel = m.querySelector('#pj-tpl');
+    if(tpls.length && sel){
+      sel.insertAdjacentHTML('beforeend', tpls.map(t=>`<option value="${t.id}">${esc(t.name)}</option>`).join(''));
+      m.querySelector('#pj-tpl-wrap').hidden = false;
+    }
+  });
   m.querySelector('#pj-save').onclick = async ()=>{
     const name=m.querySelector('#pj-name').value.trim(); if(!name) return toast('Name is required', true);
     const colors=['#00B894','#0984E3','#6C5CE7','#E17055','#E84393','#D63031','#FDCB6E','#00CEC9'];
@@ -1640,6 +1769,8 @@ function newProjectModal(wsId){
       color:colors[Math.floor(Math.random()*colors.length)]
     }).select().single();
     if(error) return toast(error.message, true);
+    const tpl = tpls.find(t=>t.id===(m.querySelector('#pj-tpl')?.value||''));
+    if(tpl) await applyTemplate(data.id, tpl.spec||{});
     S.projects.push(data); closeModals(); toast('Board created');
     logActivity('project', data.id, 'created', {name});
     location.hash = '#/project/'+data.id;
@@ -1716,6 +1847,10 @@ async function renderProject(id){
     db.from('project_groups').select('*').eq('project_id',id).order('position').order('created_at'),
   ]);
   if(error){ C.innerHTML=`<div class="card empty">${esc(error.message)}</div>`; return; }
+  // Dependencies for the whole board in one go — powers the ⛓ marker per row.
+  const tids = (tasks||[]).map(t=>t.id);
+  if(tids.length){ const {data:deps} = await db.from('task_deps').select('*').in('task_id',tids); S._deps = deps||[]; }
+  else S._deps = [];
   S._tasksAll = tasks||[];
   S._tasks = tvShowArch ? S._tasksAll : S._tasksAll.filter(t=>!t.archived_at);
   S._fields = fields||[]; S._groups = groups||[];
@@ -2187,12 +2322,22 @@ function tvHeadHTML(id, flds, showAddCol, gid){
     ${isStaff()? (showAddCol? `<th><span class="tv-addcol" onclick="addColumnModal('${id}')">＋ Column</span></th>`:'<th></th>'):''}
   </tr>`;
 }
+/* Open dependency = this task waits on another that isn't done yet. */
+function taskHasOpenDeps(tid){
+  return (S._deps||[]).some(d=>{
+    if(d.task_id!==tid) return false;
+    const dt = (S._tasksAll||S._tasks||[]).find(x=>x.id===d.depends_on);
+    return !dt || dt.status!=='done';
+  });
+}
+const depIconHTML = ()=> `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--ink3);vertical-align:-1px;margin-right:4px"><title>Waiting on another task</title><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>`;
 function tvRowHTML(t, flds, gc){
   const sc = (S._subs||{})[t.id];
   const arch = !!t.archived_at;
+  const dep = taskHasOpenDeps(t.id)? depIconHTML() : '';
   return `<tr class="tv-row${tvSel.has(t.id)?' rowsel':''}${arch?' tv-arch':''}" data-tid="${t.id}" ${gc?`style="--gcol:${gc}"`:''}>
     ${canEdit()?`<td class="tv-check"><input type="checkbox" ${tvSel.has(t.id)?'checked':''} onchange="tvSelToggle('${t.id}',this.checked)"></td>`:''}
-    <td class="tv-name"><span class="tv-dots" title="Task options" onclick="event.stopPropagation();rowMenu(this,'${t.id}')">⋯</span><div class="tv-open" draggable="${canEdit()&&!arch}" ondragstart="tvDragStart(event,'${t.id}')" ondragend="tvDragEnd(event)" onclick="openTask('${t.id}')">${esc(t.title)}${sc&&sc.total? `<span class="subchip">${sc.done}/${sc.total}</span>`:''}</div>${arch&&canEdit()?`<span class="tv-restore" onclick="event.stopPropagation();tvUnarchive('${t.id}')">Restore</span>`:''}</td>
+    <td class="tv-name"><span class="tv-dots" title="Task options" onclick="event.stopPropagation();rowMenu(this,'${t.id}')">⋯</span><div class="tv-open" draggable="${canEdit()&&!arch}" ondragstart="tvDragStart(event,'${t.id}')" ondragend="tvDragEnd(event)" onclick="openTask('${t.id}')">${dep}${esc(t.title)}${sc&&sc.total? `<span class="subchip">${sc.done}/${sc.total}</span>`:''}</div>${arch&&canEdit()?`<span class="tv-restore" onclick="event.stopPropagation();tvUnarchive('${t.id}')">Restore</span>`:''}</td>
     <td>${tvPickHTML('status', t.id, 'status', false, t.status, t)}</td>
     <td>${tvPickHTML('people', t.id, 'assignee_id', false, t.assignee_id, t)}</td>
     <td>${tvPickHTML('due', t.id, 'due_date', false, t.due_date, t)}</td>
@@ -2661,7 +2806,7 @@ async function openTaskRoute(id){
   setTimeout(()=>openTask(id), 450);
 }
 async function openTask(id){
-  const [{data:t}, {data:chk}, {data:comments}, {data:atts}, {data:subs}, {data:hist}, {data:apprs}] = await Promise.all([
+  const [{data:t}, {data:chk}, {data:comments}, {data:atts}, {data:subs}, {data:hist}, {data:apprs}, {data:depsOn}, {data:depsBy}] = await Promise.all([
     db.from('tasks').select('*').eq('id',id).single(),
     db.from('task_checklist').select('*').eq('task_id',id).order('position'),
     db.from('comments').select('*').eq('entity_type','task').eq('entity_id',id).order('created_at'),
@@ -2669,9 +2814,20 @@ async function openTask(id){
     db.from('subtasks').select('*').eq('task_id',id).order('position').order('created_at'),
     db.from('activity_log').select('*').eq('entity_type','task').eq('entity_id',id).order('created_at',{ascending:false}).limit(200),
     db.from('approvals').select('*').eq('task_id',id).order('created_at'),
+    db.from('task_deps').select('*').eq('task_id',id),
+    db.from('task_deps').select('*').eq('depends_on',id),
   ]);
   S._taskHist = hist||[]; S._histEntity = id; S._histType = 'task';
   if(!t) return toast('Task not found', true);
+  S._taskDeps = depsOn||[];
+  // Titles/statuses for what this task waits on — the board cache usually has them.
+  let depTasks = [];
+  const depIds = (depsOn||[]).map(d=>d.depends_on);
+  if(depIds.length){
+    depTasks = (S._tasksAll||S._tasks||[]).filter(x=>depIds.includes(x.id));
+    const missing = depIds.filter(i=>!depTasks.some(x=>x.id===i));
+    if(missing.length){ const {data:mt} = await db.from('tasks').select('id,title,status').in('id',missing); depTasks = depTasks.concat(mt||[]); }
+  }
   await hydrateCommentAtts(comments||[]);
   S._commentCache = {}; (comments||[]).forEach(c=> S._commentCache[c.id]=c);
   const p = projById(t.project_id);
@@ -2701,6 +2857,7 @@ async function openTask(id){
       <div id="tv-atts">${attListHTML(atts, canEdit())}</div>
       ${canCreate()? attachZoneHTML('tv-drop') : ''}
       ${(p?.approval_gate?.on || (apprs||[]).length)? signoffSectionHTML(t, apprs||[], p?.approval_gate||{}) : ''}
+      ${(isStaff() || (depsOn||[]).length || (depsBy||[]).length)? depsSectionHTML(t, depsOn||[], depsBy||[], depTasks) : ''}
       <label>Comments</label>
       <div id="tv-comments">${(comments||[]).map(commentRow).join('')||'<div style="color:var(--ink3);font-size:13px">No comments yet</div>'}</div>
       ${canCreate()? commentComposerHTML('tv') : ''}
@@ -2795,6 +2952,48 @@ async function requestSignoffModal(taskId){
     if(error) return toast(error.message, true);
     closeModals(); toast('Sign-off requested'); openTask(t.id);
   };
+}
+/* ---- dependencies ----
+   The DB blocks moving a task forward while a dependency isn't done; the
+   error message it raises is human-readable and the status handlers already
+   toast it. The UI just lists and edits the links. */
+function depsSectionHTML(t, depsOn, depsBy, depTasks){
+  return `<label>Waiting on</label>
+    <div id="tv-deps">
+      ${depsOn.map(d=>{
+        const dt = (depTasks||[]).find(x=>x.id===d.depends_on);
+        return `<div class="dep-row" style="display:flex;align-items:center;gap:8px;padding:5px 0;font-size:13px">
+          <span style="flex:1;min-width:0">${esc(dt?.title||'(task)')}</span>${statusChip(dt?.status||'todo')}
+          ${isStaff()? `<span style="cursor:pointer;color:var(--ink3)" title="Remove dependency" onclick="removeDep('${d.task_id}','${d.depends_on}')">✕</span>`:''}
+        </div>`;}).join('') || '<div style="color:var(--ink3);font-size:13px">Not waiting on anything</div>'}
+      ${depsBy.length? `<div style="font-size:12px;color:var(--ink3);margin-top:4px">${depsBy.length} task${depsBy.length>1?'s are':' is'} waiting on this one</div>`:''}
+      ${isStaff()? `<button class="btn btn-ghost btn-sm" style="margin-top:6px" onclick="addDepModal('${t.id}')">＋ Add dependency</button>`:''}
+    </div>`;
+}
+function addDepModal(taskId){
+  const linked = new Set((S._taskDeps||[]).map(d=>d.depends_on));
+  const pool = (S._tasks||[]).filter(x=>x.id!==taskId && x.status!=='done' && !x.archived_at && !linked.has(x.id));
+  if(!pool.length) return toast('No open tasks on this board to wait on', true);
+  const m = modal(`<div class="modal-head"><h2>Add dependency</h2><button class="x" onclick="closeModals()">✕</button></div>
+    <div class="modal-body">
+      <div style="font-size:13px;color:var(--ink2);margin-bottom:10px">This task can't move forward until the chosen one is done.</div>
+      <label>Waits on</label><select id="dep-pick">${pool.map(x=>`<option value="${x.id}">${esc(x.title)}</option>`).join('')}</select>
+    </div>
+    <div class="modal-foot"><button class="btn btn-ghost" onclick="closeModals()">Cancel</button><button class="btn btn-primary" id="dep-add">Add</button></div>`);
+  m.querySelector('#dep-add').onclick = async ()=>{
+    const depends_on = m.querySelector('#dep-pick').value;
+    if(!depends_on) return toast('Pick a task', true);
+    const {error} = await db.from('task_deps').insert({task_id:taskId, depends_on});
+    if(error) return toast(error.message, true);
+    (S._deps||(S._deps=[])).push({task_id:taskId, depends_on});
+    toast('Dependency added'); closeModals(); openTask(taskId);
+  };
+}
+async function removeDep(taskId, dependsOn){
+  const {error} = await db.from('task_deps').delete().eq('task_id',taskId).eq('depends_on',dependsOn);
+  if(error) return toast(error.message, true);
+  S._deps = (S._deps||[]).filter(d=>!(d.task_id===taskId && d.depends_on===dependsOn));
+  toast('Dependency removed'); closeModals(); openTask(taskId);
 }
 /* Same decision as decideApproval, but lands back in the task drawer.
    The DB writes the notification + history rows itself. */
@@ -3878,7 +4077,7 @@ async function runSweepNow(btn){
   const {data, error} = await db.rpc('run_automation_sweep');
   btn.disabled=false; btn.textContent='Run timed checks now';
   if(error) return toast(error.message, true);
-  const n = (data?.sla_warning||0)+(data?.sla_breach||0)+(data?.task_overdue||0)+(data?.custom||0);
+  const n = (data?.sla_warning||0)+(data?.sla_breach||0)+(data?.task_overdue||0)+(data?.custom||0)+(data?.recurring||0);
   toast(n? `${n} alert${n>1?'s':''} sent` : 'All clear — nothing new to flag');
   autoRerender();
 }
