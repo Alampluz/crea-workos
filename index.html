@@ -2892,6 +2892,9 @@ async function openTask(id){
     m.querySelector('#tv-chk').insertAdjacentHTML('beforeend', chkRow(data));
     m.querySelector('#tv-chk-new').value='';
   };
+  // Paste a whole list -> one subtask / checklist item per line
+  wireListPaste(m.querySelector('#tv-sub-new'), lines=> addSubtasksBulk(t.id, lines, m));
+  wireListPaste(m.querySelector('#tv-chk-new'), lines=> addChecklistBulk(t.id, lines, m));
   wireAttachZone(m, 'tv-drop', 'task', t.id, m.querySelector('#tv-atts'));
   const cIn = m.querySelector('#tv-comment');
   if(cIn){
@@ -3005,6 +3008,40 @@ async function decideTaskApproval(id, status, taskId){
   toast(status==='approved'? 'Approved':'Rejected');
   updateApprovalBadge();
   closeModals(); openTask(taskId);
+}
+/* ---- paste a list, get items: one per line, bullets/numbering stripped ---- */
+function splitPasteLines(text){
+  return String(text||'').split(/\r?\n/)
+    .map(s=> s.replace(/^\s*(?:[-–—•*▪◦✓☐]|\d+[.)])\s*/,'').trim())
+    .filter(Boolean);
+}
+function wireListPaste(input, addMany){
+  if(!input) return;
+  input.addEventListener('paste', e=>{
+    const txt = (e.clipboardData || window.clipboardData)?.getData('text') || '';
+    const lines = splitPasteLines(txt);
+    if(lines.length < 2) return;              // single line pastes normally
+    e.preventDefault();
+    addMany(lines);
+  });
+}
+async function addSubtasksBulk(taskId, lines, m){
+  const base = m.querySelectorAll('.strow').length;
+  const {data, error} = await db.from('subtasks').insert(
+    lines.map((title,i)=>({task_id:taskId, title, created_by:S.me.id, position:base+i+1}))).select();
+  if(error) return toast(error.message, true);
+  (data||[]).forEach(s=> m.querySelector('#tv-subs').insertAdjacentHTML('beforeend', stRow(s)));
+  m.querySelector('#tv-sub-new').value=''; refreshSubProg(taskId);
+  toast(`${(data||[]).length} subtasks added`);
+}
+async function addChecklistBulk(taskId, lines, m){
+  const base = m.querySelector('#tv-chk').children.length;
+  const {data, error} = await db.from('task_checklist').insert(
+    lines.map((label,i)=>({task_id:taskId, label, position:base+i+1}))).select();
+  if(error) return toast(error.message, true);
+  (data||[]).forEach(c=> m.querySelector('#tv-chk').insertAdjacentHTML('beforeend', chkRow(c)));
+  m.querySelector('#tv-chk-new').value='';
+  toast(`${(data||[]).length} checklist items added`);
 }
 function subProgressBar(subs){
   const total=subs.length, done=subs.filter(s=>s.status==='done').length;
