@@ -335,6 +335,17 @@ td.tv-name .tv-open{padding-left:20px}
 #tvmenu .opt{display:flex;align-items:center;gap:8px;padding:7px 10px;border-radius:8px;cursor:pointer;font-size:13px;font-weight:600}
 #tvmenu .opt:hover{background:var(--gray-soft)}
 #tvmenu .opt.clear{color:var(--ink3);font-weight:600}
+/* status / priority pickers: minimal dot pills */
+#tvmenu .opt-dot{width:10px;height:10px;border-radius:50%;flex:none}
+#tvmenu .opt-cur{margin-left:auto;color:var(--accent);font-weight:700;font-size:12px}
+
+/* ---- link & mirror columns ---- */
+.tv-linkchip{display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:999px;font-size:12.5px;font-weight:600;
+  background:var(--accent-soft);color:var(--accent-ink);cursor:pointer;white-space:nowrap;max-width:220px}
+.tv-linkchip svg{flex:none}
+.tv-linkchip .lt{overflow:hidden;text-overflow:ellipsis}
+.tv-linkchip:hover{box-shadow:inset 0 0 0 1px var(--accent)}
+.tv-mirror{color:var(--ink2);background:#F7F8FB;box-shadow:inset 3px 0 0 #E3E6F0}
 
 /* collapsible groups */
 .tv-group-head .caret{font-size:11px;color:var(--ink3);cursor:pointer;width:18px;text-align:center;user-select:none}
@@ -1854,6 +1865,7 @@ async function renderProject(id){
   S._tasksAll = tasks||[];
   S._tasks = tvShowArch ? S._tasksAll : S._tasksAll.filter(t=>!t.archived_at);
   S._fields = fields||[]; S._groups = groups||[];
+  await loadLinkedData(S._tasksAll, S._fields);   // link/mirror columns need the linked rows
   S._subs = {};
   (sc||[]).forEach(s=>{ const o=S._subs[s.task_id]||(S._subs[s.task_id]={done:0,total:0}); o.total++; if(s.status==='done') o.done++; });
   if(boardMode==='report'){
@@ -2005,15 +2017,21 @@ function tvEdit(el, ev){
     };
     return;
   }
-  // popover menu for choice types
+  // popover menu for choice types — status/priority get minimal dot pills
   const opts = TVO[kind]||[];
   const renderOpt = o=>
-    kind==='status'? `<span class="tv-fill mini" style="background:${STATUSES.find(s=>s.k===o.v)?.color||'#8E93A8'}">${esc(o.l)}</span>` :
-    kind==='priority'? `<span class="tv-fill mini" style="background:${PRIORITIES.find(p=>p.k===o.v)?.color||'#8E93A8'}">${esc(o.l)}</span>` :
+    kind==='status'? tvDotOpt(o, STATUSES, cur) :
+    kind==='priority'? tvDotOpt(o, PRIORITIES, cur) :
     kind==='people'? `${avatar(prof(o.v),true)}<span>${esc(o.l)}</span>` : esc(o.l);
   const canClear = !(cust!=='1' && (field==='status'||field==='priority'));
   // people pickers are always searchable; other lists once they get long
   tvShowMenu(el, opts, renderOpt, save, kind==='people' || opts.length>5, canClear);
+}
+/* One option row for the status/priority popover: 10px colored dot + label,
+   with a tick on the current value. Saving is untouched — same onPick as before. */
+function tvDotOpt(o, defs, cur){
+  const d = defs.find(x=>x.k===o.v);
+  return `<span class="opt-dot" style="background:${d?.color||'#8E93A8'}"></span><span>${esc(o.l)}</span>${o.v===cur? '<span class="opt-cur">✓</span>':''}`;
 }
 function tvShowMenu(anchor, opts, renderOpt, onPick, withSearch, includeClear){
   tvCloseMenu();
@@ -2148,8 +2166,90 @@ function fxDisplay(f, t){
   try{ return `<span class="tv-fxv">${esc(fxFormat(fxEval((f.options&&f.options.expr)||'', t)))}</span>`; }
   catch(e){ return `<span class="tv-fxerr" title="${esc(e.message)}">⚠</span>`; }
 }
+/* ---- link & mirror columns --------------------------------------------
+   link:   options {project_id} — the cell value is a task uuid on that board.
+   mirror: options {via: <link field id here>, show: <core key or target field id>}
+           — read-only, computed from the linked task. */
+async function loadLinkedData(tasks, fields){
+  S._linkedTasks = {}; S._linkedFields = {};
+  const linkFields = (fields||[]).filter(f=>f.ftype==='link');
+  if(!linkFields.length) return;                    // no link columns → no queries
+  const ids = new Set();
+  (tasks||[]).forEach(t=> linkFields.forEach(f=>{ const v=(t.custom||{})[f.id]; if(v) ids.add(v); }));
+  const targets = [...new Set(linkFields.map(f=>(f.options||{}).project_id).filter(Boolean))];
+  const [lt, lf] = await Promise.all([
+    ids.size? db.from('tasks').select('id,title,status,priority,assignee_id,due_date,group_id,project_id,custom').in('id',[...ids]) : Promise.resolve({data:[]}),
+    targets.length? db.from('project_fields').select('id,label,ftype,options').in('project_id',targets) : Promise.resolve({data:[]}),
+  ]);
+  (lt.data||[]).forEach(x=> S._linkedTasks[x.id]=x);
+  (lf.data||[]).forEach(x=> S._linkedFields[x.id]=x);
+}
+const tvLinkIcon = ()=> `<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>`;
+function tvLinkCell(t, f){
+  const v = (t.custom||{})[f.id];
+  const lt = v? (S._linkedTasks||{})[v] : null;   // broken link / missing cache → dash
+  const title = lt? String(lt.title||'') : '';
+  const chip = lt? `<span class="tv-linkchip" title="${esc(title)}" onclick="event.stopPropagation();location.hash='#/task/${lt.id}'">${tvLinkIcon()}<span class="lt">${esc(title.length>24? title.slice(0,24)+'…' : title)}</span></span>`
+    : `<span class="tv-empty">—</span>`;
+  if(!canEdit()) return `<div class="tv-pickv ro">${chip}</div>`;
+  return `<div class="tv-pickv" onclick="tvLinkPick(this,'${t.id}','${f.id}')">${chip}</div>`;
+}
+/* Target-board task lists for the link picker, cached per board for the session. */
+const _linkPickCache = {};
+async function tvLinkPick(el, tid, fid){
+  const f = (S._fields||[]).find(x=>x.id===fid); if(!f) return;
+  const target = (f.options||{}).project_id;
+  if(!target) return toast('This link column has no target board yet — edit the column', true);
+  let opts = _linkPickCache[target];
+  if(!opts){
+    const {data, error} = await db.from('tasks').select('id,title').eq('project_id',target).is('archived_at',null).order('position');
+    if(error) return toast(error.message, true);
+    opts = _linkPickCache[target] = (data||[]).map(x=>({v:x.id, l:x.title||'(untitled)'}));
+  }
+  tvShowMenu(el, opts, o=>`${tvLinkIcon()}<span>${esc(o.l)}</span>`, async v=>{
+    await tvCustom(tid, fid, v===null? '' : v);   // same save path as every other custom cell
+    if(v && !(S._linkedTasks||{})[v]){            // picker rows carry id+title only — mirrors need the full row
+      const {data:full} = await db.from('tasks').select('id,title,status,priority,assignee_id,due_date,group_id,project_id,custom').eq('id',v).single();
+      if(full){ (S._linkedTasks||(S._linkedTasks={}))[full.id]=full; }
+    }
+    const y=scrollY; renderBoardBody(tvPid); scrollTo(0,y);
+  }, opts.length>5, true);
+}
+function mirrorResolve(t, f){
+  const via = (f.options||{}).via;
+  const lv = via? (t.custom||{})[via] : null;
+  return lv? ((S._linkedTasks||{})[lv]||null) : null;
+}
+/* Plain-text value of a mirror cell — shared by the table view and the Excel export. */
+function mirrorText(t, f){
+  const lt = mirrorResolve(t, f), show = (f.options||{}).show;
+  if(!lt || !show) return '';
+  if(show==='status')   return (STATUSES.find(s=>s.k===lt.status)||{}).label||lt.status||'';
+  if(show==='priority') return (PRIORITIES.find(p=>p.k===lt.priority)||{}).label||lt.priority||'';
+  if(show==='assignee') return (prof(lt.assignee_id)||{}).full_name||'';
+  if(show==='due_date') return lt.due_date||'';
+  if(show==='group')    return '';                 // remote group names aren't loaded — shown as a dash
+  const rf = (S._linkedFields||{})[show];
+  if(rf && rf.ftype==='formula') return '';        // remote formulas aren't evaluated here
+  const rv = (lt.custom||{})[show];
+  return rv==null? '' : String(rv);
+}
+function tvMirrorCell(t, f){
+  const lt = mirrorResolve(t, f), show = (f.options||{}).show;
+  let inner = `<span class="tv-empty">—</span>`;
+  if(lt && show){
+    if(show==='status')        inner = statusChip(lt.status);
+    else if(show==='priority') inner = prioChip(lt.priority);
+    else if(show==='assignee'){ const p=prof(lt.assignee_id); inner = p? `${avatar(p,true)}<span>${esc(p.full_name)}</span>` : inner; }
+    else if(show==='due_date') inner = lt.due_date? esc(fmtDate(lt.due_date)) : inner;
+    else { const s = mirrorText(t, f); inner = s? esc(s) : inner; }
+  }
+  return `<div class="tv-pickv ro tv-mirror" title="Mirrored from the linked task">${inner}</div>`;
+}
 function tvCell(t, f){
   if(f.ftype==='formula') return fxDisplay(f, t);
+  if(f.ftype==='link')    return tvLinkCell(t, f);
+  if(f.ftype==='mirror')  return tvMirrorCell(t, f);
   const v = (t.custom||{})[f.id];
   if(f.ftype==='checkbox') return `<input type="checkbox" ${v?'checked':''} ${canEdit()?`onchange="tvCustom('${t.id}','${f.id}', this.checked)"`:'disabled'}>`;
   if(f.ftype==='number')   return tvPickHTML('number', t.id, f.id, true, v);
@@ -2172,6 +2272,8 @@ function exportBoardCSV(pid){
   } else rows = [...rows].sort(byPos);
   const cell = (t,f)=>{
     if(f.ftype==='formula'){ try{ return fxFormat(fxEval((f.options&&f.options.expr)||'', t)); }catch(e){ return ''; } }
+    if(f.ftype==='link'){ const lv=(t.custom||{})[f.id]; const lt=lv? (S._linkedTasks||{})[lv]:null; return lt? (lt.title||'') : ''; }
+    if(f.ftype==='mirror') return mirrorText(t, f);
     const v = (t.custom||{})[f.id];
     if(f.ftype==='checkbox') return v? 'Yes':'No';
     return v==null? '' : v;
@@ -2222,6 +2324,8 @@ function mapImportRows(aoa, pid){
   if(unknown.length) warnings.push(`Ignored column${unknown.length>1?'s':''}: ${unknown.join(', ')}`);
   if(head.some((h,i)=> fieldByLabel[low[i]] && fieldByLabel[low[i]].ftype==='formula'))
     warnings.push('Formula columns are computed automatically and were skipped');
+  if(head.some((h,i)=> fieldByLabel[low[i]] && ['link','mirror'].includes(fieldByLabel[low[i]].ftype)))
+    warnings.push('Link and Mirror columns can\'t be imported and were skipped');
   const statusOf = v=>{ const s=String(v).trim().toLowerCase(); if(!s) return 'todo';
     const m = STATUSES.find(x=> x.k===s || x.label.toLowerCase()===s); return m? m.k : 'todo'; };
   const prioOf = v=>{ const s=String(v).trim().toLowerCase(); if(!s) return 'normal';
@@ -2249,7 +2353,7 @@ function mapImportRows(aoa, pid){
     if(col('group')>=0)    t.group_id = groupOf(r[col('group')]);
     if(col('due date')>=0) t.due_date = dateOf(r[col('due date')]);
     head.forEach((h,ci)=>{
-      const f = fieldByLabel[low[ci]]; if(!f || f.ftype==='formula') return;
+      const f = fieldByLabel[low[ci]]; if(!f || ['formula','link','mirror'].includes(f.ftype)) return;
       const v = r[ci]; if(v===''||v==null) return;
       t.custom[f.id] = f.ftype==='checkbox'? /^(yes|true|1|y|✓)$/i.test(String(v).trim())
         : f.ftype==='date'? (dateOf(v)||'') : String(v instanceof Date? v.toISOString().slice(0,10) : v);
@@ -2650,7 +2754,8 @@ async function tvCustom(tid, fid, val){
 function addColumnModal(pid){ columnModal(pid, null); }
 function editColumnModal(fid, pid){ const f=(S._fields||[]).find(x=>x.id===fid); if(f) columnModal(pid, f); }
 function columnModal(pid, f){
-  const types=[['text','Text'],['number','Number'],['date','Date'],['select','Dropdown'],['checkbox','Checkbox'],['person','Person'],['brand','Brand'],['formula','Formula']];
+  const types=[['text','Text'],['number','Number'],['date','Date'],['select','Dropdown'],['checkbox','Checkbox'],['person','Person'],['brand','Brand'],['formula','Formula'],['link','Link to board'],['mirror','Mirror']];
+  const linkFields = (S._fields||[]).filter(x=>x.ftype==='link' && (!f || x.id!==f.id));
   const m = modal(`<div class="modal-head"><h2>${f?'Edit column':'New column'}</h2><button class="x" onclick="closeModals()">✕</button></div>
     <div class="modal-body">
       <label>Column name <span class="req">*</span></label><input id="cf-label" value="${f? esc(f.label):''}" placeholder="e.g. Store Location">
@@ -2667,6 +2772,19 @@ function columnModal(pid, f){
         <div style="font-size:11.5px;color:var(--ink3);margin:9px 0 4px">Functions: <span style="font-family:ui-monospace,Menlo,monospace">CONCATENATE UPPER LOWER LEFT RIGHT LEN REPLACE IF AND OR NOT ROUND ABS MIN MAX SUM AVERAGE DAYS TODAY</span> · text joins with <b>&amp;</b>, numbers use <b>+ − × ÷</b></div>
         <div id="cf-fx-prev" style="margin-top:9px;padding:8px 11px;border:1px solid var(--line);border-radius:8px;background:var(--gray-soft);font-size:12.5px;color:var(--ink2)">Preview appears as you type</div>
       </div>
+      <div id="cf-link-wrap" style="display:${(f? f.ftype:'text')==='link'?'block':'none'}">
+        <label>Board to link to</label>
+        <select id="cf-link-board"><option value="">Choose a board…</option>
+          ${(S.projects||[]).filter(p=>p.id!==pid).map(p=>`<option value="${p.id}" ${f&&f.options&&f.options.project_id===p.id?'selected':''}>${esc(p.name)}</option>`).join('')}</select>
+        <p style="color:var(--ink3);font-size:12px;margin-top:6px">Each row can point at one task on that board.</p>
+      </div>
+      <div id="cf-mirror-wrap" style="display:${(f? f.ftype:'text')==='mirror'?'block':'none'}">
+        ${linkFields.length? `<label>Via link column</label>
+        <select id="cf-mirror-via">${linkFields.map(x=>`<option value="${x.id}" ${f&&f.options&&f.options.via===x.id?'selected':''}>${esc(x.label)}</option>`).join('')}</select>
+        <label>Show</label>
+        <select id="cf-mirror-show">${[['status','Status'],['priority','Priority'],['assignee','Assignee'],['due_date','Due date']].map(([v,l])=>`<option value="${v}" ${f&&f.options&&f.options.show===v?'selected':''}>${l}</option>`).join('')}</select>`
+        : `<p style="color:var(--ink3);font-size:12.5px;margin-top:8px">Add a <b>Link to board</b> column first — a mirror shows a value from the task each row links to.</p>`}
+      </div>
       ${f? `<p style="color:var(--ink3);font-size:12.5px;margin-top:10px">Type cannot be changed after creation. Deleting a column keeps task data but hides it.</p>`:''}
     </div>
     <div class="modal-foot">
@@ -2677,12 +2795,32 @@ function columnModal(pid, f){
   const syncType = v=>{
     m.querySelector('#cf-opts-wrap').style.display = v==='select'?'block':'none';
     m.querySelector('#cf-fx-wrap').style.display   = v==='formula'?'block':'none';
+    m.querySelector('#cf-link-wrap').style.display = v==='link'?'block':'none';
+    m.querySelector('#cf-mirror-wrap').style.display = v==='mirror'?'block':'none';
   };
   m.querySelector('#cf-type').onchange = e=> syncType(e.target.value);
+  // mirror wiring: when the link column changes, offer the target board's own fields too
+  const viaSel = m.querySelector('#cf-mirror-via'), showSel = m.querySelector('#cf-mirror-show');
+  let mirrorInit = true;   // on open, keep the saved "show" (it may be a target-board field id)
+  async function loadMirrorShow(){
+    if(!viaSel || !showSel || !viaSel.value) return;
+    const lf = (S._fields||[]).find(x=>x.id===viaSel.value);
+    const tb = lf && lf.options && lf.options.project_id;
+    const keep = (mirrorInit && f && f.options && f.options.show) || showSel.value || 'status';
+    mirrorInit = false;
+    const core = [['status','Status'],['priority','Priority'],['assignee','Assignee'],['due_date','Due date']];
+    let extra = [];
+    if(tb){
+      const {data:tf} = await db.from('project_fields').select('id,label,ftype').eq('project_id',tb);
+      extra = (tf||[]).filter(x=>!['formula','link','mirror'].includes(x.ftype)).map(x=>[x.id, x.label]);
+    }
+    showSel.innerHTML = core.concat(extra).map(([v,l])=>`<option value="${esc(v)}" ${v===keep?'selected':''}>${esc(l)}</option>`).join('');
+  }
+  if(viaSel){ viaSel.onchange = loadMirrorShow; loadMirrorShow(); }
   // formula builder wiring: field chips + live preview against a real row
   const fxIn = m.querySelector('#cf-fx'), fxPrev = m.querySelector('#cf-fx-prev');
   const chipNames = ['Name','Status','Assignee','Due date','Priority','Group']
-    .concat((S._fields||[]).filter(x=>!f || x.id!==f.id).map(x=>x.label));
+    .concat((S._fields||[]).filter(x=>(!f || x.id!==f.id) && !['link','mirror'].includes(x.ftype)).map(x=>x.label));
   m.querySelector('#cf-fx-fields').innerHTML = chipNames.map(n=>`<button type="button" class="fx-chip">{${esc(n)}}</button>`).join('');
   m.querySelectorAll('.fx-chip').forEach(ch=> ch.onclick = ()=>{
     const pos = fxIn.selectionStart ?? fxIn.value.length;
@@ -2717,6 +2855,18 @@ function columnModal(pid, f){
       try{ fxEval(expr, {title:'x', status:'todo', priority:'normal', custom:{}, created_at:new Date().toISOString()}); }
       catch(e){ if(/Unknown field|not a known function|missing|not closed|Unexpected|too early|loop/i.test(e.message)) return toast('Formula problem: '+e.message, true); }
       options = {expr};
+    }
+    if(ftype==='link'){
+      const target = m.querySelector('#cf-link-board').value;
+      if(!target) return toast('Pick the board this column links to', true);
+      options = {project_id: target};
+    }
+    if(ftype==='mirror'){
+      const via = m.querySelector('#cf-mirror-via')?.value;
+      const show = m.querySelector('#cf-mirror-show')?.value;
+      if(!via) return toast('A mirror needs a "Link to board" column on this board first', true);
+      if(!show) return toast('Pick what the mirror should show', true);
+      options = {via, show};
     }
     let error;
     if(f){ ({error} = await db.from('project_fields').update({label, options}).eq('id',f.id)); }
