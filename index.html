@@ -425,6 +425,8 @@ td.tv-name .tv-open{padding-left:20px}
 .tcard .meta{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
 .tcard .due{font-size:11.5px;color:var(--ink2);font-weight:600}
 .tcard .due.over{color:var(--red)}
+.tbl .due{font-weight:600}
+.tbl .due.over{color:var(--red)}
 .add-card{margin:0 8px 10px;padding:7px;border-radius:8px;color:var(--ink2);font-weight:600;font-size:12.5px;text-align:left}
 .add-card:hover{background:#E6E5DF;color:var(--ink)}
 
@@ -603,6 +605,24 @@ function timeAgo(d){
   return fmtDateTime(d);
 }
 function daysDiff(d){ const a=new Date(d); a.setHours(0,0,0,0); const b=new Date(); b.setHours(0,0,0,0); return Math.round((a-b)/86400000); }
+/* ---- CSV (RFC 4180) ---- */
+function csvCell(v){
+  const s = v==null? '' : String(v);
+  return /[",\n\r]|^\s|\s$/.test(s) ? '"'+s.replace(/"/g,'""')+'"' : s;
+}
+function downloadCSV(filename, rows){
+  // BOM so Excel opens Thai text as UTF-8
+  const csv = '\uFEFF' + rows.map(r=>r.map(csvCell).join(',')).join('\r\n');
+  const blob = new Blob([csv], {type:'text/csv;charset=utf-8'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a'); a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click(); a.remove();
+  URL.revokeObjectURL(url);
+}
+function csvFilename(name){
+  return String(name||'export').replace(/[\\/:*?"<>|]+/g,'-').trim()
+    + ' - ' + new Date().toISOString().slice(0,10) + '.csv';
+}
 function dueBadge(d, doneAlready){
   if(!d) return '';
   const n = daysDiff(d);
@@ -1214,7 +1234,29 @@ async function renderHome(){
   const today = tasks.filter(t=>t.due_date && daysDiff(t.due_date)===0);
 
   const hello = new Date().getHours()<12?'Good morning':new Date().getHours()<17?'Good afternoon':'Good evening';
+  // Role tiers: admin & management land with the company pulse on top;
+  // everyone else's Home is already their personal tier.
+  let pulse = null;
+  if(['admin','management'].includes(S.me.role)){
+    const openSet = ['submitted','in_review','approved','in_progress','pending_info'];
+    const todayISO = new Date().toISOString().slice(0,10);
+    const [a,b,c,d] = await Promise.all([
+      db.from('tasks').select('id',{count:'exact',head:true}).neq('status','done').is('archived_at',null),
+      db.from('tasks').select('id',{count:'exact',head:true}).neq('status','done').is('archived_at',null).lt('due_date', todayISO),
+      db.from('requests').select('id',{count:'exact',head:true}).in('status', openSet),
+      db.from('requests').select('id',{count:'exact',head:true}).in('status', openSet).lt('sla_due_at', new Date().toISOString()).is('sla_paused_at',null),
+    ]);
+    pulse = {open:a.count||0, overdue:b.count||0, tickets:c.count||0, breach:d.count||0};
+  }
   C.innerHTML = `
+    ${pulse? `<div class="section-title" style="margin-top:0;display:flex;align-items:center">Company pulse
+        <span style="flex:1"></span><button class="btn btn-ghost btn-sm" onclick="location.hash='#/dashboard'">Open dashboard</button></div>
+      <div class="stat-row">
+        <div class="stat"><div class="n accent">${pulse.open}</div><div class="l">Open tasks — everyone</div></div>
+        <div class="stat"><div class="n ${pulse.overdue?'red':''}">${pulse.overdue}</div><div class="l">Overdue — everyone</div></div>
+        <div class="stat"><div class="n">${pulse.tickets}</div><div class="l">Open tickets</div></div>
+        <div class="stat"><div class="n ${pulse.breach?'red':''}">${pulse.breach}</div><div class="l">SLA breached</div></div>
+      </div>`:''}
     <div class="page-head"><div><h1>${hello}, ${esc(S.me.full_name.split(' ')[0])}</h1>
       <div class="sub">${new Date().toLocaleDateString('en-GB',{weekday:'long', day:'numeric', month:'long'})}</div></div>
       <div class="actions"><button class="btn btn-primary" onclick="newRequestFlow()">＋ New request</button></div></div>
@@ -1601,6 +1643,7 @@ function filterBarHTML(pid){
     <button class="bf-sel ${f.assignee?'on':''}" onclick="bfPickPerson(this,'${pid}')">${f.assignee? esc(f.assignee==='__none__'?'Unassigned':(prof(f.assignee)?.full_name||'Person')) : 'Person'} ▾</button>
     ${(S._groups||[]).length? sel('group','Group', (S._groups||[]).map(g=>({v:g.id,l:g.name})).concat([{v:'__none__',l:'No group'}])) : ''}
     ${n? `<button class="bf-clear" onclick="bfClear('${pid}')">Clear ${n} filter${n>1?'s':''}</button>`:''}
+    ${isStaff()? `<button class="btn btn-ghost btn-sm" onclick="exportBoardCSV('${pid}')">Export CSV</button>`:''}
     <span class="bf-count" id="bf-count"></span>
   </div>`;
 }
@@ -1647,6 +1690,7 @@ async function renderProject(id){
 function renderBoardBody(id){
   const host = $('#board-body') || $('#content'); if(!host) return;
   const rows = bfApply(id, S._tasks||[]);
+  S._lastRowSet = rows;               // what the view is actually showing — exports read this
   const cnt = $('#bf-count');
   if(cnt) cnt.textContent = bfActiveCount(id)? `${rows.length} of ${(S._tasks||[]).length} tasks` : '';
   // keep the select/search states in sync without rebuilding the bar
@@ -1934,6 +1978,36 @@ function tvCell(t, f){
   if(f.ftype==='person')   return tvPickHTML('people', t.id, f.id, true, v);
   if(f.ftype==='brand')    return tvPickHTML('brand', t.id, f.id, true, v);
   return tvPickHTML('text', t.id, f.id, true, v);
+}
+/* Export the rows the table is showing right now (filters applied), in display order. */
+function exportBoardCSV(pid){
+  const p = projById(pid);
+  const flds = S._fields||[], groups = S._groups||[];
+  let rows = S._lastRowSet || bfApply(pid, S._tasks||[]);
+  const byPos = (a,b)=> (a.position||0)-(b.position||0);
+  if(groups.length){
+    const gids = new Set(groups.map(g=>g.id));
+    rows = groups.flatMap(g=> rows.filter(t=>t.group_id===g.id).sort(byPos))
+      .concat(rows.filter(t=>!t.group_id || !gids.has(t.group_id)).sort(byPos));
+  } else rows = [...rows].sort(byPos);
+  const cell = (t,f)=>{
+    if(f.ftype==='formula'){ try{ return fxFormat(fxEval((f.options&&f.options.expr)||'', t)); }catch(e){ return ''; } }
+    const v = (t.custom||{})[f.id];
+    if(f.ftype==='checkbox') return v? 'Yes':'No';
+    return v==null? '' : v;
+  };
+  const out = [['Task','Group','Status','Priority','Assignee','Due date', ...flds.map(f=>f.label), 'Created']];
+  rows.forEach(t=> out.push([
+    t.title||'',
+    (groups.find(g=>g.id===t.group_id)||{}).name||'',
+    (STATUSES.find(s=>s.k===t.status)||{}).label||t.status||'',
+    (PRIORITIES.find(x=>x.k===t.priority)||{}).label||t.priority||'',
+    (prof(t.assignee_id)||{}).full_name||'',
+    t.due_date||'',
+    ...flds.map(f=>cell(t,f)),
+    (t.created_at||'').slice(0,10),
+  ]));
+  downloadCSV(csvFilename(p? p.name : 'Board'), out);
 }
 function tvHeadHTML(id, flds, showAddCol, gid){
   return `<tr>
@@ -2739,6 +2813,7 @@ async function renderRequests(){
   if(reqTab==='open') q = q.in('status',['submitted','in_review','approved','in_progress']);
   const {data:reqs, error} = await q;
   if(error){ C.innerHTML=`<div class="card empty">${esc(error.message)}</div>`; return; }
+  S._lastReqRows = reqs||[];          // what the queue is listing — the export reads this
   C.innerHTML = `
     <div class="page-head"><h1>Requests</h1>
       ${isStaff()? `<div class="tabs">
@@ -2746,8 +2821,27 @@ async function renderRequests(){
         <button class="tab ${reqTab==='all'?'active':''}" onclick="reqTab='all';renderRequests()">All</button>
         <button class="tab ${reqTab==='mine'?'active':''}" onclick="reqTab='mine';renderRequests()">Mine</button>
       </div>`:''}
-      <div class="actions"><button class="btn btn-primary" onclick="newRequestFlow()">＋ New request</button></div></div>
+      <div class="actions">${isStaff()? `<button class="btn btn-ghost" onclick="exportRequestsCSV()">Export CSV</button>`:''}<button class="btn btn-primary" onclick="newRequestFlow()">＋ New request</button></div></div>
     <div class="card">${(reqs||[]).length? requestTable(reqs) : `<div class="empty">No requests here yet</div>`}</div>`;
+}
+function exportRequestsCSV(){
+  const out = [['WO','Title','Type','Status','Priority','Submitted by','Assigned to','Created','SLA due','Paused']];
+  (S._lastReqRows||[]).forEach(r=>{
+    const rt = S.requestTypes.find(x=>x.id===r.request_type_id);
+    out.push([
+      r.ticket_no? 'WO-'+r.ticket_no : '',
+      r.title||'',
+      rt? rt.name : '',
+      (REQ_STATUSES.find(s=>s.k===r.status)||{}).label||r.status||'',
+      (PRIORITIES.find(x=>x.k===r.priority)||{}).label||r.priority||'',
+      r.guest_name || (prof(r.submitted_by)||{}).full_name || '',
+      (prof(r.assigned_to)||{}).full_name||'',
+      (r.created_at||'').replace('T',' ').slice(0,16),
+      (r.sla_due_at||'').replace('T',' ').slice(0,16),
+      r.sla_paused_at? 'Yes':'No',
+    ]);
+  });
+  downloadCSV(csvFilename('Requests'), out);
 }
 function newRequestFlow(){
   const m = modal(`<div class="modal-head"><h2>What do you need?</h2><button class="x" onclick="closeModals()">✕</button></div>
@@ -3061,6 +3155,12 @@ async function renderBoardReport(pid){
     const {data:seeded, error} = await db.from('dashboard_widgets').insert(defaults).select();
     if(!error) S._widgets = seeded||[];
   }
+  S._reportName = p.name + ' report';
+  S._reportStats = [
+    ['Open tasks', open.length], ['Overdue', overdue.length], ['Due within 7 days', dueWeek.length],
+    ['On-time completion', onTimePct===null? '—' : onTimePct+'%'], ['Done', doneTasks.length],
+    ...(requests.length? [['SLA breached', slaBreach.length]] : []),
+  ];
   C.innerHTML = `
     <div class="stat-row">
       <div class="stat"><div class="n accent">${open.length}</div><div class="l">Open tasks</div></div>
@@ -3071,7 +3171,7 @@ async function renderBoardReport(pid){
       ${requests.length? `<div class="stat"><div class="n ${slaBreach.length?'red':'green'}">${slaBreach.length}</div><div class="l">SLA breached</div></div>`:''}
     </div>
     <div class="section-title" style="margin-top:22px;display:flex;align-items:center;gap:12px">Widgets
-      <span style="flex:1"></span>${canEdit()? `<button class="btn btn-primary btn-sm" onclick="widgetModal(null,null,'${pid}')">＋ Add widget</button>`:''}</div>
+      <span style="flex:1"></span>${isStaff()? `<button class="btn btn-ghost btn-sm" onclick="exportReportCSV()">Export report</button>`:''}${canEdit()? `<button class="btn btn-primary btn-sm" onclick="widgetModal(null,null,'${pid}')">＋ Add widget</button>`:''}</div>
     <div class="wgrid" id="wgrid">${(S._widgets||[]).map(x=>widgetCard(x)).join('')
       || `<div class="card empty" style="grid-column:1/-1">${canEdit()? 'No widgets yet — add the first one.':'No widgets on this report yet.'}</div>`}</div>`;
 }
@@ -3134,13 +3234,19 @@ async function renderWorkspaceReport(wsId){
     const {data:seeded, error} = await db.from('dashboard_widgets').insert(defaults).select();
     if(!error) S._widgets = seeded||[];
   }
+  S._reportName = w.name + ' report';
+  S._reportStats = [
+    ['Open tasks', k.open.length], ['Overdue', k.overdue.length], ['Due within 7 days', k.dueWeek.length],
+    ['On-time completion', k.onTimePct===null? '—' : k.onTimePct+'%'], ['Open requests', k.openReqs.length],
+    ['SLA breached', k.slaBreach.length], ['Pending approvals', k.pendingAppr],
+  ];
   C.innerHTML = `
     ${wsTabsHTML(wsId,'report')}
     <div class="page-head"><div><h1>${esc(w.name)} — Report</h1>
       <div class="sub">Shared with everyone in this workspace${canEdit()? ' · your changes are visible to the whole team':''}</div></div></div>
     ${statRowHTML(k)}
     <div class="section-title" style="margin-top:22px;display:flex;align-items:center;gap:12px">Widgets
-      <span style="flex:1"></span>${canEdit()? `<button class="btn btn-primary btn-sm" onclick="widgetModal(null,'${wsId}')">＋ Add widget</button>`:''}</div>
+      <span style="flex:1"></span>${isStaff()? `<button class="btn btn-ghost btn-sm" onclick="exportReportCSV()">Export report</button>`:''}${canEdit()? `<button class="btn btn-primary btn-sm" onclick="widgetModal(null,'${wsId}')">＋ Add widget</button>`:''}</div>
     <div class="wgrid" id="wgrid">${(S._widgets||[]).map(x=>widgetCard(x)).join('')
       || `<div class="card empty" style="grid-column:1/-1">${canEdit()? 'No widgets yet — add the first one.':'No widgets on this report yet.'}</div>`}</div>`;
 }
@@ -3218,11 +3324,27 @@ function widgetCard(w){
     else rows=[...rows].sort((a,b)=>(a.due_date||'9999').localeCompare(b.due_date||'9999')).slice(0,6);
     body = rows.length? (cfg.entity==='requests'? requestTable(rows): taskTable(rows)) : '<div style="color:var(--ink3);font-size:13px;padding:8px 0">Nothing here</div>';
   }
+  const acts = (isStaff()? `<span onclick="exportWidgetCSV('${w.id}')">CSV</span>`:'')
+    + (widgetsEditable()? `<span onclick="widgetModal('${w.id}')">Edit</span><span onclick="deleteWidget('${w.id}')">Remove</span>`:'');
   return `<div class="card widget-card ${w.wtype==='list'?'w-wide':''}" draggable="${widgetsEditable()}" data-wid="${w.id}"
       ondragstart="wDragStart(event,'${w.id}')" ondragover="event.preventDefault()" ondrop="wDrop(event,'${w.id}')">
     <div class="w-head"><h3>${esc(w.title)}</h3>
-      ${widgetsEditable()? `<span class="w-actions"><span onclick="widgetModal('${w.id}')">Edit</span><span onclick="deleteWidget('${w.id}')">Remove</span></span>`:''}</div>
+      ${acts? `<span class="w-actions">${acts}</span>`:''}</div>
     ${body}</div>`;
+}
+function exportWidgetCSV(id){
+  const w = (S._widgets||[]).find(x=>x.id===id); if(!w) return;
+  downloadCSV(csvFilename(w.title||'Widget'),
+    [['Label','Count'], ...widgetGroups(w.config||{}).map(g=>[g.label, g.n])]);
+}
+/* Stat tiles, a blank line, then every widget's grouped numbers — one file. */
+function exportReportCSV(){
+  const out = [['Label','Value'], ...(S._reportStats||[])];
+  (S._widgets||[]).forEach(w=>{
+    out.push([], [w.title], ['Label','Count']);
+    widgetGroups(w.config||{}).forEach(g=>out.push([g.label, g.n]));
+  });
+  downloadCSV(csvFilename(S._reportName||'Report'), out);
 }
 let wDragId=null;
 function wDragStart(e,id){ wDragId=id; }
