@@ -604,9 +604,10 @@ function dueBadge(d, doneAlready){
   const txt = n===0 ? 'Today' : n===1 ? 'Tomorrow' : n===-1 ? 'Yesterday' : fmtDate(d);
   return `<span class="due ${over?'over':''}">${txt}</span>`;
 }
-function slaBadge(sla, status){
+function slaBadge(sla, status, pausedAt){
   if(!sla) return '';
   if(['done','approved','rejected','cancelled'].includes(status)) return '';
+  if(pausedAt) return `<span class="sla-pill" style="background:var(--gray-soft);color:var(--ink2)">SLA paused</span>`;
   const ms = new Date(sla) - Date.now();
   const h = Math.round(ms/3600000);
   if(ms<0) return `<span class="sla-pill" style="background:var(--red-soft);color:var(--red)">SLA breached ${Math.abs(h)}h ago</span>`;
@@ -2795,7 +2796,7 @@ async function openRequest(id){
   const m = modal(`<div class="modal-head"><h2>${r.ticket_no? `<span style="color:var(--ink3);font-size:13px;font-weight:700">WO-${r.ticket_no}</span> `:''}${esc(r.title)}</h2>${reqStatusChip(r.status)}<button class="x" onclick="closeModals()">✕</button></div>
     <div class="modal-body">
       <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">
-        ${prioChip(r.priority)} ${slaBadge(r.sla_due_at, r.status)}
+        ${prioChip(r.priority)} ${slaBadge(r.sla_due_at, r.status, r.sla_paused_at)}
         <span class="chip" style="background:var(--gray-soft);color:var(--ink2)">${rt? esc(rt.name):''}</span>
       </div>
       <div class="field-grid" style="margin-top:14px">
@@ -3294,6 +3295,7 @@ async function renderAdmin(){
         <button class="tab ${adminTab==='workspaces'?'active':''}" onclick="adminTab='workspaces';renderAdmin()">Workspaces</button>
         <button class="tab ${adminTab==='brands'?'active':''}" onclick="adminTab='brands';renderAdmin()">Brands</button>
         <button class="tab ${adminTab==='types'?'active':''}" onclick="adminTab='types';renderAdmin()">Request types</button>
+        <button class="tab ${adminTab==='sla'?'active':''}" onclick="adminTab='sla';renderAdmin()">SLA</button>
         <button class="tab ${adminTab==='automations'?'active':''}" onclick="adminTab='automations';renderAdmin()">Automations</button>
       </div>
       <div class="actions">${adminTab==='users'? '<button class="btn btn-primary" onclick="inviteUserModal()">＋ Add user</button>':''}
@@ -3360,6 +3362,7 @@ async function renderAdmin(){
     };
   }
   if(adminTab==='automations'){ await renderAutomationsTab(B); }
+  if(adminTab==='sla'){ await renderSlaTab(B); }
   if(adminTab==='types'){
     const {data:allTypes} = await db.from('request_types').select('*').order('position');
     window._allTypes = allTypes||[];
@@ -3493,6 +3496,132 @@ async function runSweepNow(btn){
   const n = (data?.sla_warning||0)+(data?.sla_breach||0)+(data?.task_overdue||0)+(data?.custom||0);
   toast(n? `${n} alert${n>1?'s':''} sent` : 'All clear — nothing new to flag');
   autoRerender();
+}
+/* ================= SLA (fully customizable) ================= */
+const SLA_DAYS = [[1,'Mon'],[2,'Tue'],[3,'Wed'],[4,'Thu'],[5,'Fri'],[6,'Sat'],[7,'Sun']];
+const SLA_PAUSABLE = ['submitted','in_review','approved','in_progress'];
+const SLA_DEFAULTS = {use_working_time:false, work_start:'09:00', work_end:'18:00', work_days:[1,2,3,4,5],
+  warn_pct:80, pause_statuses:[], prio_pct:{urgent:50,high:75,normal:100,low:100}, tz:'Asia/Bangkok'};
+let _sla = null;
+async function renderSlaTab(B){
+  const [{data:setRows},{data:hols},{data:types}] = await Promise.all([
+    db.from('sla_settings').select('*'),
+    db.from('sla_holidays').select('*').order('day'),
+    db.from('request_types').select('*').order('position'),
+  ]);
+  _sla = {...SLA_DEFAULTS, ...((setRows||[])[0]||{})};
+  _sla.prio_pct = {...SLA_DEFAULTS.prio_pct, ...(_sla.prio_pct||{})};
+  S._slaHolidays = hols||[]; S._slaTypes = types||[];
+  const canA = isAdmin();
+  const dis = canA? '' : 'disabled';
+  const reqLabel = k => (REQ_STATUSES.find(s=>s.k===k)||{}).label||k;
+  B.innerHTML = `
+    <div class="card" style="padding:18px;margin-bottom:16px">
+      <div class="section-title" style="margin-top:0">How the clock runs</div>
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
+        <label class="sw"><input type="checkbox" id="sla-wt" ${_sla.use_working_time?'checked':''} ${dis}><span></span></label>
+        <span>Count <b>working hours only</b> — evenings, non-working days and holidays don't burn the SLA</span>
+      </div>
+      <div style="display:flex;gap:18px;flex-wrap:wrap;align-items:flex-end">
+        <div><label>Work starts</label><input type="time" id="sla-ws" value="${_sla.work_start.slice(0,5)}" ${dis} style="width:110px"></div>
+        <div><label>Work ends</label><input type="time" id="sla-we" value="${_sla.work_end.slice(0,5)}" ${dis} style="width:110px"></div>
+        <div><label>Working days</label><div style="display:flex;gap:8px;padding-top:4px">
+          ${SLA_DAYS.map(([n,l])=>`<label style="display:flex;gap:4px;align-items:center;font-size:12.5px;margin:0">
+            <input type="checkbox" class="sla-day" data-d="${n}" ${(_sla.work_days||[]).includes(n)?'checked':''} ${dis}>${l}</label>`).join('')}</div></div>
+        <div><label>Warn at</label><div style="display:flex;align-items:center;gap:6px">
+          <input type="number" id="sla-warn" min="10" max="95" value="${_sla.warn_pct}" ${dis} style="width:76px"><span>% of the SLA used</span></div></div>
+      </div>
+      <div style="margin-top:14px"><label>Pause the clock while a ticket is</label>
+        <div style="display:flex;gap:14px;flex-wrap:wrap;padding-top:4px">
+          ${SLA_PAUSABLE.map(k=>`<label style="display:flex;gap:5px;align-items:center;font-size:13px;margin:0">
+            <input type="checkbox" class="sla-pause" data-s="${k}" ${(_sla.pause_statuses||[]).includes(k)?'checked':''} ${dis}>${esc(reqLabel(k))}</label>`).join('')}
+        </div>
+        <div style="font-size:12px;color:var(--ink3);margin-top:4px">While paused a ticket sends no warnings, and the time it spends paused is added back to its deadline.</div></div>
+    </div>
+    <div class="card" style="padding:18px;margin-bottom:16px">
+      <div class="section-title" style="margin-top:0">Speed by priority</div>
+      <div style="font-size:12.5px;color:var(--ink2);margin-bottom:10px">Each priority gets this share of the request type's SLA time — 50% means an urgent ticket must be handled twice as fast.</div>
+      <div style="display:flex;gap:22px;flex-wrap:wrap">
+        ${PRIORITIES.map(p=>`<div><label>${p.label}</label><div style="display:flex;align-items:center;gap:6px">
+          <input type="number" class="sla-prio" data-p="${p.k}" min="10" max="500" value="${_sla.prio_pct[p.k]??100}" ${dis} style="width:80px"><span>%</span></div></div>`).join('')}
+      </div>
+    </div>
+    <div class="card" style="padding:18px;margin-bottom:16px">
+      <div class="section-title" style="margin-top:0">Holidays</div>
+      <div style="font-size:12.5px;color:var(--ink2);margin-bottom:10px">Skipped entirely when counting working hours. Fixed-date Thai public holidays for 2026 are pre-loaded — lunar ones (Makha Bucha, Visakha Bucha, Asarnha Bucha, Khao Phansa) move every year, so add them here.</div>
+      ${S._slaHolidays.length? `<table class="tbl"><tbody>
+        ${S._slaHolidays.map(h=>`<tr><td style="width:130px;white-space:nowrap">${h.day}</td>
+          <td>${esc(h.name)}</td>
+          <td style="text-align:right;width:60px">${canA? `<button class="btn btn-ghost btn-sm" onclick="slaDelHoliday('${h.id}')">✕</button>`:''}</td></tr>`).join('')}
+      </tbody></table>` : '<div class="empty" style="padding:16px">No holidays yet.</div>'}
+      ${canA? `<div style="display:flex;gap:10px;margin-top:12px;align-items:flex-end">
+        <div><label>Date</label><input type="date" id="sla-hd" style="width:160px"></div>
+        <div style="flex:1"><label>Name</label><input id="sla-hn" placeholder="e.g. Visakha Bucha Day"></div>
+        <button class="btn btn-ghost" onclick="slaAddHoliday()">＋ Add holiday</button></div>`:''}
+    </div>
+    <div class="card" style="padding:18px;margin-bottom:16px">
+      <div class="section-title" style="margin-top:0">SLA hours per request type</div>
+      <table class="tbl"><tbody>
+        ${S._slaTypes.map(rt=>`<tr><td style="font-weight:600">${esc(rt.name)}</td>
+          <td style="width:180px"><div style="display:flex;align-items:center;gap:6px">
+            <input type="number" class="sla-th" data-id="${rt.id}" min="1" max="2000" value="${rt.sla_hours}" ${dis} style="width:90px"><span>hours</span></div></td></tr>`).join('')}
+      </tbody></table>
+    </div>
+    ${canA? `<div style="display:flex;gap:10px;align-items:center">
+      <button class="btn btn-primary" onclick="slaSave(this)">Save SLA settings</button>
+      <button class="btn btn-ghost" onclick="slaApplyOpen(this)" title="Recompute the deadline of every open, unpaused ticket with the current settings">Apply to open tickets</button>
+      <span style="font-size:12px;color:var(--ink3)">Changes apply to new tickets right away; use “Apply to open tickets” to restamp the queue.</span>
+    </div>`:''}`;
+}
+async function slaSave(btn){
+  const days = [...document.querySelectorAll('.sla-day:checked')].map(x=>parseInt(x.dataset.d,10));
+  if(!days.length) return toast('Pick at least one working day', true);
+  const ws = document.getElementById('sla-ws').value, we = document.getElementById('sla-we').value;
+  if(!ws || !we || ws >= we) return toast('Work must start before it ends', true);
+  const prio = {}; [...document.querySelectorAll('.sla-prio')].forEach(x=>{ prio[x.dataset.p] = Math.min(500, Math.max(10, parseInt(x.value,10)||100)); });
+  const payload = {
+    company_id: S.me.company_id,
+    use_working_time: document.getElementById('sla-wt').checked,
+    work_start: ws, work_end: we, work_days: days,
+    warn_pct: Math.min(95, Math.max(10, parseInt(document.getElementById('sla-warn').value,10)||80)),
+    pause_statuses: [...document.querySelectorAll('.sla-pause:checked')].map(x=>x.dataset.s),
+    prio_pct: prio, updated_at: new Date().toISOString(),
+  };
+  btn.disabled = true;
+  const {error} = await db.from('sla_settings').upsert(payload);
+  let terr = null;
+  for(const inp of document.querySelectorAll('.sla-th')){
+    const rt = (S._slaTypes||[]).find(t=>t.id===inp.dataset.id);
+    const hrs = Math.min(2000, Math.max(1, parseInt(inp.value,10)||24));
+    if(rt && rt.sla_hours !== hrs){
+      const {error:e2} = await db.from('request_types').update({sla_hours:hrs}).eq('id',rt.id);
+      if(e2) terr = e2;
+    }
+  }
+  btn.disabled = false;
+  if(error||terr) return toast((error||terr).message, true);
+  toast('SLA settings saved — new tickets use them right away');
+  await refreshCore(); renderAdmin();
+}
+async function slaAddHoliday(){
+  const d = document.getElementById('sla-hd').value, n = document.getElementById('sla-hn').value.trim();
+  if(!d) return toast('Pick the date', true);
+  const {error} = await db.from('sla_holidays').insert({day:d, name:n||'Holiday'});
+  if(error) return toast(/duplicate/i.test(error.message)? 'That date is already a holiday':error.message, true);
+  toast('Holiday added'); renderAdmin();
+}
+async function slaDelHoliday(id){
+  const {error} = await db.from('sla_holidays').delete().eq('id',id);
+  if(error) return toast(error.message, true);
+  toast('Holiday removed'); renderAdmin();
+}
+async function slaApplyOpen(btn){
+  btn.disabled = true; btn.textContent = 'Recomputing…';
+  const {data, error} = await db.rpc('recompute_open_slas');
+  btn.disabled = false; btn.textContent = 'Apply to open tickets';
+  if(error) return toast(error.message, true);
+  toast(`${data||0} open ticket${data===1?'':'s'} restamped with the new rules`);
+  renderAdmin();
 }
 /* Each workspace carries the same Automations tab, pinned to itself. */
 async function renderWorkspaceAutomations(wsId){
