@@ -3513,6 +3513,7 @@ const CA_TRIGGERS = [
   {key:'task_assigned',    label:'A task is assigned',      cond:null},
   {key:'task_created',     label:'A task is created',       cond:null},
   {key:'moved_to_group',   label:'A task moves to a group', cond:'group'},
+  {key:'field_changed',    label:'A column changes',        cond:'field'},
   {key:'due_date_arrives', label:'The due date arrives',    cond:null},
 ];
 const CA_ACTIONS = [
@@ -3524,6 +3525,7 @@ const CA_ACTIONS = [
   {key:'set_priority',    label:'Set priority',               cfg:'priority'},
   {key:'assign_person',   label:'Assign it to someone',       cfg:'person'},
   {key:'move_to_group',   label:'Move it to a group',         cfg:'group'},
+  {key:'set_field',       label:'Set a column value',         cfg:'field'},
   {key:'set_due_in_days', label:'Set the due date',           cfg:'days'},
   {key:'archive_task',    label:'Archive the task',           cfg:null},
 ];
@@ -3548,6 +3550,7 @@ function caSentence(d){
     case 'task_assigned':    when = 'When a task is assigned'; break;
     case 'task_created':     when = 'When a task is created'; break;
     case 'moved_to_group':   when = 'When a task moves' + (d.cond.group_id? ` to ${caGroupName(pid,d.cond.group_id)}`:' to a new group'); break;
+    case 'field_changed':    when = 'When ' + (d.cond.field_id? caFieldName(pid,d.cond.field_id):'a column') + (d.cond.to? ` becomes ${d.cond.to}`:' changes'); break;
     case 'due_date_arrives': when = 'When the due date arrives'; break;
   }
   let then='';
@@ -3560,6 +3563,7 @@ function caSentence(d){
     case 'set_priority':    then = `set priority to ${pL(d.cfg.priority)}`; break;
     case 'assign_person':   then = `assign it to ${uN(d.cfg.user_id)}`; break;
     case 'move_to_group':   then = `move it to ${caGroupName(pid,d.cfg.group_id)}`; break;
+    case 'set_field':       then = `set ${d.cfg.field_id? caFieldName(pid,d.cfg.field_id):'a column'}${d.cfg.value? ` to ${d.cfg.value}`:''}`; break;
     case 'set_due_in_days': { const n=parseInt(d.cfg.days??1,10); then = `set the due date ${n} day${n===1?'':'s'} from now`; break; }
     case 'archive_task':    then = 'archive it'; break;
   }
@@ -3580,12 +3584,17 @@ function caModal(id, defScope){
   if(pid) caLoadGroups(pid); else caDraw();
 }
 async function caLoadGroups(pid){
-  window._caGroups = window._caGroups||{};
-  if(!window._caGroups[pid]){
-    const {data} = await db.from('project_groups').select('id,name').eq('project_id',pid);
-    window._caGroups[pid] = data||[];
-  }
+  window._caGroups = window._caGroups||{}; window._caFields = window._caFields||{};
+  const jobs=[];
+  if(!window._caGroups[pid]) jobs.push(db.from('project_groups').select('id,name').eq('project_id',pid)
+    .then(({data})=>{window._caGroups[pid]=data||[];}));
+  if(!window._caFields[pid]) jobs.push(db.from('project_fields').select('id,label,ftype,options').eq('project_id',pid)
+    .then(({data})=>{window._caFields[pid]=(data||[]).filter(f=>f.ftype==='select');}));
+  if(jobs.length) await Promise.all(jobs);
   caDraw();
+}
+function caFieldName(pid, fid){
+  const f = ((window._caFields||{})[pid]||[]).find(x=>x.id===fid); return f? f.label : 'a column';
 }
 function caDraw(){
   const B = document.getElementById('ca-body'); if(!B || !_ca) return;
@@ -3594,11 +3603,27 @@ function caDraw(){
   const pid = _ca.scope.startsWith('p:')? _ca.scope.slice(2) : null;
   const groups = pid? ((window._caGroups||{})[pid]||[]) : [];
   const people = (S.profiles||[]).filter(p=>p.active);
+  const fields = pid? ((window._caFields||{})[pid]||[]) : [];
   const groupCtl = (val, id, anyLabel)=> pid
     ? `<select id="${id}" onchange="_ca.${id==='ca-cond'?'cond.group_id':'cfg.group_id'}=this.value;caDraw()">
         ${anyLabel? `<option value="">${anyLabel}</option>`:''}
         ${groups.map(g=>`<option value="${g.id}" ${val===g.id?'selected':''}>${esc(g.name)}</option>`).join('')}</select>`
     : `<div style="font-size:12.5px;color:var(--ink3);padding:8px 2px">Choose a board below first — groups belong to a board.</div>`;
+  // A board's own status-type columns (select fields) — for "A column changes" / "Set a column value"
+  const fieldCtl = (where, anyValLabel)=>{  // where: 'cond' | 'cfg'
+    if(!pid) return `<div style="font-size:12.5px;color:var(--ink3);padding:8px 2px">Choose a board below first — columns belong to a board.</div>`;
+    if(!fields.length) return `<div style="font-size:12.5px;color:var(--ink3);padding:8px 2px">This board has no status-type (dropdown) columns yet.</div>`;
+    const st = _ca[where]; const fid = st.field_id;
+    const valKey = where==='cond'? 'to' : 'value';
+    const opts = fid? ((fields.find(f=>f.id===fid)||{}).options||[]) : [];
+    const idBase = where==='cond'? 'ca-cond':'ca-cfg';
+    return `<select id="${idBase}" onchange="_ca.${where}.field_id=this.value;_ca.${where}.${valKey}='';caDraw()">
+        <option value="">Pick a column…</option>
+        ${fields.map(f=>`<option value="${f.id}" ${fid===f.id?'selected':''}>${esc(f.label)}</option>`).join('')}</select>
+      ${fid? `<select id="${idBase}-v" style="margin-top:8px" onchange="_ca.${where}.${valKey}=this.value;caDraw()">
+        ${anyValLabel? `<option value="">${anyValLabel}</option>`:'<option value="">Pick a value…</option>'}
+        ${opts.map(o=>`<option value="${esc(o)}" ${st[valKey]===o?'selected':''}>${esc(o)}</option>`).join('')}</select>`:''}`;
+  };
   let condCtl='';
   if(trg.cond==='status') condCtl = `<select id="ca-cond" onchange="_ca.cond.to=this.value;caDraw()">
       <option value="">to any status</option>
@@ -3607,6 +3632,7 @@ function caDraw(){
       <option value="">to any priority</option>
       ${PRIORITIES.map(p=>`<option value="${p.k}" ${_ca.cond.to===p.k?'selected':''}>to ${p.label}</option>`).join('')}</select>`;
   if(trg.cond==='group') condCtl = groupCtl(_ca.cond.group_id, 'ca-cond', 'to any group');
+  if(trg.cond==='field') condCtl = fieldCtl('cond', 'to any value');
   let cfgCtl='';
   if(act.cfg==='person') cfgCtl = `<select id="ca-cfg" onchange="_ca.cfg.user_id=this.value;caDraw()">
       <option value="">Pick a person…</option>
@@ -3616,6 +3642,7 @@ function caDraw(){
   if(act.cfg==='priority') cfgCtl = `<select id="ca-cfg" onchange="_ca.cfg.priority=this.value;caDraw()">
       ${PRIORITIES.map(p=>`<option value="${p.k}" ${(_ca.cfg.priority||'urgent')===p.k?'selected':''}>${p.label}</option>`).join('')}</select>`;
   if(act.cfg==='group') cfgCtl = groupCtl(_ca.cfg.group_id, 'ca-cfg', null);
+  if(act.cfg==='field') cfgCtl = fieldCtl('cfg', null);
   if(act.cfg==='days') cfgCtl = `<div style="display:flex;align-items:center;gap:8px">
       <input id="ca-cfg" type="number" min="0" max="365" style="width:90px" value="${parseInt(_ca.cfg.days??1,10)}" onchange="_ca.cfg.days=this.value">
       <span style="color:var(--ink2);font-size:13px">days from the day it fires</span></div>`;
@@ -3629,7 +3656,7 @@ function caDraw(){
       ${CA_ACTIONS.map(a=>`<option value="${a.key}" ${_ca.action===a.key?'selected':''}>${a.label}</option>`).join('')}</select>
     ${cfgCtl? `<div style="margin-top:8px">${cfgCtl}</div>`:''}
     <label style="margin-top:16px">Where it applies</label>
-    <select id="ca-scope" onchange="_ca.scope=this.value;_ca.cond.group_id&&delete _ca.cond.group_id;_ca.cfg.group_id&&delete _ca.cfg.group_id;const p=this.value.startsWith('p:')?this.value.slice(2):null;p?caLoadGroups(p):caDraw()">
+    <select id="ca-scope" onchange="_ca.scope=this.value;delete _ca.cond.group_id;delete _ca.cond.field_id;delete _ca.cfg.group_id;delete _ca.cfg.field_id;const p=this.value.startsWith('p:')?this.value.slice(2):null;p?caLoadGroups(p):caDraw()">
       <option value="">Everywhere</option>
       <optgroup label="Workspaces">
         ${(S.workspaces||[]).map(w=>`<option value="w:${w.id}" ${_ca.scope==='w:'+w.id?'selected':''}>${esc(w.name)}</option>`).join('')}</optgroup>
@@ -3649,15 +3676,21 @@ async function caSave(){
   if(act.cfg==='person' && !_ca.cfg.user_id) return toast('Pick who to '+(_ca.action==='assign_person'?'assign':'notify'), true);
   if(act.cfg==='group' && !pid) return toast('Choose a board — groups belong to a board', true);
   if(act.cfg==='group' && !_ca.cfg.group_id) return toast('Pick the group to move to', true);
-  if(trg.cond==='group' && !pid && _ca.cond.group_id) delete _ca.cond.group_id;
+  if(trg.cond==='field' && !pid) return toast('Choose a board — columns belong to a board', true);
+  if(trg.cond==='field' && !_ca.cond.field_id) return toast('Pick which column to watch', true);
+  if(act.cfg==='field' && !pid) return toast('Choose a board — columns belong to a board', true);
+  if(act.cfg==='field' && !_ca.cfg.field_id) return toast('Pick which column to set', true);
+  if(act.cfg==='field' && !_ca.cfg.value) return toast('Pick the value to set', true);
   const condition = {};
   if(trg.cond==='status' || trg.cond==='priority'){ if(_ca.cond.to) condition.to = _ca.cond.to; }
-  if(trg.cond==='group' && _ca.cond.group_id) condition.group_id = _ca.cond.group_id;
+  if(trg.cond==='group' && pid && _ca.cond.group_id) condition.group_id = _ca.cond.group_id;
+  if(trg.cond==='field'){ condition.field_id = _ca.cond.field_id; if(_ca.cond.to) condition.to = _ca.cond.to; }
   const cfg = {};
   if(act.cfg==='person') cfg.user_id = _ca.cfg.user_id;
   if(act.cfg==='status') cfg.status = _ca.cfg.status||'todo';
   if(act.cfg==='priority') cfg.priority = _ca.cfg.priority||'urgent';
   if(act.cfg==='group') cfg.group_id = _ca.cfg.group_id;
+  if(act.cfg==='field'){ cfg.field_id = _ca.cfg.field_id; cfg.value = _ca.cfg.value; }
   if(act.cfg==='days') cfg.days = Math.max(0, parseInt(_ca.cfg.days??1,10)||0);
   const payload = {workspace_id:wid, project_id:pid, trigger_key:_ca.trigger, condition,
                    action_key:_ca.action, action_config:cfg, name:caSentence(_ca)};
