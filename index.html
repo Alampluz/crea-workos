@@ -1643,7 +1643,8 @@ function filterBarHTML(pid){
     <button class="bf-sel ${f.assignee?'on':''}" onclick="bfPickPerson(this,'${pid}')">${f.assignee? esc(f.assignee==='__none__'?'Unassigned':(prof(f.assignee)?.full_name||'Person')) : 'Person'} ▾</button>
     ${(S._groups||[]).length? sel('group','Group', (S._groups||[]).map(g=>({v:g.id,l:g.name})).concat([{v:'__none__',l:'No group'}])) : ''}
     ${n? `<button class="bf-clear" onclick="bfClear('${pid}')">Clear ${n} filter${n>1?'s':''}</button>`:''}
-    ${isStaff()? `<button class="btn btn-ghost btn-sm" onclick="exportBoardCSV('${pid}')">Export CSV</button>`:''}
+    ${isStaff()? `<button class="btn btn-ghost btn-sm" onclick="exportBoardCSV('${pid}')">Export CSV</button>
+    <button class="btn btn-ghost btn-sm" onclick="boardActivityModal('${pid}')">Activity</button>`:''}
     <span class="bf-count" id="bf-count"></span>
   </div>`;
 }
@@ -2008,6 +2009,36 @@ function exportBoardCSV(pid){
     (t.created_at||'').slice(0,10),
   ]));
   downloadCSV(csvFilename(p? p.name : 'Board'), out);
+}
+/* The board's own activity log — every task created, changed or removed here,
+   with Restore on removed tasks (the row itself comes back; comments and files don't). */
+async function boardActivityModal(pid){
+  const p = projById(pid);
+  const {data:rows} = await db.from('activity_log').select('*').eq('project_id', pid)
+    .order('created_at',{ascending:false}).limit(120);
+  const live = new Set((S._tasksAll||S._tasks||[]).map(t=>t.id));
+  modal(`<div class="modal-head"><h2>Board activity${p? ` — ${esc(p.name)}`:''}</h2><button class="x" onclick="closeModals()">✕</button></div>
+    <div class="modal-body">
+      ${(rows||[]).length? `<div class="hist">${rows.map(a=>{
+        const who = prof(a.actor_id);
+        const title = (a.detail||{}).title || '';
+        const canRestore = a.action==='deleted' && (a.detail||{}).snapshot && !live.has(a.entity_id) && isStaff();
+        return `<div class="hist-row">${avatar(who,true)}
+          <div class="hist-txt"><b>${esc(who?.full_name||'Someone')}</b> ${histLine(a)}${title? ` · <b>${esc(title)}</b>`:''}
+            <span class="hist-when" title="${fmtDateTime(a.created_at)}">${timeAgo(a.created_at)}</span>
+            ${canRestore? `<button class="hist-undo" onclick="restoreTask(${a.id}, '${pid}')">Restore</button>`:''}</div>
+        </div>`;}).join('')}</div>`
+      : '<div class="empty">Nothing recorded on this board yet.</div>'}
+    </div>
+    <div class="modal-foot"><button class="btn btn-ghost" onclick="closeModals()">Close</button></div>`, true);
+}
+async function restoreTask(logId, pid){
+  const {error} = await db.rpc('restore_deleted_task', {log_id: logId});
+  if(error) return toast(error.message, true);
+  toast('Task restored — back on the board');
+  closeModals();
+  if(S.route.view==='project' && S.route.id===pid) renderProject(pid);
+  else location.hash = '#/project/'+pid;
 }
 function tvHeadHTML(id, flds, showAddCol, gid){
   return `<tr>
