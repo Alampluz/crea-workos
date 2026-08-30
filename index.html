@@ -1156,6 +1156,13 @@ function notifLine(n, who){
     case 'sla_breach':  return `${t} has breached its SLA`;
     case 'overdue':     return `${t} is overdue`;
     case 'automation':  return n.body? `${t} — ${esc(n.body)}` : `An automation flagged ${t}`;
+    case 'approval':    return `${name} asked you to sign off on ${t}`;
+    case 'approval_decided': {
+      // body = 'approved' or 'rejected — note'
+      const ok = (n.body||'').startsWith('approved');
+      const note = (n.body||'').includes(' — ')? n.body.slice(n.body.indexOf(' — ')+3) : '';
+      return `${name} ${ok?'approved':'declined'} your sign-off — ${t}${note? ` <span style="color:var(--ink3)">· ${esc(note)}</span>`:''}`;
+    }
     default:            return `${name} mentioned you${n.title? ` in ${t}`:''}`;
   }
 }
@@ -1321,6 +1328,7 @@ function approvalTable(apprs){
       <td style="color:var(--ink2)">${fmtDateTime(a.created_at)}</td>
       <td style="text-align:right;white-space:nowrap">
         ${a.request_id? `<button class="btn btn-ghost btn-sm" onclick="openRequest('${a.request_id}')">View</button>`:''}
+        ${a.task_id? `<button class="btn btn-ghost btn-sm" onclick="location.hash='#/task/${a.task_id}'">View</button>`:''}
         <button class="btn btn-green btn-sm" onclick="decideApproval('${a.id}','approved')">Approve</button>
         <button class="btn btn-danger btn-sm" onclick="decideApproval('${a.id}','rejected')">Reject</button></td>
     </tr>`).join('')}</tbody></table>`;
@@ -1430,6 +1438,21 @@ function projMenu(anchor, pid){
 }
 function editProjectModal(pid){
   const p = (S.projects||[]).find(x=>x.id===pid); if(!p) return;
+  const gate = p.approval_gate||{};
+  const canGate = isAdmin()||isMgmt();
+  const gatePool = S.profiles.filter(u=>u.active && ['admin','internal','management'].includes(u.role) && !(u.email||'').startsWith('forms+'));
+  const gateSection = canGate? `
+      <label style="margin-top:14px">Sign-off</label>
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:4px">
+        <label class="sw"><input type="checkbox" id="ep-gate-on" ${gate.on?'checked':''}><span></span></label>
+        <span style="font-size:13px">Require sign-off before a task can be marked</span>
+        <select id="ep-gate-status" style="width:auto">${STATUSES.map(s=>`<option value="${s.k}" ${s.k===(gate.status||'done')?'selected':''}>${s.label}</option>`).join('')}</select>
+      </div>
+      <div id="ep-gate-appr" style="margin-top:8px" ${gate.on?'':'hidden'}>
+        <div style="font-size:12px;color:var(--ink3);margin-bottom:4px">Who usually signs off — they pre-fill the request picker</div>
+        ${gatePool.map(u=>`<div class="chk"><input type="checkbox" data-gapp="${u.id}" ${(gate.approvers||[]).includes(u.id)?'checked':''}>
+          ${avatar(u,true)} <span>${esc(u.full_name)}</span></div>`).join('')}
+      </div>`:'';
   const m = modal(`<div class="modal-head"><h2>Edit board</h2><button class="x" onclick="closeModals()">✕</button></div>
     <div class="modal-body">
       <label>Board name <span class="req">*</span></label><input id="ep-name" value="${esc(p.name)}">
@@ -1443,11 +1466,13 @@ function editProjectModal(pid){
       <label style="margin-top:14px">Colour</label>
       <div id="ep-cols" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:4px">
         ${PJ_COLORS.map(c=>`<span data-c="${c}" style="width:26px;height:26px;border-radius:50%;background:${c};cursor:pointer;box-shadow:${c===p.color?'0 0 0 3px #fff,0 0 0 5px '+c:'none'}"></span>`).join('')}
-      </div>
+      </div>${gateSection}
     </div>
     <div class="modal-foot"><button class="btn btn-ghost" onclick="closeModals()">Cancel</button><button class="btn btn-primary" id="ep-save">Save</button></div>`);
   let colour = p.color;
   wireVisPicker(m,'ep-vis');
+  const gateOn = m.querySelector('#ep-gate-on');
+  if(gateOn) gateOn.onchange = ()=>{ m.querySelector('#ep-gate-appr').hidden = !gateOn.checked; };
   m.querySelectorAll('#ep-cols span').forEach(s=> s.onclick=()=>{
     colour = s.dataset.c;
     m.querySelectorAll('#ep-cols span').forEach(x=> x.style.boxShadow = x.dataset.c===colour? '0 0 0 3px #fff,0 0 0 5px '+colour : 'none');
@@ -1461,9 +1486,13 @@ function editProjectModal(pid){
       const ext = (pms||[]).map(r=>prof(r.user_id)).filter(u=>u && ['partner','freelancer'].includes(u.role));
       if(ext.length && !confirm(`${ext.map(u=>u.full_name).join(', ')} ${ext.length>1?'are':'is'} on this board as an outside guest. Switching to ${VIS[vis].label} removes their access. Continue?`)) return;
     }
-    const {error} = await db.from('projects').update({name, description:m.querySelector('#ep-desc').value.trim(),
+    const upd = {name, description:m.querySelector('#ep-desc').value.trim(),
       workspace_id:m.querySelector('#ep-ws').value, visibility:vis,
-      status:m.querySelector('#ep-status').value, color:colour}).eq('id',pid);
+      status:m.querySelector('#ep-status').value, color:colour};
+    if(canGate) upd.approval_gate = {on: gateOn.checked,
+      status: m.querySelector('#ep-gate-status').value,
+      approvers: [...m.querySelectorAll('#ep-gate-appr input[data-gapp]:checked')].map(c=>c.dataset.gapp)};
+    const {error} = await db.from('projects').update(upd).eq('id',pid);
     if(error) return toast(error.message, true);
     closeModals(); toast('Board updated'); await refreshCore();
     if(S.route.view==='project') renderProject(pid); else if(S.route.view==='ws') renderWorkspace(S.route.id, S.route.tab); else renderSidebar();
@@ -1670,7 +1699,8 @@ async function renderProject(id){
     S.projects.push(data); return renderProject(id);
   }
   const w = wsById(p.workspace_id);
-  setTopbar(`<span onclick="location.hash='#/ws/${p.workspace_id}'" style="cursor:pointer">${w? esc(w.name):''}</span> <span>/</span> ${esc(p.name)} ${visChip(p.visibility)}`,
+  const gateChip = p.approval_gate?.on? `<span class="chip" style="background:var(--gray-soft);color:var(--ink3)" title="Tasks need an approved sign-off before they can be marked ${esc((STATUSES.find(s=>s.k===p.approval_gate.status)||{}).label||'Done')}">Sign-off required</span>` : '';
+  setTopbar(`<span onclick="location.hash='#/ws/${p.workspace_id}'" style="cursor:pointer">${w? esc(w.name):''}</span> <span>/</span> ${esc(p.name)} ${visChip(p.visibility)}${gateChip}`,
     `<div class="tabs"><button class="tab ${boardMode==='table'?'active':''}" onclick="boardMode='table';renderProject('${id}')">Table</button>
      <button class="tab ${boardMode==='board'?'active':''}" onclick="boardMode='board';renderProject('${id}')">Board</button>
      <button class="tab ${boardMode==='report'?'active':''}" onclick="boardMode='report';renderProject('${id}')">Report</button></div>
@@ -2631,13 +2661,14 @@ async function openTaskRoute(id){
   setTimeout(()=>openTask(id), 450);
 }
 async function openTask(id){
-  const [{data:t}, {data:chk}, {data:comments}, {data:atts}, {data:subs}, {data:hist}] = await Promise.all([
+  const [{data:t}, {data:chk}, {data:comments}, {data:atts}, {data:subs}, {data:hist}, {data:apprs}] = await Promise.all([
     db.from('tasks').select('*').eq('id',id).single(),
     db.from('task_checklist').select('*').eq('task_id',id).order('position'),
     db.from('comments').select('*').eq('entity_type','task').eq('entity_id',id).order('created_at'),
     db.from('attachments').select('*').eq('entity_type','task').eq('entity_id',id).order('created_at'),
     db.from('subtasks').select('*').eq('task_id',id).order('position').order('created_at'),
     db.from('activity_log').select('*').eq('entity_type','task').eq('entity_id',id).order('created_at',{ascending:false}).limit(200),
+    db.from('approvals').select('*').eq('task_id',id).order('created_at'),
   ]);
   S._taskHist = hist||[]; S._histEntity = id; S._histType = 'task';
   if(!t) return toast('Task not found', true);
@@ -2669,6 +2700,7 @@ async function openTask(id){
       <label>Attachments</label>
       <div id="tv-atts">${attListHTML(atts, canEdit())}</div>
       ${canCreate()? attachZoneHTML('tv-drop') : ''}
+      ${(p?.approval_gate?.on || (apprs||[]).length)? signoffSectionHTML(t, apprs||[], p?.approval_gate||{}) : ''}
       <label>Comments</label>
       <div id="tv-comments">${(comments||[]).map(commentRow).join('')||'<div style="color:var(--ink3);font-size:13px">No comments yet</div>'}</div>
       ${canCreate()? commentComposerHTML('tv') : ''}
@@ -2711,6 +2743,69 @@ async function openTask(id){
     cIn.addEventListener('keydown', e=>{ if(e.key==='Enter' && !e.shiftKey && !document.querySelector('.mention-menu')){ e.preventDefault(); m.querySelector('#tv-comment-add').click(); } });
     m.querySelector('#tv-comment-add').onclick = ()=> postComment('task', t.id, t.title, cIn, m.querySelector('#tv-comments'));
   }
+}
+/* ---- sign-off (maker-checker) ----
+   The DB enforces the gate: moving into the gated status without an approved
+   row raises, and maker-cannot-be-checker is rejected on insert. The UI just
+   shows the rows and passes error messages through. */
+function signoffRow(a){
+  const ap = prof(a.approver_id), rq = prof(a.requested_by);
+  const chip = a.status==='approved'? `<span class="chip" style="background:var(--green-soft);color:var(--green)">approved</span>`
+    : a.status==='rejected'? `<span class="chip" style="background:var(--red-soft);color:var(--red)">rejected</span>`
+    : `<span class="chip" style="background:var(--amber-soft);color:var(--amber)">pending</span>`;
+  const mine = a.status==='pending' && S.me && a.approver_id===S.me.id;
+  return `<div class="so-row" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:6px 0;font-size:13px">
+    ${avatar(ap,true)} <b>${esc(ap?.full_name||'—')}</b> ${chip}
+    <span style="color:var(--ink3);font-size:12px">asked by ${esc(rq?.full_name||'—')} · ${timeAgo(a.created_at)}</span>
+    ${a.note? `<span style="color:var(--ink2);font-size:12px">“${esc(a.note)}”</span>`:''}
+    ${mine? `<span style="margin-left:auto;white-space:nowrap"><button class="btn btn-green btn-sm" onclick="decideTaskApproval('${a.id}','approved','${a.task_id}')">Approve</button>
+      <button class="btn btn-danger btn-sm" onclick="decideTaskApproval('${a.id}','rejected','${a.task_id}')">Reject</button></span>`:''}
+  </div>`;
+}
+function signoffSectionHTML(t, apprs, gate){
+  const last = apprs[apprs.length-1];
+  const gateLabel = (STATUSES.find(s=>s.k===(gate.status||'done'))||{}).label||'Done';
+  return `<label>Sign-off</label>
+    <div id="tv-signoff">
+      ${apprs.map(signoffRow).join('') || '<div style="color:var(--ink3);font-size:13px">No sign-off requested yet</div>'}
+      ${last && last.status==='approved'? `<div style="font-size:12.5px;color:var(--green);margin-top:4px">Sign-off complete — this task can be marked ${esc(gateLabel)}</div>`:''}
+      ${isStaff()? `<button class="btn btn-ghost btn-sm" style="margin-top:6px" onclick="requestSignoffModal('${t.id}')">Request sign-off</button>`:''}
+    </div>`;
+}
+async function requestSignoffModal(taskId){
+  const {data:t} = await db.from('tasks').select('id,title,project_id').eq('id',taskId).single();
+  if(!t) return toast('Task not found', true);
+  const gate = (projById(t.project_id)||{}).approval_gate||{};
+  // gate approvers pre-fill the picker; never offer myself — the DB rejects self-approval
+  let pool = (gate.approvers||[]).map(prof).filter(u=>u && u.active && u.id!==S.me.id);
+  if(!pool.length) pool = S.profiles.filter(u=>u.active && ['admin','internal','management'].includes(u.role) && u.id!==S.me.id && !(u.email||'').startsWith('forms+'));
+  if(!pool.length) return toast('No one else can sign off yet — add another staff member first', true);
+  const m = modal(`<div class="modal-head"><h2>Request sign-off</h2><button class="x" onclick="closeModals()">✕</button></div>
+    <div class="modal-body">
+      <div style="font-size:13px;color:var(--ink2);margin-bottom:10px">${esc(t.title)}</div>
+      <label>Who signs off</label><select id="so-approver">${pool.map(u=>`<option value="${u.id}">${esc(u.full_name)}</option>`).join('')}</select>
+      <label>Note (optional)</label><input id="so-note" placeholder="Anything they should look at?">
+    </div>
+    <div class="modal-foot"><button class="btn btn-ghost" onclick="closeModals()">Cancel</button><button class="btn btn-primary" id="so-send">Send request</button></div>`);
+  m.querySelector('#so-send').onclick = async ()=>{
+    const approver_id = m.querySelector('#so-approver').value;
+    if(!approver_id) return toast('Pick an approver', true);
+    const {error} = await db.from('approvals').insert({task_id:t.id, title:t.title,
+      approver_id, requested_by:S.me.id, note:m.querySelector('#so-note').value.trim()});
+    if(error) return toast(error.message, true);
+    closeModals(); toast('Sign-off requested'); openTask(t.id);
+  };
+}
+/* Same decision as decideApproval, but lands back in the task drawer.
+   The DB writes the notification + history rows itself. */
+async function decideTaskApproval(id, status, taskId){
+  let note = '';
+  if(status==='rejected'){ note = prompt('Reason for rejection (optional):')||''; }
+  const {error} = await db.from('approvals').update({status, note, decided_at:new Date().toISOString()}).eq('id',id);
+  if(error) return toast(error.message, true);
+  toast(status==='approved'? 'Approved':'Rejected');
+  updateApprovalBadge();
+  closeModals(); openTask(taskId);
 }
 function subProgressBar(subs){
   const total=subs.length, done=subs.filter(s=>s.status==='done').length;
@@ -2868,6 +2963,9 @@ function histLine(a){
     case 'subtask_added':  return `added subtask <b>${esc(d.title||'')}</b>`;
     case 'subtask_removed':return `removed subtask <b>${esc(d.title||'')}</b>`;
     case 'subtask_status': return `marked subtask <b>${esc(d.title||'')}</b> ${esc(d.to==='done'?'done':'not done')}`;
+    case 'signoff_requested': return `requested a sign-off from <b>${esc(prof(d.approver)?.full_name||'someone')}</b>`;
+    case 'signoff_approved':  return `approved the sign-off${d.note? ` — “${esc(d.note)}”`:''}`;
+    case 'signoff_rejected':  return `rejected the sign-off${d.note? ` — “${esc(d.note)}”`:''}`;
     // entries written before the history engine existed
     case 'status_changed': return `changed <b>Status</b> from ${histValue('status',d.from)} to ${histValue('status',d.to)}`;
     case 'updated': {
@@ -3188,6 +3286,7 @@ async function renderApprovals(){
         <td style="color:var(--ink2)">${fmtDateTime(a.created_at)}</td>
         <td style="text-align:right;white-space:nowrap">
           ${a.request_id? `<button class="btn btn-ghost btn-sm" onclick="openRequest('${a.request_id}')">View</button>`:''}
+          ${a.task_id? `<button class="btn btn-ghost btn-sm" onclick="location.hash='#/task/${a.task_id}'">View</button>`:''}
           ${a.status==='pending'&&a.approver_id===S.me.id? `<button class="btn btn-green btn-sm" onclick="decideApproval('${a.id}','approved')">Approve</button>
           <button class="btn btn-danger btn-sm" onclick="decideApproval('${a.id}','rejected')">Reject</button>`:''}</td>
       </tr>`).join('')}</tbody></table>`
