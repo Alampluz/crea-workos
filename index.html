@@ -407,6 +407,25 @@ td.tv-name .tv-open{padding-left:20px}
 .mi-info{width:16px;height:16px;flex:none;border-radius:50%;background:var(--gray-soft);color:var(--ink3);font-size:11px;font-weight:700;line-height:16px;text-align:center;cursor:pointer}
 .mi-info:hover{background:var(--accent);color:#fff}
 .mi-hint{font-size:12px;color:var(--ink3);background:var(--gray-soft);border-radius:8px;padding:8px 10px;margin-bottom:10px}
+/* workload view */
+.wl-wrap{padding:6px 4px}
+.wl-head{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:10px 14px;font-size:13px;color:var(--ink3);flex-wrap:wrap}
+.wl-cap{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--ink3)}
+.wl-cap input{width:52px;padding:3px 6px;border:1px solid var(--line);border-radius:6px;font-size:12px}
+.wl-row{display:flex;align-items:center;gap:14px;padding:12px 14px;border-top:1px solid var(--line)}
+.wl-who{display:flex;align-items:center;gap:8px;width:190px;flex:none}
+.wl-name{font-size:13.5px;font-weight:600}
+.wl-av{width:26px;height:26px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-size:12px;font-weight:700}
+.wl-none{background:var(--gray-soft);color:var(--ink3)}
+.wl-mid{flex:1;min-width:0}
+.wl-bar{height:8px;border-radius:6px;background:var(--gray-soft);overflow:hidden;margin-bottom:7px}
+.wl-fill{height:100%;border-radius:6px;transition:width .2s}
+.wl-segs{display:flex;flex-wrap:wrap;gap:5px}
+.wl-chip{display:inline-flex;align-items:center;gap:4px;font-size:11.5px;font-weight:600;border-radius:6px;padding:1px 7px}
+.wl-load{width:96px;flex:none;text-align:right;font-size:12.5px;color:var(--ink3)}
+.wl-sub{font-size:11px;color:var(--ink3)}
+.wl-flag{display:inline-block;background:var(--red);color:#fff;font-size:10px;font-weight:700;border-radius:5px;padding:0 5px;margin-left:2px}
+.tv-filechip{white-space:nowrap}
 
 /* login */
 #login-screen{position:fixed;inset:0;background:radial-gradient(1200px 700px at 18% -10%,#14403A 0%,#101114 58%);display:flex;align-items:center;justify-content:center;z-index:100}
@@ -559,6 +578,18 @@ const PRIORITIES = [
   {k:'high', label:'High', color:'var(--amber)', soft:'var(--amber-soft)'},
   {k:'normal', label:'Normal', color:'var(--blue)', soft:'var(--blue-soft)'},
   {k:'low', label:'Low', color:'var(--ink3)', soft:'var(--gray-soft)'},
+];
+const PLATFORMS = [
+  {k:'TikTok Shop', label:'TikTok Shop', color:'#111827'},
+  {k:'Shopee',      label:'Shopee',      color:'#EE4D2D'},
+  {k:'Lazada',      label:'Lazada',      color:'#0F146D'},
+  {k:'Shopify',     label:'Shopify',     color:'#5E8E3E'},
+  {k:'Amazon',      label:'Amazon',      color:'#E28C13'},
+  {k:'LINE',        label:'LINE',        color:'#06C755'},
+  {k:'Facebook',    label:'Facebook',    color:'#1877F2'},
+  {k:'Instagram',   label:'Instagram',   color:'#C13584'},
+  {k:'Website',     label:'Website',     color:'#2273C9'},
+  {k:'Other',       label:'Other',       color:'#8E93A8'},
 ];
 const REQ_STATUSES = [
   {k:'submitted', label:'Submitted', color:'var(--blue)', soft:'var(--blue-soft)'},
@@ -1848,7 +1879,8 @@ async function renderProject(id){
   setTopbar(`<span onclick="location.hash='#/ws/${p.workspace_id}'" style="cursor:pointer">${w? esc(w.name):''}</span> <span>/</span> ${esc(p.name)} ${visChip(p.visibility)}${gateChip}`,
     `<div class="tabs"><button class="tab ${boardMode==='table'?'active':''}" onclick="boardMode='table';renderProject('${id}')">Table</button>
      <button class="tab ${boardMode==='board'?'active':''}" onclick="boardMode='board';renderProject('${id}')">Board</button>
-     <button class="tab ${boardMode==='report'?'active':''}" onclick="boardMode='report';renderProject('${id}')">Report</button></div>
+     <button class="tab ${boardMode==='report'?'active':''}" onclick="boardMode='report';renderProject('${id}')">Report</button>
+     <button class="tab ${boardMode==='workload'?'active':''}" onclick="boardMode='workload';renderProject('${id}')">Workload</button></div>
      ${isStaff()? `<button class="btn btn-ghost btn-sm" onclick="projectMembersModal('${id}')">Partner access</button>`:''}
      ${canEdit()? `<button class="btn btn-ghost btn-sm" onclick="editProjectModal('${id}')">Edit board</button>`:''}
      ${canDeleteBoard()? `<button class="btn btn-ghost btn-sm" style="color:var(--red)" onclick="deleteProjectModal('${id}')">Delete board</button>`:''}
@@ -1890,6 +1922,7 @@ function renderBoardBody(id){
   if(cnt) cnt.textContent = bfActiveCount(id)? `${rows.length} of ${(S._tasks||[]).length} tasks` : '';
   // keep the select/search states in sync without rebuilding the bar
   if(boardMode==='table'){ renderProjectTableView(id, rows, host); return; }
+  if(boardMode==='workload'){ renderWorkload(id, rows, host); return; }
   host.innerHTML = `<div class="board">${STATUSES.map(s=>{
     const list = rows.filter(t=>t.status===s.k);
     return `<div class="col" data-status="${s.k}">
@@ -1898,6 +1931,48 @@ function renderBoardBody(id){
       ${canCreate()? `<button class="add-card" onclick="newTaskModal('${id}','${s.k}')">＋ Add task</button>`:''}
     </div>`;}).join('')}</div>`;
   wireDnD(id);
+}
+/* ---- Workload view (M-13): assignments + capacity by employee ---- */
+let WORKLOAD_CAP = 8;   // "open tasks" a person can comfortably hold before flagged Heavy
+function renderWorkload(id, rows, host){
+  const OPEN = new Set(['todo','in_progress','review','blocked']);
+  // bucket the filtered rows by assignee (plus an Unassigned bucket)
+  const buckets = new Map();
+  const bucket = key => { let b=buckets.get(key); if(!b){ b={key, counts:{}, open:0, total:0}; buckets.set(key,b); } return b; };
+  (rows||[]).forEach(t=>{
+    const b = bucket(t.assignee_id||'__none__');
+    b.counts[t.status] = (b.counts[t.status]||0)+1;
+    b.total++; if(OPEN.has(t.status)) b.open++;
+  });
+  let list = [...buckets.values()];
+  // real people first (by open desc), Unassigned always last
+  list.sort((a,b)=> (a.key==='__none__') - (b.key==='__none__') || b.open-a.open || b.total-a.total);
+  const maxOpen = Math.max(WORKLOAD_CAP, ...list.map(b=>b.open), 1);
+  const totalOpen = list.reduce((s,b)=>s+b.open,0), people = list.filter(b=>b.key!=='__none__').length;
+  const seg = b => STATUSES.map(s=> b.counts[s.k]? `<span class="wl-chip" style="background:${s.color}1C;color:${s.color}"><span class="cdot" style="background:${s.color}"></span>${s.label} ${b.counts[s.k]}</span>`:'').join('');
+  const rowHTML = b=>{
+    const none = b.key==='__none__';
+    const p = none? null : prof(b.key);
+    const heavy = b.open > WORKLOAD_CAP;
+    const pct = Math.round(b.open/maxOpen*100);
+    const barColor = heavy? 'var(--red)' : b.open>=WORKLOAD_CAP*0.75? 'var(--amber)' : 'var(--accent)';
+    return `<div class="wl-row">
+      <div class="wl-who">${none? `<span class="wl-av wl-none">?</span><span class="wl-name" style="color:var(--ink3)">Unassigned</span>` : `${avatar(p,true)}<span class="wl-name">${esc(p?p.full_name:'—')}</span>`}</div>
+      <div class="wl-mid">
+        <div class="wl-bar"><div class="wl-fill" style="width:${pct}%;background:${barColor}"></div></div>
+        <div class="wl-segs">${seg(b)||'<span class="tv-empty">No tasks</span>'}</div>
+      </div>
+      <div class="wl-load"><b style="color:${heavy?'var(--red)':'var(--ink)'}">${b.open}</b> open${heavy?' <span class="wl-flag">Heavy</span>':''}<div class="wl-sub">${b.total} total</div></div>
+    </div>`;
+  };
+  host.innerHTML = `<div class="card wl-wrap">
+    <div class="wl-head">
+      <div>${people} ${people===1?'person':'people'} · ${totalOpen} open task${totalOpen===1?'':'s'} on this board</div>
+      <label class="wl-cap">Comfortable load
+        <input type="number" min="1" max="99" value="${WORKLOAD_CAP}" onchange="WORKLOAD_CAP=Math.max(1,+this.value||8);renderBoardBody('${id}')"> open/person</label>
+    </div>
+    ${list.length? list.map(rowHTML).join('') : '<div class="empty">No tasks match the current filters</div>'}
+  </div>`;
 }
 function taskCard(t){
   const done = t.status==='done';
@@ -1955,6 +2030,7 @@ function tvBuildOpts(flds){
     priority: PRIORITIES.map(p=>({v:p.k, l:p.label})),
     people: tvPeople().map(p=>({v:p.id, l:p.full_name})),
     brand: (S.brandsList||[]).filter(b=>b.active!==false).map(b=>({v:b.name, l:b.name})),
+    platform: PLATFORMS.map(p=>({v:p.k, l:p.label})),
   };
   (flds||[]).forEach(f=>{ if(f.ftype==='select') TVO['f_'+f.id]=(f.options||[]).map(o=>({v:o, l:o})); });
 }
@@ -1982,6 +2058,9 @@ function tvDisplay(kind, val, t){
     let host=''; try{ host=new URL(val).hostname.replace('www.','').split('.')[0]; }catch(e){ host='link'; }
     return `<a class="tv-link" href="${esc(val)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">Open ${esc(host)}</a>`;
   }
+  if(kind==='platform'){ const p=PLATFORMS.find(x=>x.k===val); const c=p?p.color:'#8E93A8'; return `<span class="tv-chip" style="background:${c}1C;color:${c}"><span class="cdot" style="background:${c}"></span>${esc(val)}</span>`; }
+  if(kind==='file'){ if(!val||!val.path) return `<span class="tv-empty">—</span>`;
+    return `<a class="tv-link tv-filechip" href="${esc(attUrl(val.path))}" target="_blank" rel="noopener" title="${esc(val.name||'file')}" onclick="event.stopPropagation()">📎 ${esc((val.name||'file').length>18?(val.name.slice(0,17)+'…'):val.name)}</a>`; }
   if(kind==='brand'||kind.startsWith('f_')) return `<span class="tv-chip" style="background:var(--gray-soft);color:var(--ink)">${esc(val)}</span>`;
   return esc(val);
 }
@@ -2003,6 +2082,31 @@ function tvEdit(el, ev){
     else await tvCore(tid, field, val);
     el.innerHTML = tvDisplay(kind, cust==='1'? (t.custom||{})[field] : t[field], t);
   };
+  // file field: click opens a picker, uploads to storage, stores {name,path} in custom
+  if(kind==='file'){
+    const cur2 = (t.custom||{})[field];
+    const pick = ()=>{
+      const inp=document.createElement('input'); inp.type='file';
+      inp.onchange=async ()=>{
+        const f=inp.files[0]; if(!f) return;
+        if(f.size > MAX_UPLOAD) return toast(`${f.name} is ${fileSize(f.size)} — the limit is 25 MB`, true);
+        const path='taskfield/'+tid+'/'+field+'/'+Date.now()+'_'+(f.name||'file').replace(/[^\w.\-]+/g,'_');
+        const {error}=await db.storage.from('attachments').upload(path, f, {contentType:f.type||undefined});
+        if(error) return toast("Couldn't upload: "+error.message, true);
+        if(cur2&&cur2.path) db.storage.from('attachments').remove([cur2.path]);
+        await tvCustom(tid, field, {name:f.name||'file', path});
+        el.innerHTML=tvDisplay('file', (t.custom||{})[field], t);
+      };
+      inp.click();
+    };
+    if(cur2&&cur2.path){
+      tvShowMenu(el, [{v:'replace',l:'Replace file'},{v:'clear',l:'Remove file'}], o=>esc(o.l), async v=>{
+        if(v==='clear'){ if(cur2.path) db.storage.from('attachments').remove([cur2.path]); await tvCustom(tid, field, ''); el.innerHTML=tvDisplay('file','',t); }
+        else pick();
+      }, false, false);
+    } else pick();
+    return;
+  }
   // inline editors for free-form types
   if(kind==='text'||kind==='number'||kind==='date'||kind==='due'){
     if(el.querySelector('input')) return;
@@ -2025,6 +2129,7 @@ function tvEdit(el, ev){
   const renderOpt = o=>
     kind==='status'? tvDotOpt(o, STATUSES, cur) :
     kind==='priority'? tvDotOpt(o, PRIORITIES, cur) :
+    kind==='platform'? tvDotOpt(o, PLATFORMS, cur) :
     kind==='people'? `${avatar(prof(o.v),true)}<span>${esc(o.l)}</span>` : esc(o.l);
   const canClear = !(cust!=='1' && (field==='status'||field==='priority'));
   // people pickers are always searchable; other lists once they get long
@@ -2244,7 +2349,7 @@ function mirrorEditable(f, lt){
   const show = (f.options||{}).show;
   if(['status','priority','assignee','due_date'].includes(show)) return true;
   const rf = (S._linkedFields||{})[show];
-  return !!rf && ['select','text','number','date','checkbox','brand'].includes(rf.ftype);
+  return !!rf && ['select','text','number','date','checkbox','brand','platform'].includes(rf.ftype);
 }
 function tvMirrorCell(t, f){
   const lt = mirrorResolve(t, f), show = (f.options||{}).show;
@@ -2292,6 +2397,10 @@ async function tvMirrorEdit(el, tid, fid){
     return tvShowMenu(el, (rf.options||[]).map(o=>({v:o,l:o})),
       o=>`<span>${esc(o.l)}</span>${o.v===(lt.custom||{})[show]?'<span class="opt-cur">✓</span>':''}`,
       v=>saveRemoteCustom(v), (rf.options||[]).length>5, true);
+  if(rf.ftype==='platform')
+    return tvShowMenu(el, PLATFORMS.map(p=>({v:p.k,l:p.label})),
+      o=>tvDotOpt(o, PLATFORMS, (lt.custom||{})[show]),
+      v=>saveRemoteCustom(v), true, true);
   if(rf.ftype==='checkbox')
     return saveRemoteCustom(!( /^(true|yes|1)$/i.test(String((lt.custom||{})[show]||'')) ));
   miniInputModal(rf.label, rf.ftype==='number'?'number':rf.ftype==='date'?'date':'text',
@@ -2322,6 +2431,8 @@ function tvCell(t, f){
   if(f.ftype==='select')   return tvPickHTML('f_'+f.id, t.id, f.id, true, v);
   if(f.ftype==='person')   return tvPickHTML('people', t.id, f.id, true, v);
   if(f.ftype==='brand')    return tvPickHTML('brand', t.id, f.id, true, v);
+  if(f.ftype==='platform') return tvPickHTML('platform', t.id, f.id, true, v);
+  if(f.ftype==='file')     return tvPickHTML('file', t.id, f.id, true, v, t);
   return tvPickHTML('text', t.id, f.id, true, v);
 }
 /* Export the rows the table is showing right now (filters applied), in display order. */
@@ -2341,6 +2452,7 @@ function exportBoardCSV(pid){
     if(f.ftype==='mirror') return mirrorText(t, f);
     const v = (t.custom||{})[f.id];
     if(f.ftype==='checkbox') return v? 'Yes':'No';
+    if(f.ftype==='file') return (v&&v.name)? v.name : '';
     return v==null? '' : v;
   };
   const out = [['Task','Group','Status','Priority','Assignee','Due date', ...flds.map(f=>f.label), 'Created']];
@@ -2389,8 +2501,8 @@ function mapImportRows(aoa, pid){
   if(unknown.length) warnings.push(`Ignored column${unknown.length>1?'s':''}: ${unknown.join(', ')}`);
   if(head.some((h,i)=> fieldByLabel[low[i]] && fieldByLabel[low[i]].ftype==='formula'))
     warnings.push('Formula columns are computed automatically and were skipped');
-  if(head.some((h,i)=> fieldByLabel[low[i]] && ['link','mirror'].includes(fieldByLabel[low[i]].ftype)))
-    warnings.push('Link and Mirror columns can\'t be imported and were skipped');
+  if(head.some((h,i)=> fieldByLabel[low[i]] && ['link','mirror','file'].includes(fieldByLabel[low[i]].ftype)))
+    warnings.push('Link, Mirror and File columns can\'t be imported and were skipped');
   const statusOf = v=>{ const s=String(v).trim().toLowerCase(); if(!s) return 'todo';
     const m = STATUSES.find(x=> x.k===s || x.label.toLowerCase()===s); return m? m.k : 'todo'; };
   const prioOf = v=>{ const s=String(v).trim().toLowerCase(); if(!s) return 'normal';
@@ -2418,7 +2530,7 @@ function mapImportRows(aoa, pid){
     if(col('group')>=0)    t.group_id = groupOf(r[col('group')]);
     if(col('due date')>=0) t.due_date = dateOf(r[col('due date')]);
     head.forEach((h,ci)=>{
-      const f = fieldByLabel[low[ci]]; if(!f || ['formula','link','mirror'].includes(f.ftype)) return;
+      const f = fieldByLabel[low[ci]]; if(!f || ['formula','link','mirror','file'].includes(f.ftype)) return;
       const v = r[ci]; if(v===''||v==null) return;
       t.custom[f.id] = f.ftype==='checkbox'? /^(yes|true|1|y|✓)$/i.test(String(v).trim())
         : f.ftype==='date'? (dateOf(v)||'') : String(v instanceof Date? v.toISOString().slice(0,10) : v);
@@ -2819,7 +2931,7 @@ async function tvCustom(tid, fid, val){
 function addColumnModal(pid){ columnModal(pid, null); }
 function editColumnModal(fid, pid){ const f=(S._fields||[]).find(x=>x.id===fid); if(f) columnModal(pid, f); }
 function columnModal(pid, f){
-  const types=[['text','Text'],['number','Number'],['date','Date'],['select','Dropdown'],['checkbox','Checkbox'],['person','Person'],['brand','Brand'],['formula','Formula'],['link','Link to board'],['mirror','Mirror']];
+  const types=[['text','Text'],['number','Number'],['date','Date'],['select','Dropdown'],['checkbox','Checkbox'],['person','Person'],['brand','Brand'],['platform','Platform'],['file','File'],['formula','Formula'],['link','Link to board'],['mirror','Mirror']];
   const linkFields = (S._fields||[]).filter(x=>x.ftype==='link' && (!f || x.id!==f.id));
   const m = modal(`<div class="modal-head"><h2>${f?'Edit column':'New column'}</h2><button class="x" onclick="closeModals()">✕</button></div>
     <div class="modal-body">
