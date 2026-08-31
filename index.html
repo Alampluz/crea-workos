@@ -508,6 +508,19 @@ td.tv-name .tv-open{padding-left:20px}
 .kv{margin-bottom:8px;font-size:13.5px}
 .kv b{color:var(--ink2);font-weight:600;font-size:12px;display:block;text-transform:uppercase;letter-spacing:.4px}
 .hidden{display:none!important}
+[hidden]{display:none!important}
+.member-search{width:100%;margin:10px 0 4px;padding:9px 11px;border:1px solid var(--line);border-radius:8px;font:inherit;font-size:13.5px}
+.member-search:focus{outline:none;border-color:var(--brand,#0F766E);box-shadow:0 0 0 3px rgba(15,118,110,.12)}
+.heart{display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border-radius:6px;flex:0 0 auto;color:var(--ink3);opacity:.42;transition:opacity .12s,color .12s,background .12s,transform .12s}
+.heart svg{width:17px;height:17px}
+.heart.on{opacity:1;color:#C0392B}
+.heart.can{cursor:pointer}
+.heart.can:hover{opacity:1;background:var(--gray-soft);color:#C0392B}
+.heart.can:active{transform:scale(.9)}
+.person-row{display:flex;align-items:center;gap:10px;padding:7px 2px;border-bottom:1px solid var(--gray-soft)}
+.person-row:last-child{border-bottom:none}
+.person-row .pr-name{flex:1;min-width:0;font-size:13.5px}
+.person-row .pr-sub{display:block;font-size:11.5px;color:var(--ink3)}
 </style>
 </head>
 <body>
@@ -616,6 +629,109 @@ const isExternal = ()=> S.me && ['partner','freelancer'].includes(S.me.role);
 const isRequester = ()=> S.me && S.me.role==='requester';
 const canEdit = ()=> isStaff() && !isRequester();
 const canCreate = ()=> isStaff() || isRequester();
+/* ---- Ownership: board and workspace SETTINGS are owner-or-admin.
+   Task create/edit is unchanged — that still runs off canEdit(). These mirror
+   can_manage_board() / can_manage_ws() in the database, which is what actually
+   enforces it; these only keep the UI from offering a button that would fail. */
+const boardOwnerIds = pid => (S.boardOwners||[]).filter(o=>o.project_id===pid).map(o=>o.user_id);
+const wsOwnerIds    = wid => (S.wsOwners||[]).filter(o=>o.workspace_id===wid).map(o=>o.user_id);
+const ownsBoard = pid => !!(S.me && boardOwnerIds(pid).includes(S.me.id));
+const ownsWs    = wid => !!(S.me && wsOwnerIds(wid).includes(S.me.id));
+/* A workspace owner runs everything inside their workspace, boards included.
+   Deleting the workspace itself is admin-only — it destroys every board and
+   task in it. Mirrors can_manage_board() / can_manage_ws() in the database. */
+const canManageBoard = pid => {
+  if(isAdmin()) return true;
+  if(!canEdit()) return false;
+  const p = (S.projects||[]).find(x=>x.id===pid);
+  return ownsBoard(pid) || !!(p && ownsWs(p.workspace_id));
+};
+const canManageWs    = wid => isAdmin() || (canEdit() && ownsWs(wid));
+const canDeleteWs    = () => isAdmin();
+/* Search-and-add: one filter used by both member dialogs. Rows carry
+   data-search; role headings carry data-group and fold away when empty. */
+const searchBoxHTML = (id, ph) => `<input id="${id}" class="member-search" placeholder="${esc(ph)}" autocomplete="off">`
+  + `<div id="${id}-none" class="empty" hidden style="padding:12px 0">Nobody matches that. New accounts are created in Admin → Users.</div>`;
+/* Teams are a named group of people, nothing more — they bulk-tick members in
+   the pickers. No policy depends on them, so being in a team grants nothing. */
+const teamById      = id  => (S.teams||[]).find(t=>t.id===id);
+const teamMemberIds = tid => (S.teamMembers||[]).filter(r=>r.team_id===tid).map(r=>r.user_id);
+const teamsForUser  = uid => (S.teamMembers||[]).filter(r=>r.user_id===uid)
+                              .map(r=>teamById(r.team_id)).filter(Boolean);
+/* Team names ride along in the search key, so "search by name, team, or email"
+   is one box rather than three. */
+const searchKey = p => `${p.full_name||''} ${p.email||''} ${p.job_title||''} ${p.role||''} `
+  .concat(teamsForUser(p.id).map(t=>t.name).join(' '))
+  .toLowerCase().replace(/"/g,'');
+const TEAM_COLORS = ['#0F766E','#3E5C95','#8C5A3B','#5A6B4F','#6E56B8','#A8770E','#7D3C55','#C2434F'];
+const teamChip = t => `<span class="chip" style="background:var(--gray-soft);color:var(--ink2)">`
+  + `<span class="ws-dot" style="display:inline-block;background:${t.color||'#5C6470'}"></span> ${esc(t.name)}</span>`;
+/* Shared by both member dialogs: pick a team, tick everyone in it. */
+function teamAddHTML(id){
+  if(!(S.teams||[]).length) return '';
+  return `<div style="display:flex;align-items:center;gap:8px;margin:10px 0 2px">
+    <span style="font-size:12.5px;color:var(--ink2);white-space:nowrap">Add a whole team</span>
+    <select id="${id}" style="flex:1"><option value="">Choose a team…</option>
+      ${S.teams.map(t=>`<option value="${t.id}">${esc(t.name)} · ${teamMemberIds(t.id).length}</option>`).join('')}</select>
+  </div>`;
+}
+function wireTeamAdd(root, id){
+  const sel = root.querySelector('#'+id); if(!sel) return;
+  sel.onchange = ()=>{
+    const t = teamById(sel.value); sel.value='';
+    if(!t) return;
+    const want = new Set(teamMemberIds(t.id));
+    let ticked=0, missing=0;
+    want.forEach(uid=>{
+      const box = root.querySelector(`input[data-uid="${uid}"]`);
+      if(!box || box.disabled){ missing++; return; }
+      if(!box.checked){ box.checked = true; ticked++; box.dispatchEvent(new Event('change',{bubbles:true})); }
+    });
+    toast(ticked
+      ? `Ticked ${ticked} from ${t.name}${missing? ` · ${missing} can't be added here`:''} — Save to apply`
+      : `Everyone in ${t.name} was already ticked${missing? ` or can't be added here`:''}`);
+  };
+}
+function wireMemberSearch(root, id){
+  const inp = root.querySelector('#'+id); if(!inp) return;
+  const rows   = [...root.querySelectorAll('[data-search]')];
+  const groups = [...root.querySelectorAll('[data-group]')];
+  const none   = root.querySelector('#'+id+'-none');
+  const apply = ()=>{
+    const q = inp.value.trim().toLowerCase();
+    let shown = 0;
+    rows.forEach(r=>{ const hit = !q || r.dataset.search.includes(q); r.hidden = !hit; if(hit) shown++; });
+    groups.forEach(g=> g.hidden = ![...g.querySelectorAll('[data-search]')].some(r=>!r.hidden));
+    if(none) none.hidden = shown > 0;
+  };
+  inp.addEventListener('input', apply);
+  setTimeout(()=>inp.focus(), 40);
+}
+/* A heart marks the owner: outline = not an owner, filled = owner.
+   Clicking toggles — outline fills to make someone an owner, filled empties to
+   remove them. Both states stay clickable so the toggle reads both ways. */
+const HEART_PATH = 'M12 20.6l-1.34-1.2C5.9 15.09 3 12.47 3 9.25 3 6.65 5.02 4.6 7.6 4.6c1.46 0 2.86.68 3.77 1.76l.63.75.63-.75A4.94 4.94 0 0 1 16.4 4.6C18.98 4.6 21 6.65 21 9.25c0 3.22-2.9 5.84-7.66 10.16L12 20.6z';
+const HEART_FILL = `<svg viewBox="0 0 24 24" fill="currentColor"><path d="${HEART_PATH}"/></svg>`;
+const HEART_LINE = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="${HEART_PATH}"/></svg>`;
+function ownerHeartHTML(isOwner, canSet, onclick, whose){
+  const title = isOwner
+    ? (canSet ? `${whose} owner — click to remove` : `${whose} owner`)
+    : (canSet ? `Make ${whose} owner` : `Not an owner`);
+  return `<span class="heart ${isOwner?'on':''} ${canSet?'can':''}" title="${esc(title)}"`
+       + `${canSet?` onclick="${onclick}"`:''}>${isOwner?HEART_FILL:HEART_LINE}</span>`;
+}
+const ownerName  = id  => { const u=(S.profiles||[]).find(x=>x.id===id); return u? (u.full_name||u.email) : 'Unassigned'; };
+const ownerNames = ids => ids.length? ids.map(ownerName).join(', ') : 'nobody yet';
+/* Stacked avatars, monday's "People on this board" summary. */
+function avatarStack(ids, cap=3){
+  const shown = ids.slice(0,cap), extra = ids.length - shown.length;
+  return `<span style="display:inline-flex;align-items:center">`
+    + shown.map(id=>`<span style="margin-left:-6px">${avatar(prof(id),true)}</span>`).join('')
+    + (extra>0? `<span class="chip" style="margin-left:4px;background:var(--gray-soft);color:var(--ink2)">+${extra}</span>`:'')
+    + (ids.length? '' : `<span style="color:var(--ink3);font-size:12.5px">none</span>`) + `</span>`;
+}
+/* Ownership is a list now and is edited by the crowns in Board members /
+   Members of <workspace>, not by a picker in the edit dialog. */
 
 /* ================= HELPERS ================= */
 const $ = s=>document.querySelector(s);
@@ -639,8 +755,11 @@ function avatar(p, sm=false){
 const prof = id => S.profiles.find(p=>p.id===id);
 const wsById = id => S.workspaces.find(w=>w.id===id);
 const projById = id => S.projects.find(p=>p.id===id);
-function fmtDate(d){ if(!d) return ''; const dt=new Date(d); return dt.toLocaleDateString('en-GB',{day:'numeric',month:'short'}) + (dt.getFullYear()!==new Date().getFullYear()? ' '+dt.getFullYear():''); }
-function fmtDateTime(d){ if(!d) return ''; return new Date(d).toLocaleString('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}); }
+/* Dates always carry the year — "3 Sept" is ambiguous on a board that spans a
+   year end, and campaigns here routinely do. Format is "31 Aug 2026". */
+const DATE_FMT = {day:'numeric', month:'short', year:'numeric'};
+function fmtDate(d){ if(!d) return ''; const dt=new Date(d); return isNaN(dt)? '' : dt.toLocaleDateString('en-GB', DATE_FMT); }
+function fmtDateTime(d){ if(!d) return ''; const dt=new Date(d); return isNaN(dt)? '' : dt.toLocaleString('en-GB',{...DATE_FMT, hour:'2-digit', minute:'2-digit'}); }
 function timeAgo(d){
   if(!d) return '';
   const s = Math.max(0, (Date.now() - new Date(d).getTime())/1000);
@@ -823,14 +942,20 @@ async function _boot(){
   navigate(location.hash || '#/home');
 }
 async function refreshCore(){
-  const [pr, ws, pj, rt, br, co] = await Promise.all([
+  const [pr, ws, pj, rt, br, co, bo, wo, tm, tmm] = await Promise.all([
     db.from('profiles').select('*').order('full_name'),
     db.from('workspaces').select('*').order('position'),
     db.from('projects').select('*').order('created_at'),
     db.from('request_types').select('*').eq('active', true).order('position'),
     db.from('brands').select('*').order('name'),
     db.from('companies').select('*').order('created_at'),
+    db.from('project_owners').select('*'),
+    db.from('workspace_owners').select('*'),
+    db.from('teams').select('*').order('name'),
+    db.from('team_members').select('*'),
   ]);
+  S.boardOwners = bo.data||[]; S.wsOwners = wo.data||[];
+  S.teams = tm.data||[]; S.teamMembers = tmm.data||[];
   S.profiles = pr.data||[]; S.workspaces = ws.data||[]; S.projects = pj.data||[]; S.requestTypes = rt.data||[];
   S.brandsList = br.data||[];
   S.allCompanies = co.data||[];
@@ -1323,7 +1448,7 @@ async function renderHome(){
         <div class="stat"><div class="n ${pulse.breach?'red':''}">${pulse.breach}</div><div class="l">SLA breached</div></div>
       </div>`:''}
     <div class="page-head"><div><h1>${hello}, ${esc(S.me.full_name.split(' ')[0])}</h1>
-      <div class="sub">${new Date().toLocaleDateString('en-GB',{weekday:'long', day:'numeric', month:'long'})}</div></div>
+      <div class="sub">${new Date().toLocaleDateString('en-GB',{weekday:'long', day:'numeric', month:'long', year:'numeric'})}</div></div>
       <div class="actions"><button class="btn btn-primary" onclick="newRequestFlow()">＋ New request</button></div></div>
     <div class="stat-row">
       <div class="stat"><div class="n ${overdue.length?'red':''}">${overdue.length}</div><div class="l">Overdue tasks</div></div>
@@ -1393,7 +1518,7 @@ async function renderWorkspace(id, tab){
   if(tab==='report') return renderWorkspaceReport(id);
   if(tab==='automations') return renderWorkspaceAutomations(id);
   widgetScope = null; widgetProjScope = null;
-  setTopbar(esc(w.name), (canEdit()? `<button class="btn btn-ghost btn-sm" onclick="editWorkspaceModal('${w.id}')">Edit workspace</button>`:'')
+  setTopbar(esc(w.name), (canManageWs(w.id)? `<button class="btn btn-ghost btn-sm" onclick="editWorkspaceModal('${w.id}')">Edit workspace</button>`:'')
     + (isStaff()? `<button class="btn btn-ghost btn-sm" onclick="teamMembersModal('${w.id}')">Members</button>
     <button class="btn btn-primary btn-sm" onclick="wsAddMenu(this,'${w.id}')">＋ Add</button>`:''));
   const C=$('#content'); C.innerHTML='<div class="empty">Loading…</div>';
@@ -1473,14 +1598,17 @@ function wsAddMenu(anchor, wid){
 }
 /* ---- Boards (projects): rename, recolour, delete ---- */
 const PJ_COLORS=['#00B894','#0984E3','#6C5CE7','#E17055','#E84393','#D63031','#FDCB6E','#00CEC9','#0F766E','#7D3C55'];
-const canDeleteBoard = ()=> S.me && (S.me.role==='admin' || S.me.role==='management');
+const canDeleteBoard = pid => canManageBoard(pid);   // kept for call sites; ownership rules now
 function projMenu(anchor, pid){
   const p = (S.projects||[]).find(x=>x.id===pid); if(!p) return;
-  const items = [{label:'Rename / edit board', fn:()=>editProjectModal(pid)},
-                 {label:'Partner access', fn:()=>projectMembersModal(pid)}];
-  if(isStaff()){ items.push({label:'Save as template', fn:()=>saveTemplateModal(pid)});
-                 items.push({label:'Recurring tasks', fn:()=>recurringModal(pid)}); }
-  if(canDeleteBoard()){ items.push('-'); items.push({label:'Delete board', danger:true, fn:()=>deleteProjectModal(pid)}); }
+  const mine = canManageBoard(pid);
+  const items = [];
+  if(mine) items.push({label:'Rename / edit board', fn:()=>editProjectModal(pid)});
+  if(isStaff()) items.push({label:'Partner access', fn:()=>projectMembersModal(pid)});
+  if(mine){ items.push({label:'Save as template', fn:()=>saveTemplateModal(pid)});
+            items.push({label:'Recurring tasks', fn:()=>recurringModal(pid)}); }
+  if(mine){ items.push('-'); items.push({label:'Delete board', danger:true, fn:()=>deleteProjectModal(pid)}); }
+  if(!items.length) items.push({label:`Owned by ${ownerNames(boardOwnerIds(pid))}`, fn:()=>{}});
   ctxMenu(anchor, items);
 }
 /* ---- Board templates: snapshot groups/columns/tasks, replay onto a new board ---- */
@@ -1601,7 +1729,7 @@ async function rcDelete(id, pid){
 function editProjectModal(pid){
   const p = (S.projects||[]).find(x=>x.id===pid); if(!p) return;
   const gate = p.approval_gate||{};
-  const canGate = isAdmin()||isMgmt();
+  const canGate = canManageBoard(pid);
   const gatePool = S.profiles.filter(u=>u.active && ['admin','internal','management'].includes(u.role) && !(u.email||'').startsWith('forms+'));
   const gateSection = canGate? `
       <label style="margin-top:14px">Sign-off</label>
@@ -1623,6 +1751,13 @@ function editProjectModal(pid){
         <div><label>Workspace</label><select id="ep-ws">${S.workspaces.map(w=>`<option value="${w.id}" ${w.id===p.workspace_id?'selected':''}>${esc(w.name)}</option>`).join('')}</select></div>
         <div><label>Status</label><select id="ep-status">${['active','on_hold','archived'].map(s=>`<option value="${s}" ${s===p.status?'selected':''}>${s.replace('_',' ')}</option>`).join('')}</select></div>
       </div>
+      <label style="margin-top:14px">Board owners</label>
+      <div style="display:flex;align-items:center;gap:8px;margin-top:4px;flex-wrap:wrap">
+        ${avatarStack(boardOwnerIds(pid))}
+        <span style="font-size:13px;color:var(--ink2);flex:1;min-width:120px">${esc(ownerNames(boardOwnerIds(pid)))}</span>
+        <button type="button" class="btn btn-ghost btn-sm" id="ep-owners">Manage owners</button>
+      </div>
+      <div style="font-size:12px;color:var(--ink3);margin-top:4px">Owners and admins manage this board's settings, columns, groups and sign-off. Everyone with access still works on its tasks.</div>
       <label style="margin-top:14px">Who can open this board</label>
       ${visPickerHTML('ep-vis', p.visibility||'collaborate')}
       <label style="margin-top:14px">Colour</label>
@@ -1632,6 +1767,7 @@ function editProjectModal(pid){
     </div>
     <div class="modal-foot"><button class="btn btn-ghost" onclick="closeModals()">Cancel</button><button class="btn btn-primary" id="ep-save">Save</button></div>`);
   let colour = p.color;
+  m.querySelector('#ep-owners').onclick = ()=>{ closeModals(); projectMembersModal(pid); };
   wireVisPicker(m,'ep-vis');
   const gateOn = m.querySelector('#ep-gate-on');
   if(gateOn) gateOn.onchange = ()=>{ m.querySelector('#ep-gate-appr').hidden = !gateOn.checked; };
@@ -1662,7 +1798,7 @@ function editProjectModal(pid){
 }
 async function deleteProjectModal(pid){
   const p = (S.projects||[]).find(x=>x.id===pid); if(!p) return;
-  if(!canDeleteBoard()) return toast('Only admin or management can delete a board', true);
+  if(!canDeleteBoard(pid)) return toast(`Only an owner of this board (${ownerNames(boardOwnerIds(pid))}) or an admin can delete it`, true);
   const {count} = await db.from('tasks').select('id',{count:'exact',head:true}).eq('project_id',pid);
   const n = count||0;
   const m = modal(`<div class="modal-head"><h2>Delete board “${esc(p.name)}”?</h2><button class="x" onclick="closeModals()">✕</button></div>
@@ -1702,8 +1838,28 @@ async function deleteProjectModal(pid){
    are not checkboxes. Anyone here can belong to as many workspaces as you like. */
 const ASSIGNABLE_ROLES = ['internal','requester','partner','freelancer'];
 const ROLE_LABEL = {internal:'Internal staff', requester:'Requester (view + raise + comment)', partner:'Partner (external)', freelancer:'Freelancer (external)'};
+async function setWsOwner(wid, uid){
+  const w = wsById(wid); if(!w) return;
+  if(!(isAdmin() || ownsWs(wid))) return toast('Only an owner of this workspace or an admin can change its owners', true);
+  const owners = wsOwnerIds(wid), has = owners.includes(uid);
+  if(has && owners.length<=1){
+    if(!isAdmin()) return toast('A workspace needs at least one owner — add someone else first', true);
+    if(!confirm(`Remove the last owner of ${w.name}? Only admins will be able to manage its settings until someone is made owner again.`)) return;
+  }
+  if(has && uid===(S.me||{}).id && !isAdmin()
+     && !confirm(`Step down as an owner of ${w.name}? You will lose control of its settings.`)) return;
+  const {error} = has
+    ? await db.from('workspace_owners').delete().eq('workspace_id',wid).eq('user_id',uid)
+    : await db.from('workspace_owners').insert({workspace_id:wid, user_id:uid});
+  if(error) return toast(error.message, true);
+  await refreshCore(); closeModals();
+  toast(has? `${ownerName(uid)} is no longer an owner` : `${ownerName(uid)} is now an owner`);
+  teamMembersModal(wid);
+}
 async function teamMembersModal(wsId){
   const w = wsById(wsId);
+  const canSetWsOwner = isAdmin() || ownsWs(wsId);
+  const wsOwnIds = wsOwnerIds(wsId);
   const {data:members} = await db.from('workspace_members').select('*').eq('workspace_id',wsId);
   const memberIds = new Set((members||[]).map(m=>m.user_id));
   const pool = S.profiles.filter(p=>p.active && ASSIGNABLE_ROLES.includes(p.role));
@@ -1712,24 +1868,45 @@ async function teamMembersModal(wsId){
   const {data:allM} = await db.from('workspace_members').select('user_id');
   (allM||[]).forEach(r=>{ wsCount[r.user_id]=(wsCount[r.user_id]||0)+1; });
   const groupBlock = role=>{
-    const list = pool.filter(p=>p.role===role);
+    // Members first, then alphabetical — at CREA's headcount the people already
+    // on the workspace must be visible without scrolling past everyone else.
+    const list = pool.filter(p=>p.role===role)
+      .sort((a,b)=> (memberIds.has(b.id)) - (memberIds.has(a.id))
+                    || (a.full_name||'').localeCompare(b.full_name||''));
     if(!list.length) return '';
-    return `<div style="margin-top:14px"><div style="font-size:11.5px;font-weight:700;letter-spacing:.03em;text-transform:uppercase;color:var(--ink3);margin-bottom:6px">${ROLE_LABEL[role]}</div>
+    const on = list.filter(p=>memberIds.has(p.id)).length;
+    return `<div data-group="1" style="margin-top:14px"><div style="font-size:11.5px;font-weight:700;letter-spacing:.03em;text-transform:uppercase;color:var(--ink3);margin-bottom:6px">${ROLE_LABEL[role]} <span style="color:var(--ink3);font-weight:600">· ${on} of ${list.length}</span></div>
       ${list.map(p=>{
         const others = (wsCount[p.id]||0) - (memberIds.has(p.id)?1:0);
-        return `<div class="chk"><input type="checkbox" data-uid="${p.id}" ${memberIds.has(p.id)?'checked':''}>
-          ${avatar(p,true)} <span>${esc(p.full_name)} <span style="color:var(--ink3)">· ${esc(p.email)}</span>
-          ${others>0? `<span class="chip" style="background:var(--gray-soft);color:var(--ink3);margin-left:6px">+${others} other workspace${others>1?'s':''}</span>`:''}</span></div>`;
+        return `<div class="chk" data-search="${esc(searchKey(p))}"><input type="checkbox" data-uid="${p.id}" ${memberIds.has(p.id)?'checked':''}>
+          ${avatar(p,true)} <span style="flex:1">${esc(p.full_name)} <span style="color:var(--ink3)">· ${esc(p.email)}</span>
+          ${others>0? `<span class="chip" style="background:var(--gray-soft);color:var(--ink3);margin-left:6px">+${others} other workspace${others>1?'s':''}</span>`:''}</span>
+          ${ownerHeartHTML(wsOwnIds.includes(p.id), canSetWsOwner, `setWsOwner('${wsId}','${p.id}')`, 'workspace')}</div>`;
       }).join('')}</div>`;
   };
   const m = modal(`<div class="modal-head"><h2>Members of ${esc(w?w.name:'workspace')}</h2><button class="x" onclick="closeModals()">✕</button></div>
     <div class="modal-body">
-      <p style="color:var(--ink2);font-size:13px;margin-top:6px">Tick anyone who should see this workspace. <b>A person can belong to as many workspaces as you like</b> — ticking them here does not remove them from any other one.</p>
+      <div style="display:flex;gap:8px;align-items:center;margin-top:8px;font-size:12.5px;color:var(--ink2)">Owners ${avatarStack(wsOwnIds)} <span>${esc(ownerNames(wsOwnIds))}</span></div>
+      ${searchBoxHTML('tm-q','Search by name, team, role, or email address')}
+      ${teamAddHTML('tm-team')}
+      <div id="tm-count" style="font-size:12.5px;color:var(--ink2);margin:2px 0 2px"></div>
+      <p style="color:var(--ink2);font-size:13px;margin-top:6px">A filled heart marks an owner${canSetWsOwner? ' — click an outline heart to make someone an owner, or a filled one to remove them':''}. Tick anyone who should see this workspace. <b>A person can belong to as many workspaces as you like</b> — ticking them here does not remove them from any other one.</p>
       ${supers.length? `<div style="margin-top:12px;padding:9px 12px;background:var(--gray-soft);border-radius:8px;font-size:12.5px;color:var(--ink2)">
-        <b>Always has access:</b> ${supers.map(p=>esc(p.full_name)).join(', ')} — admin and management see every workspace.</div>`:''}
+        <b>Always has access:</b> ${supers.slice(0,4).map(p=>esc(p.full_name)).join(', ')}${supers.length>4? ` and ${supers.length-4} more`:''} — admin and management see every workspace.</div>`:''}
       ${ASSIGNABLE_ROLES.map(groupBlock).join('') || '<div class="empty">No assignable accounts yet. Create them in Admin → Users.</div>'}
     </div>
     <div class="modal-foot"><button class="btn btn-ghost" onclick="closeModals()">Close</button><button class="btn btn-primary" id="tm-save">Save</button></div>`);
+  wireMemberSearch(m, 'tm-q');
+  wireTeamAdd(m, 'tm-team');
+  const boxes = [...m.querySelectorAll('input[data-uid]')];
+  const countEl = m.querySelector('#tm-count');
+  const recount = ()=>{
+    const n = boxes.filter(b=>b.checked).length;
+    countEl.textContent = `${n} of ${boxes.length} ${boxes.length===1?'person':'people'} on this workspace`
+      + (n ? '' : ' — nobody yet');
+  };
+  boxes.forEach(b=> b.addEventListener('change', recount));
+  recount();
   m.querySelector('#tm-save').onclick = async ()=>{
     const want = new Set([...m.querySelectorAll('input[data-uid]:checked')].map(i=>i.dataset.uid));
     const add=[...want].filter(u=>!memberIds.has(u)).map(user_id=>({workspace_id:wsId,user_id}));
@@ -1882,8 +2059,8 @@ async function renderProject(id){
      <button class="tab ${boardMode==='report'?'active':''}" onclick="boardMode='report';renderProject('${id}')">Report</button>
      <button class="tab ${boardMode==='workload'?'active':''}" onclick="boardMode='workload';renderProject('${id}')">Workload</button></div>
      ${isStaff()? `<button class="btn btn-ghost btn-sm" onclick="projectMembersModal('${id}')">Partner access</button>`:''}
-     ${canEdit()? `<button class="btn btn-ghost btn-sm" onclick="editProjectModal('${id}')">Edit board</button>`:''}
-     ${canDeleteBoard()? `<button class="btn btn-ghost btn-sm" style="color:var(--red)" onclick="deleteProjectModal('${id}')">Delete board</button>`:''}
+     ${canManageBoard(id)? `<button class="btn btn-ghost btn-sm" onclick="editProjectModal('${id}')">Edit board</button>`:''}
+     ${canManageBoard(id)? `<button class="btn btn-ghost btn-sm" style="color:var(--red)" onclick="deleteProjectModal('${id}')">Delete board</button>`:''}
      <button class="btn btn-primary btn-sm" onclick="newTaskModal('${id}')">＋ New task</button>`);
   const C=$('#content'); C.innerHTML='<div class="empty">Loading…</div>';
   const [{data:tasks, error},{data:sc},{data:fields},{data:groups}] = await Promise.all([
@@ -2036,9 +2213,9 @@ function tvBuildOpts(flds){
 }
 function tvFmtDate(v){
   if(!v) return '';
+  // Parse as local midnight so a plain yyyy-mm-dd never slips a day on a UTC+7 clock.
   const d = new Date(v+'T00:00:00'); if(isNaN(d)) return v;
-  const s = d.toLocaleDateString('en-GB',{day:'numeric',month:'short'});
-  return d.getFullYear()===new Date().getFullYear()? s : s+' '+d.getFullYear();
+  return d.toLocaleDateString('en-GB', DATE_FMT);
 }
 function tvChip(label, color){
   return `<span class="tv-chip" style="background:${color}1C;color:${color}"><span class="cdot" style="background:${color}"></span>${esc(label)}</span>`;
@@ -2599,8 +2776,8 @@ async function restoreTask(logId, pid){
 function tvHeadHTML(id, flds, showAddCol, gid){
   return `<tr>
     ${canEdit()?`<th class="tv-check"><input type="checkbox" title="Select all" onchange="tvSelGroup(this,'${gid}')"></th>`:''}<th>Task</th><th>Status</th><th>Assignee</th><th>Due date</th><th>Priority</th>
-    ${flds.map(f=>`<th class="${isStaff()?'col-edit':''}" ${isStaff()?`onclick="editColumnModal('${f.id}','${id}')" title="Edit column"`:''}>${esc(f.label)}</th>`).join('')}
-    ${isStaff()? (showAddCol? `<th><span class="tv-addcol" onclick="addColumnModal('${id}')">＋ Column</span></th>`:'<th></th>'):''}
+    ${flds.map(f=>`<th class="${canManageBoard(id)?'col-edit':''}" ${canManageBoard(id)?`onclick="editColumnModal('${f.id}','${id}')" title="Edit column"`:''}>${esc(f.label)}</th>`).join('')}
+    ${isStaff()? (showAddCol&&canManageBoard(id)? `<th><span class="tv-addcol" onclick="addColumnModal('${id}')">＋ Column</span></th>`:'<th></th>'):''}
   </tr>`;
 }
 /* Open dependency = this task waits on another that isn't done yet. */
@@ -2646,7 +2823,7 @@ function renderProjectTableView(id, rowSet, host){
   if(!groups.length){
     const rows = [...SRC].sort(byPos);
     C.innerHTML = tableFor(rows, null, true)
-      + (isStaff()? `<div class="tv-addgroup" onclick="addGroupModal('${id}')" style="margin-top:14px">＋ Add group</div>`:'') + archBar;
+      + (canManageBoard(id)? `<div class="tv-addgroup" onclick="addGroupModal('${id}')" style="margin-top:14px">＋ Add group</div>`:'') + archBar;
     return;
   }
   const gids = new Set(groups.map(g=>g.id));
@@ -2657,13 +2834,13 @@ function renderProjectTableView(id, rowSet, host){
     return `<div class="tv-group ${closed?'collapsed':''}" id="tvg-${g.id}">
       <div class="tv-group-head"><span class="caret" onclick="tvToggleGroup('${g.id}')">${closed?'▸':'▾'}</span><span class="bar" style="background:${g.color}"></span>
         <h3 style="color:${g.color}" onclick="tvToggleGroup('${g.id}')">${esc(g.name)}</h3><span class="cnt">${rows.length} task${rows.length===1?'':'s'}</span>
-        ${isStaff()? `<span class="g-edit" onclick="editGroupModal('${g.id}','${id}')">Edit</span>`:''}
+        ${canManageBoard(id)? `<span class="g-edit" onclick="editGroupModal('${g.id}','${id}')">Edit</span>`:''}
       </div>${tableFor(rows, g.id, i===0, g.color)}</div>`;
   }).join('')
   + (ungrouped.length? `<div class="tv-group">
       <div class="tv-group-head"><span class="bar" style="background:#C6C9D8"></span><h3 style="color:var(--ink3)">No group</h3><span class="cnt">${ungrouped.length}</span></div>
       ${tableFor(ungrouped, null, false)}</div>`:'')
-  + (isStaff()? `<div class="tv-addgroup" onclick="addGroupModal('${id}')">＋ Add group</div>`:'') + archBar;
+  + (canManageBoard(id)? `<div class="tv-addgroup" onclick="addGroupModal('${id}')">＋ Add group</div>`:'') + archBar;
 }
 const tvCollapsed = new Set();
 let tvPid = null;
@@ -3052,25 +3229,78 @@ function columnModal(pid, f){
     closeModals(); toast(f?'Column updated':'Column added'); renderProject(pid);
   };
 }
+/* A board can have several owners. The crown toggles one person in or out. */
+async function setBoardOwner(pid, uid){
+  const p = projById(pid); if(!p) return;
+  if(!(isAdmin() || ownsBoard(pid))) return toast('Only an owner of this board or an admin can change its owners', true);
+  const owners = boardOwnerIds(pid), has = owners.includes(uid);
+  if(has && owners.length<=1){
+    if(!isAdmin()) return toast('A board needs at least one owner — add someone else first', true);
+    if(!confirm(`Remove the last owner of ${p.name}? Only admins will be able to manage its settings until someone is made owner again.`)) return;
+  }
+  if(has && uid===(S.me||{}).id && !isAdmin()
+     && !confirm(`Step down as an owner of ${p.name}? You will lose control of its settings.`)) return;
+  const {error} = has
+    ? await db.from('project_owners').delete().eq('project_id',pid).eq('user_id',uid)
+    : await db.from('project_owners').insert({project_id:pid, user_id:uid});
+  if(error) return toast(error.message, true);
+  await refreshCore(); closeModals();
+  toast(has? `${ownerName(uid)} is no longer an owner` : `${ownerName(uid)} is now an owner`);
+  projectMembersModal(pid);
+}
 async function projectMembersModal(pid){
   const {data:members} = await db.from('project_members').select('*').eq('project_id',pid);
   const memberIds = new Set((members||[]).map(m=>m.user_id));
   const externals = S.profiles.filter(p=>['partner','freelancer'].includes(p.role));
   const board = (S.projects||[]).find(x=>x.id===pid) || {};
+  // Everyone who can already open this board: owner, admin/management, the
+  // workspace's members, plus any partner explicitly added to it.
+  const {data:wsm} = await db.from('workspace_members').select('user_id').eq('workspace_id', board.workspace_id);
+  const canSetOwner = isAdmin() || ownsBoard(pid);
+  const ownerIds = boardOwnerIds(pid);
+  const ids = [...new Set([...ownerIds, ...(wsm||[]).map(r=>r.user_id), ...memberIds,
+    ...S.profiles.filter(p=>p.active && ['admin','management'].includes(p.role)).map(p=>p.id)].filter(Boolean))];
+  const people = ids.map(id=>prof(id)).filter(p=>p && p.active && !(p.email||'').startsWith('forms+'))
+    .sort((a,b)=> (ownerIds.includes(b.id)) - (ownerIds.includes(a.id))
+                  || (a.full_name||'').localeCompare(b.full_name||''));
+  const peopleHTML = `
+      ${searchBoxHTML('pm-q','Search by name, team, role, or email address')}
+      ${canGuest? teamAddHTML('pm-team') : ''}
+      <label style="margin-top:4px">People on this board</label>
+      <div style="display:flex;gap:26px;align-items:center;margin:6px 0 10px;font-size:12.5px;color:var(--ink2)">
+        <span style="display:flex;align-items:center;gap:8px">Members ${avatarStack(people.filter(p=>!ownerIds.includes(p.id)).map(p=>p.id))}</span>
+        <span style="display:flex;align-items:center;gap:8px">Owners ${avatarStack(ownerIds)}</span>
+      </div>
+      <div style="margin-top:4px">${people.map(p=>`
+        <div class="person-row" data-search="${esc(searchKey(p))}">
+          ${avatar(p,true)}
+          <span class="pr-name">${esc(p.full_name||p.email)}
+            ${p.job_title? `<span class="pr-sub">${esc(p.job_title)}</span>`:''}</span>
+          ${ownerHeartHTML(ownerIds.includes(p.id), canSetOwner, `setBoardOwner('${pid}','${p.id}')`, 'board')}
+        </div>`).join('')}</div>
+      <div style="font-size:12px;color:var(--ink3);margin:6px 0 14px">
+        A filled heart marks an owner${canSetOwner? ' — click an outline heart to make someone an owner, or a filled one to remove them':''}.
+        Owners and admins manage this board's settings; everyone here works on its tasks.
+      </div>`;
   const vis = board.visibility || 'collaborate';
   const canGuest = vis === 'shareable';
   const m = modal(`<div class="modal-head"><h2>Board members (partner access)</h2><button class="x" onclick="closeModals()">✕</button></div>
     <div class="modal-body">
+      ${peopleHTML}
       <p style="color:var(--ink2);font-size:13px;margin-top:8px">Internal staff already see every board in their workspaces. Add partners or freelancers here to give them access to <b>this board only</b>.</p>
       ${canGuest? '' : `<div style="margin-top:12px;padding:10px 12px;background:var(--gray-soft);border-radius:8px;font-size:12.5px;color:var(--ink2)">
         This board is <b>${VIS[vis].label}</b>, so outside guests can't be added. Switch it to <b>Shareable</b> first.
         ${canEdit()? `<button class="btn btn-ghost btn-sm" style="margin-left:8px" id="pm-tovis">Make Shareable</button>`:''}</div>`}
-      ${externals.length? externals.map(p=>`
-        <div class="chk" ${canGuest?'':'style="opacity:.45"'}><input type="checkbox" data-uid="${p.id}" ${memberIds.has(p.id)?'checked':''} ${canGuest?'':'disabled'}>
+      ${externals.length? externals
+        .sort((a,b)=> (memberIds.has(b.id)) - (memberIds.has(a.id)) || (a.full_name||'').localeCompare(b.full_name||''))
+        .map(p=>`
+        <div class="chk" data-search="${esc(searchKey(p))}" ${canGuest?'':'style="opacity:.45"'}><input type="checkbox" data-uid="${p.id}" ${memberIds.has(p.id)?'checked':''} ${canGuest?'':'disabled'}>
         ${avatar(p,true)} <span>${esc(p.full_name)} <span style="color:var(--ink3)">· ${esc(p.email)}</span></span></div>`).join('')
       : '<div class="empty">No partner or freelancer accounts yet. Create them in Admin → Users.</div>'}
     </div>
     <div class="modal-foot"><button class="btn btn-ghost" onclick="closeModals()">Close</button><button class="btn btn-primary" id="pm-save" ${canGuest?'':'disabled'}>Save</button></div>`);
+  wireMemberSearch(m, 'pm-q');
+  wireTeamAdd(m, 'pm-team');
   m.querySelector('#pm-tovis')?.addEventListener('click', async ()=>{
     const {error} = await db.from('projects').update({visibility:'shareable'}).eq('id',pid);
     if(error) return toast(error.message, true);
@@ -3297,13 +3527,22 @@ function depsSectionHTML(t, depsOn, depsBy, depTasks){
           ${isStaff()? `<span style="cursor:pointer;color:var(--ink3)" title="Remove dependency" onclick="removeDep('${d.task_id}','${d.depends_on}')">✕</span>`:''}
         </div>`;}).join('') || '<div style="color:var(--ink3);font-size:13px">Not waiting on anything</div>'}
       ${depsBy.length? `<div style="font-size:12px;color:var(--ink3);margin-top:4px">${depsBy.length} task${depsBy.length>1?'s are':' is'} waiting on this one</div>`:''}
-      ${isStaff()? `<button class="btn btn-ghost btn-sm" style="margin-top:6px" onclick="addDepModal('${t.id}')">＋ Add dependency</button>`:''}
+      ${isStaff()? (depCandidates(t.id).length
+        ? `<button class="btn btn-ghost btn-sm" style="margin-top:6px" onclick="addDepModal('${t.id}')">＋ Add dependency</button>`
+        : `<button class="btn btn-ghost btn-sm" style="margin-top:6px" disabled title="Every other task on this board is done, archived, or already linked" >＋ Add dependency</button>
+           <div style="font-size:12px;color:var(--ink3);margin-top:4px">Nothing on this board left to wait on.</div>`):''}
     </div>`;
 }
-function addDepModal(taskId){
+/* One definition of "what could this task wait on", so the button and the
+   picker can never disagree. */
+function depCandidates(taskId){
   const linked = new Set((S._taskDeps||[]).map(d=>d.depends_on));
-  const pool = (S._tasks||[]).filter(x=>x.id!==taskId && x.status!=='done' && !x.archived_at && !linked.has(x.id));
-  if(!pool.length) return toast('No open tasks on this board to wait on', true);
+  return (S._tasks||[]).filter(x=>x.id!==taskId && x.status!=='done' && !x.archived_at && !linked.has(x.id));
+}
+function addDepModal(taskId){
+  const pool = depCandidates(taskId);
+  // Not an error — a one-task board simply has nothing to point at.
+  if(!pool.length) return toast('Nothing on this board left to wait on');
   const m = modal(`<div class="modal-head"><h2>Add dependency</h2><button class="x" onclick="closeModals()">✕</button></div>
     <div class="modal-body">
       <div style="font-size:13px;color:var(--ink2);margin-bottom:10px">This task can't move forward until the chosen one is done.</div>
@@ -4244,13 +4483,15 @@ async function renderAdmin(){
       <div class="tabs">
         <button class="tab ${adminTab==='users'?'active':''}" onclick="adminTab='users';renderAdmin()">Users</button>
         <button class="tab ${adminTab==='workspaces'?'active':''}" onclick="adminTab='workspaces';renderAdmin()">Workspaces</button>
+        <button class="tab ${adminTab==='teams'?'active':''}" onclick="adminTab='teams';renderAdmin()">Teams</button>
         <button class="tab ${adminTab==='brands'?'active':''}" onclick="adminTab='brands';renderAdmin()">Brands</button>
         <button class="tab ${adminTab==='types'?'active':''}" onclick="adminTab='types';renderAdmin()">Request types</button>
         <button class="tab ${adminTab==='sla'?'active':''}" onclick="adminTab='sla';renderAdmin()">SLA</button>
         <button class="tab ${adminTab==='automations'?'active':''}" onclick="adminTab='automations';renderAdmin()">Automations</button>
       </div>
       <div class="actions">${adminTab==='users'? '<button class="btn btn-primary" onclick="inviteUserModal()">＋ Add user</button>':''}
-        ${adminTab==='workspaces'? '<button class="btn btn-primary" onclick="newWorkspaceModal()">＋ Add workspace</button>':''}</div></div>
+        ${adminTab==='workspaces'? '<button class="btn btn-primary" onclick="newWorkspaceModal()">＋ Add workspace</button>':''}
+        ${adminTab==='teams'? '<button class="btn btn-primary" onclick="editTeamModal(null)">＋ Add team</button>':''}</div></div>
     <div id="admin-body"></div>`;
   const B=$('#admin-body');
   if(adminTab==='users'){
@@ -4264,12 +4505,19 @@ async function renderAdmin(){
       return names.slice(0,2).map(w=>`<span class="chip" style="background:var(--gray-soft);color:var(--ink2)"><span class="ws-dot" style="display:inline-block;background:${w.color}"></span> ${esc(w.name)}</span>`).join(' ')
         + (names.length>2? ` <span class="chip" style="background:var(--gray-soft);color:var(--ink3)">+${names.length-2}</span>`:'');
     };
-    B.innerHTML = `<div class="card"><table class="tbl"><thead><tr><th>User</th><th>Email</th><th>Role</th><th>Workspaces</th><th>Status</th><th></th></tr></thead><tbody>
+    const teamCell = p=>{
+      const ts = teamsForUser(p.id);
+      if(!ts.length) return '<span style="color:var(--ink3)">none</span>';
+      return ts.slice(0,2).map(teamChip).join(' ')
+        + (ts.length>2? ` <span class="chip" style="background:var(--gray-soft);color:var(--ink3)">+${ts.length-2}</span>`:'');
+    };
+    B.innerHTML = `<div class="card"><table class="tbl"><thead><tr><th>User</th><th>Email</th><th>Role</th><th>Teams</th><th>Workspaces</th><th>Status</th><th></th></tr></thead><tbody>
       ${S.profiles.map(p=>`<tr>
         <td style="font-weight:600">${avatar(p,true)} ${esc(p.full_name)}${p.id===S.me.id?' <span style="color:var(--ink3)">(you)</span>':''}</td>
         <td style="color:var(--ink2)">${esc(p.email)}</td>
         <td><select onchange="setRole('${p.id}', this.value)" style="width:auto;padding:5px 8px" ${p.id===S.me.id?'disabled':''}>
           ${['admin','management','internal','requester','partner','freelancer'].map(r=>`<option ${r===p.role?'selected':''}>${r}</option>`).join('')}</select></td>
+        <td style="line-height:2">${teamCell(p)}</td>
         <td style="line-height:2">${wsCell(p)}</td>
         <td><span class="chip" style="background:${p.active?'var(--green-soft);color:var(--green)':'var(--gray-soft);color:var(--ink3)'}">${p.active?'active':'inactive'}</span></td>
         <td style="text-align:right;white-space:nowrap">
@@ -4279,9 +4527,28 @@ async function renderAdmin(){
       </tr>`).join('')}</tbody></table></div>
       <p style="margin-top:12px;font-size:12.5px;color:var(--ink2)">Roles — <b>admin</b>: everything · <b>management</b>: sees all workspaces · <b>internal</b>: only the workspaces they are members of · <b>requester</b>: read-only in their workspaces — can raise tasks &amp; tickets and comment, but cannot edit anything · <b>partner / freelancer</b>: only boards they're added to + their own requests.</p>`;
   }
+  if(adminTab==='teams'){
+    B.innerHTML = (S.teams||[]).length
+      ? `<div class="card"><table class="tbl"><thead><tr><th>Team</th><th>People</th><th></th></tr></thead><tbody>
+        ${S.teams.map(t=>{
+          const ids = teamMemberIds(t.id);
+          return `<tr>
+            <td style="font-weight:600"><span class="ws-dot" style="display:inline-block;background:${t.color||'#5C6470'}"></span> ${esc(t.name)}</td>
+            <td style="line-height:2">${ids.length
+              ? `${avatarStack(ids,6)} <span style="color:var(--ink2);font-size:12.5px;margin-left:6px">${ids.length}</span>`
+              : '<span style="color:var(--ink3)">nobody yet</span>'}</td>
+            <td style="text-align:right;white-space:nowrap">
+              <button class="btn btn-ghost btn-sm" onclick="teamMembersEditModal('${t.id}')">People</button>
+              <button class="btn btn-ghost btn-sm" onclick="editTeamModal('${t.id}')">Rename</button>
+              <button class="btn btn-ghost btn-sm" style="color:var(--red)" onclick="deleteTeamModal('${t.id}')">Delete</button></td>
+          </tr>`;}).join('')}</tbody></table></div>
+        <p style="margin-top:12px;font-size:12.5px;color:var(--ink2)">A team is a saved group of people — a shortcut when picking workspace or board members. <b>Being in a team grants no access on its own</b>: adding someone to a team here does not put them on any workspace, and removing them takes nothing away.</p>`
+      : `<div class="empty">No teams yet. Create one to bulk-add people to workspaces and boards.</div>`;
+  }
   if(adminTab==='workspaces'){
     B.innerHTML = `<div class="card"><table class="tbl"><thead><tr><th>Workspace</th><th>Description</th><th>Boards</th><th></th></tr></thead><tbody>
-      ${S.workspaces.map(w=>`<tr><td style="font-weight:600"><span class="ws-dot" style="display:inline-block;background:${w.color}"></span> ${esc(w.name)}</td>
+      ${S.workspaces.map(w=>`<tr><td style="font-weight:600"><span class="ws-dot" style="display:inline-block;background:${w.color}"></span> ${esc(w.name)}
+        <div style="font-weight:400;font-size:12px;color:var(--ink3);margin-top:2px">Owner: ${esc(ownerNames(wsOwnerIds(w.id)))}</div></td>
         <td style="color:var(--ink2)">${esc(w.description)}</td>
         <td>${S.projects.filter(p=>p.workspace_id===w.id).length}</td>
         <td style="text-align:right;white-space:nowrap">
@@ -4936,11 +5203,13 @@ async function resetPassword(uid, name){
 const WS_COLORS=['#0F766E','#3E5C95','#8C5A3B','#5A6B4F','#6E56B8','#A8770E','#7D3C55','#C2434F','#12915E','#2B6CB0'];
 function wsMenu(anchor, wid){
   const w = wsById(wid); if(!w) return;
-  const items = [{label:'New board', fn:()=>newProjectModal(wid)},
-                 '-',
-                 {label:'Rename / edit', fn:()=>editWorkspaceModal(wid)},
-                 {label:'Members', fn:()=>teamMembersModal(wid)}];
-  if(isAdmin()){ items.push('-'); items.push({label:'Delete workspace', danger:true, fn:()=>deleteWorkspaceModal(wid)}); }
+  const mine = canManageWs(wid);
+  const items = [{label:'New board', fn:()=>newProjectModal(wid)}];
+  if(mine){ items.push('-');
+            items.push({label:'Rename / edit', fn:()=>editWorkspaceModal(wid)});
+            items.push({label:'Members', fn:()=>teamMembersModal(wid)}); }
+  else items.push({label:`Owned by ${ownerNames(wsOwnerIds(wid))}`, fn:()=>{}});
+  if(canDeleteWs()){ items.push('-'); items.push({label:'Delete workspace', danger:true, fn:()=>deleteWorkspaceModal(wid)}); }
   ctxMenu(anchor, items);
 }
 function editWorkspaceModal(wid){
@@ -4949,20 +5218,29 @@ function editWorkspaceModal(wid){
     <div class="modal-body">
       <label>Name <span class="req">*</span></label><input id="ew-name" value="${esc(w.name)}">
       <label>Description</label><input id="ew-desc" value="${esc(w.description||'')}">
-      <label>Colour</label>
+      <label style="margin-top:14px">Workspace owners</label>
+      <div style="display:flex;align-items:center;gap:8px;margin-top:4px;flex-wrap:wrap">
+        ${avatarStack(wsOwnerIds(wid))}
+        <span style="font-size:13px;color:var(--ink2);flex:1;min-width:120px">${esc(ownerNames(wsOwnerIds(wid)))}</span>
+        <button type="button" class="btn btn-ghost btn-sm" id="ew-owners">Manage owners</button>
+      </div>
+      <div style="font-size:12px;color:var(--ink3);margin-top:4px">Owners and admins rename this workspace, manage its members, and manage every board inside it. <b>Only an admin can delete the workspace itself.</b></div>
+      <label style="margin-top:14px">Colour</label>
       <div id="ew-cols" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:4px">
         ${WS_COLORS.map(c=>`<span data-c="${c}" style="width:26px;height:26px;border-radius:50%;background:${c};cursor:pointer;box-shadow:${c===w.color?'0 0 0 3px #fff,0 0 0 5px '+c:'none'}"></span>`).join('')}
       </div>
     </div>
     <div class="modal-foot"><button class="btn btn-ghost" onclick="closeModals()">Cancel</button><button class="btn btn-primary" id="ew-save">Save</button></div>`);
   let colour = w.color;
+  m.querySelector('#ew-owners').onclick = ()=>{ closeModals(); teamMembersModal(wid); };
   m.querySelectorAll('#ew-cols span').forEach(s=> s.onclick=()=>{
     colour = s.dataset.c;
     m.querySelectorAll('#ew-cols span').forEach(x=> x.style.boxShadow = x.dataset.c===colour? '0 0 0 3px #fff,0 0 0 5px '+colour : 'none');
   });
   m.querySelector('#ew-save').onclick = async ()=>{
     const name = m.querySelector('#ew-name').value.trim(); if(!name) return toast('Name required', true);
-    const {error} = await db.from('workspaces').update({name, description:m.querySelector('#ew-desc').value.trim(), color:colour}).eq('id',wid);
+    const upd = {name, description:m.querySelector('#ew-desc').value.trim(), color:colour};
+    const {error} = await db.from('workspaces').update(upd).eq('id',wid);
     if(error) return toast(error.message, true);
     closeModals(); toast('Workspace updated'); await refreshCore(); renderSidebar();
     if(S.route.view==='admin') renderAdmin(); else if(S.route.view==='ws') renderWorkspace(wid, S.route.tab);
@@ -4970,7 +5248,9 @@ function editWorkspaceModal(wid){
 }
 async function deleteWorkspaceModal(wid){
   const w = wsById(wid); if(!w) return;
-  if(!isAdmin()) return toast('Only an admin can delete a workspace', true);
+  // An owner runs everything inside a workspace, but deleting it destroys every
+  // board and task in it, so that stays with admins.
+  if(!canDeleteWs()) return toast('Only an admin can delete a workspace. As an owner you can rename it, manage its members and delete the boards inside it.', true);
   const projs = S.projects.filter(p=>p.workspace_id===wid);
   let nTasks = 0;
   if(projs.length){
@@ -5077,3 +5357,76 @@ async function savePlatformCo(id){
 </script>
 </body>
 </html>
+
+<script>
+/* ================= TEAMS (admin) =================
+   A team is a saved group of people, used to bulk-tick members in the
+   workspace and board pickers. It grants nothing by itself. */
+function editTeamModal(tid){
+  const t = tid? teamById(tid) : null;
+  let colour = t? (t.color||TEAM_COLORS[0]) : TEAM_COLORS[0];
+  const m = modal(`<div class="modal-head"><h2>${t?'Rename team':'New team'}</h2><button class="x" onclick="closeModals()">✕</button></div>
+    <div class="modal-body">
+      <label>Team name <span class="req">*</span></label>
+      <input id="tt-name" value="${t? esc(t.name):''}" placeholder="e.g. Customer Service">
+      <label style="margin-top:14px">Colour</label>
+      <div id="tt-cols" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:4px">
+        ${TEAM_COLORS.map(c=>`<span data-c="${c}" style="width:26px;height:26px;border-radius:50%;background:${c};cursor:pointer;box-shadow:${c===colour?'0 0 0 3px #fff,0 0 0 5px '+c:'none'}"></span>`).join('')}
+      </div>
+    </div>
+    <div class="modal-foot"><button class="btn btn-ghost" onclick="closeModals()">Cancel</button><button class="btn btn-primary" id="tt-save">Save</button></div>`);
+  m.querySelectorAll('#tt-cols span').forEach(s=> s.onclick=()=>{
+    colour = s.dataset.c;
+    m.querySelectorAll('#tt-cols span').forEach(x=> x.style.boxShadow = x.dataset.c===colour? '0 0 0 3px #fff,0 0 0 5px '+colour : 'none');
+  });
+  m.querySelector('#tt-save').onclick = async ()=>{
+    const name = m.querySelector('#tt-name').value.trim();
+    if(!name) return toast('Name required', true);
+    const {error} = t
+      ? await db.from('teams').update({name, color:colour}).eq('id', tid)
+      : await db.from('teams').insert({name, color:colour});
+    // The unique index is on (company, lower(name)) — say so in words.
+    if(error) return toast(/duplicate|unique/i.test(error.message)? `There is already a team called ${name}` : error.message, true);
+    closeModals(); toast(t? 'Team renamed':'Team created'); await refreshCore(); renderAdmin();
+  };
+}
+async function teamMembersEditModal(tid){
+  const t = teamById(tid); if(!t) return;
+  const inTeam = new Set(teamMemberIds(tid));
+  const pool = S.profiles.filter(p=>p.active && !(p.email||'').startsWith('forms+'))
+    .sort((a,b)=> (inTeam.has(b.id)) - (inTeam.has(a.id)) || (a.full_name||'').localeCompare(b.full_name||''));
+  const m = modal(`<div class="modal-head"><h2>People in ${esc(t.name)}</h2><button class="x" onclick="closeModals()">✕</button></div>
+    <div class="modal-body">
+      ${searchBoxHTML('tp-q','Search by name, role, or email address')}
+      <div id="tp-count" style="font-size:12.5px;color:var(--ink2);margin:2px 0"></div>
+      ${pool.map(p=>`<div class="chk" data-search="${esc(searchKey(p))}">
+        <input type="checkbox" data-uid="${p.id}" ${inTeam.has(p.id)?'checked':''}>
+        ${avatar(p,true)} <span style="flex:1">${esc(p.full_name||p.email)}
+          <span style="color:var(--ink3)">· ${esc(p.email)}</span></span></div>`).join('')
+      || '<div class="empty">No active accounts yet.</div>'}
+    </div>
+    <div class="modal-foot"><button class="btn btn-ghost" onclick="closeModals()">Close</button><button class="btn btn-primary" id="tp-save">Save</button></div>`);
+  wireMemberSearch(m, 'tp-q');
+  const boxes = [...m.querySelectorAll('input[data-uid]')], countEl = m.querySelector('#tp-count');
+  const recount = ()=>{ countEl.textContent = `${boxes.filter(b=>b.checked).length} of ${boxes.length} people in this team`; };
+  boxes.forEach(b=> b.addEventListener('change', recount)); recount();
+  m.querySelector('#tp-save').onclick = async ()=>{
+    const want = new Set(boxes.filter(b=>b.checked).map(b=>b.dataset.uid));
+    const add = [...want].filter(u=>!inTeam.has(u)).map(user_id=>({team_id:tid, user_id}));
+    const rm  = [...inTeam].filter(u=>!want.has(u));
+    if(add.length){ const {error} = await db.from('team_members').insert(add); if(error) return toast(error.message, true); }
+    if(rm.length){ const {error} = await db.from('team_members').delete().eq('team_id',tid).in('user_id',rm); if(error) return toast(error.message, true); }
+    closeModals(); toast('Team updated'); await refreshCore(); renderAdmin();
+  };
+}
+async function deleteTeamModal(tid){
+  const t = teamById(tid); if(!t) return;
+  const n = teamMemberIds(tid).length;
+  // Deleting a team takes nobody's access away — it is only a saved grouping.
+  if(!confirm(`Delete the team ${t.name}?`
+    + (n? ` Its ${n} ${n===1?'person keeps':'people keep'} every workspace and board they are on — only the grouping goes.`:''))) return;
+  const {error} = await db.from('teams').delete().eq('id', tid);
+  if(error) return toast(error.message, true);
+  toast('Team deleted'); await refreshCore(); renderAdmin();
+}
+</script>
