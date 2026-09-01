@@ -1,0 +1,58 @@
+name: Build, test, deploy
+
+# Builds index.html from src/, runs all 27 jsdom suites, and only then commits
+# the built file that GitHub Pages serves. A failing suite blocks the deploy.
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'tests/**'
+      - 'build.sh'
+      - 'run_tests.sh'
+      - '.github/workflows/ci.yml'
+  pull_request:
+    paths:
+      - 'src/**'
+      - 'tests/**'
+      - 'build.sh'
+      - 'run_tests.sh'
+  workflow_dispatch:
+
+concurrency:
+  group: build-test-deploy-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-test-deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Build app/index.html from src/
+        run: bash ./build.sh   # bash: files uploaded via the GitHub web UI land as 100644
+
+      - name: Run the 27 regression suites
+        run: bash ./run_tests.sh
+
+      # Only reached when every suite passed.
+      - name: Publish the built bundle to the repo root
+        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+        run: |
+          cp app/index.html index.html
+          if git diff --quiet -- index.html; then
+            echo "index.html unchanged - nothing to deploy"
+            exit 0
+          fi
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add index.html
+          git commit -m "Deploy: build from ${GITHUB_SHA::7}"
+          git push
+          echo "deployed - users need a hard refresh (Ctrl/Cmd+Shift+R)"
