@@ -1,0 +1,528 @@
+<script>
+/* ================= TASK MODAL ================= */
+function newTaskModal(projectId, status='todo', groupId=null){
+  const p = projById(projectId);
+  const m = modal(`<div class="modal-head"><h2>New task</h2><button class="x" onclick="closeModals()">✕</button></div>
+    <div class="modal-body">
+      <label>Title <span class="req">*</span></label><input id="tk-title" placeholder="What needs to be done?">
+      <label>Description</label><textarea id="tk-desc" rows="3"></textarea>
+      <div class="field-grid">
+        <div><label>Status</label><select id="tk-status">${STATUSES.map(s=>`<option value="${s.k}" ${s.k===status?'selected':''}>${s.label}</option>`).join('')}</select></div>
+        <div><label>Priority</label><select id="tk-prio">${PRIORITIES.map(x=>`<option value="${x.k}" ${x.k==='normal'?'selected':''}>${x.label}</option>`).join('')}</select></div>
+        <div><label>Assignee</label><select id="tk-assignee"><option value="">Unassigned</option>${assigneeOptions(projectId)}</select></div>
+        <div><label>Due date</label><input id="tk-due" type="date"></div>
+      </div>
+      <label>Tags (comma separated)</label><input id="tk-tags" placeholder="e.g. 9.9, shopee">
+    </div>
+    <div class="modal-foot"><button class="btn btn-ghost" onclick="closeModals()">Cancel</button><button class="btn btn-primary" id="tk-save">Create task</button></div>`);
+  m.querySelector('#tk-title').focus();
+  m.querySelector('#tk-save').onclick = async ()=>{
+    const title=m.querySelector('#tk-title').value.trim(); if(!title) return toast('Title is required', true);
+    const maxPos = Math.max(0, ...(S._tasks||[]).map(t=>t.position||0));
+    const {data, error} = await db.from('tasks').insert({
+      project_id:projectId, title, description:m.querySelector('#tk-desc').value.trim(),
+      status:m.querySelector('#tk-status').value, priority:m.querySelector('#tk-prio').value,
+      assignee_id:m.querySelector('#tk-assignee').value||null, due_date:m.querySelector('#tk-due').value||null,
+      tags:m.querySelector('#tk-tags').value.split(',').map(s=>s.trim()).filter(Boolean),
+      created_by:S.me.id, position:maxPos+1, group_id:groupId
+    }).select().single();
+    if(error) return toast(error.message, true);
+    closeModals(); toast('Task created');
+    if(S.route.view==='project') renderProject(projectId); else renderHome();
+  };
+}
+function assigneeOptions(projectId, selected){
+  // staff can assign anyone; also include project members (partners)
+  return S.profiles.filter(p=>p.active).map(p=>
+    `<option value="${p.id}" ${p.id===selected?'selected':''}>${esc(p.full_name)}</option>`).join('');
+}
+/* #/task/<id> — a shareable link straight to one task */
+async function openTaskRoute(id){
+  const {data:t} = await db.from('tasks').select('id,project_id').eq('id',id).single();
+  if(!t){ toast('Task not found — it may have been deleted or you may not have access', true); location.hash='#/home'; return; }
+  location.hash = '#/project/' + t.project_id;
+  setTimeout(()=>openTask(id), 450);
+}
+async function openTask(id){
+  const [{data:t}, {data:chk}, {data:comments}, {data:atts}, {data:subs}, {data:hist}, {data:apprs}, {data:depsOn}, {data:depsBy}] = await Promise.all([
+    db.from('tasks').select('*').eq('id',id).single(),
+    db.from('task_checklist').select('*').eq('task_id',id).order('position'),
+    db.from('comments').select('*').eq('entity_type','task').eq('entity_id',id).order('created_at'),
+    db.from('attachments').select('*').eq('entity_type','task').eq('entity_id',id).order('created_at'),
+    db.from('subtasks').select('*').eq('task_id',id).order('position').order('created_at'),
+    db.from('activity_log').select('*').eq('entity_type','task').eq('entity_id',id).order('created_at',{ascending:false}).limit(200),
+    db.from('approvals').select('*').eq('task_id',id).order('created_at'),
+    db.from('task_deps').select('*').eq('task_id',id),
+    db.from('task_deps').select('*').eq('depends_on',id),
+  ]);
+  S._taskHist = hist||[]; S._histEntity = id; S._histType = 'task';
+  if(!t) return toast('Task not found', true);
+  S._taskDeps = depsOn||[];
+  // Titles/statuses for what this task waits on — the board cache usually has them.
+  let depTasks = [];
+  const depIds = (depsOn||[]).map(d=>d.depends_on);
+  if(depIds.length){
+    depTasks = (S._tasksAll||S._tasks||[]).filter(x=>depIds.includes(x.id));
+    const missing = depIds.filter(i=>!depTasks.some(x=>x.id===i));
+    if(missing.length){ const {data:mt} = await db.from('tasks').select('id,title,status').in('id',missing); depTasks = depTasks.concat(mt||[]); }
+  }
+  await hydrateCommentAtts(comments||[]);
+  S._commentCache = {}; (comments||[]).forEach(c=> S._commentCache[c.id]=c);
+  const p = projById(t.project_id);
+  const m = modal(`<div class="modal-head">
+      <h2><span id="tv-title-view">${esc(t.title)}</span></h2>
+      ${isStaff()? `<button class="x" title="Delete task" onclick="deleteTask('${t.id}','${t.project_id}')" style="font-size:12px;font-weight:600">Delete</button>`:''}
+      <button class="x" onclick="closeModals()">✕</button></div>
+    <div class="modal-body">
+      <div class="field-grid">
+        <div><label>Status</label><select id="tv-status" ${canEdit()?'':'disabled'}>${STATUSES.map(s=>`<option value="${s.k}" ${s.k===t.status?'selected':''}>${s.label}</option>`).join('')}</select></div>
+        <div><label>Priority</label><select id="tv-prio" ${canEdit()?'':'disabled'}>${PRIORITIES.map(x=>`<option value="${x.k}" ${x.k===t.priority?'selected':''}>${x.label}</option>`).join('')}</select></div>
+        <div><label>Assignee</label><select id="tv-assignee" ${canEdit()?'':'disabled'}><option value="">Unassigned</option>${assigneeOptions(t.project_id, t.assignee_id)}</select></div>
+        <div><label>Due date</label><input id="tv-due" type="date" value="${t.due_date||''}" ${canEdit()?'':'disabled'}></div>
+      </div>
+      <label>Title</label><input id="tv-title" value="${esc(t.title)}" ${canEdit()?'':'disabled'}>
+      <label>Description</label><textarea id="tv-desc" rows="3" ${canEdit()?'':'disabled'}>${esc(t.description)}</textarea>
+      <label>Subtasks</label>
+      <div id="tv-subprog">${subProgressBar(subs||[])}</div>
+      <div id="tv-subs">${(subs||[]).map(stRow).join('')}</div>
+      ${canCreate()? `<div style="display:flex;gap:8px;margin-top:6px"><input id="tv-sub-new" placeholder="Add a subtask…" style="flex:1">
+        <button class="btn btn-ghost btn-sm" id="tv-sub-add">Add</button></div>`:''}
+      <label>Checklist</label>
+      <div id="tv-chk">${(chk||[]).map(c=>chkRow(c)).join('')}</div>
+      ${canEdit()? `<div style="display:flex;gap:8px;margin-top:6px"><input id="tv-chk-new" placeholder="Add checklist item…" style="flex:1">
+        <button class="btn btn-ghost btn-sm" id="tv-chk-add">Add</button></div>`:''}
+      <label>Attachments</label>
+      <div id="tv-atts">${attListHTML(atts, canEdit())}</div>
+      ${canCreate()? attachZoneHTML('tv-drop') : ''}
+      ${(p?.approval_gate?.on || (apprs||[]).length)? signoffSectionHTML(t, apprs||[], p?.approval_gate||{}) : ''}
+      ${(isStaff() || (depsOn||[]).length || (depsBy||[]).length)? depsSectionHTML(t, depsOn||[], depsBy||[], depTasks) : ''}
+      <label>Comments</label>
+      <div id="tv-comments">${(comments||[]).map(commentRow).join('')||'<div style="color:var(--ink3);font-size:13px">No comments yet</div>'}</div>
+      ${canCreate()? commentComposerHTML('tv') : ''}
+      ${historySectionHTML()}
+      <div style="margin-top:14px;font-size:11.5px;color:var(--ink3)">Created ${fmtDateTime(t.created_at)} by ${esc(prof(t.created_by)?.full_name||'—')} · in ${esc(p?.name||'')}</div>
+    </div>
+    <div class="modal-foot"><button class="btn btn-ghost" onclick="closeModals()">Close</button>${canEdit()? `<button class="btn btn-primary" id="tv-save">Save changes</button>`:''}</div>`, true);
+
+  if(m.querySelector('#tv-save')) m.querySelector('#tv-save').onclick = async ()=>{
+    const upd = {
+      title:m.querySelector('#tv-title').value.trim()||t.title,
+      description:m.querySelector('#tv-desc').value,
+      status:m.querySelector('#tv-status').value, priority:m.querySelector('#tv-prio').value,
+      assignee_id:m.querySelector('#tv-assignee').value||null, due_date:m.querySelector('#tv-due').value||null,
+    };
+    const {error} = await db.from('tasks').update(upd).eq('id',t.id);
+    if(error) return toast(error.message, true);
+    closeModals(); toast('Task saved');
+    if(S.route.view==='project') renderProject(t.project_id); else if(S.route.view==='home') renderHome();
+  };
+  if(m.querySelector('#tv-sub-add')) m.querySelector('#tv-sub-add').onclick = async ()=>{
+    const title = m.querySelector('#tv-sub-new').value.trim(); if(!title) return;
+    const {data, error} = await db.from('subtasks').insert({task_id:t.id, title, created_by:S.me.id, position:(m.querySelectorAll('.strow').length)+1}).select().single();
+    if(error) return toast(error.message, true);
+    m.querySelector('#tv-subs').insertAdjacentHTML('beforeend', stRow(data));
+    m.querySelector('#tv-sub-new').value=''; refreshSubProg(t.id);
+  };
+  if(m.querySelector('#tv-chk-add')) m.querySelector('#tv-chk-add').onclick = async ()=>{
+    const label = m.querySelector('#tv-chk-new').value.trim(); if(!label) return;
+    const {data, error} = await db.from('task_checklist').insert({task_id:t.id, label, position:(chk?.length||0)+1}).select().single();
+    if(error) return toast(error.message, true);
+    m.querySelector('#tv-chk').insertAdjacentHTML('beforeend', chkRow(data));
+    m.querySelector('#tv-chk-new').value='';
+  };
+  // Paste a whole list -> one subtask / checklist item per line
+  wireListPaste(m.querySelector('#tv-sub-new'), lines=> addSubtasksBulk(t.id, lines, m));
+  wireListPaste(m.querySelector('#tv-chk-new'), lines=> addChecklistBulk(t.id, lines, m));
+  wireAttachZone(m, 'tv-drop', 'task', t.id, m.querySelector('#tv-atts'));
+  const cIn = m.querySelector('#tv-comment');
+  if(cIn){
+    wireComposer(m, 'tv');
+    wireMentions(cIn);
+    cIn.addEventListener('keydown', e=>{ if(e.key==='Enter' && !e.shiftKey && !document.querySelector('.mention-menu')){ e.preventDefault(); m.querySelector('#tv-comment-add').click(); } });
+    m.querySelector('#tv-comment-add').onclick = ()=> postComment('task', t.id, t.title, cIn, m.querySelector('#tv-comments'));
+  }
+}
+/* ---- sign-off (maker-checker) ----
+   The DB enforces the gate: moving into the gated status without an approved
+   row raises, and maker-cannot-be-checker is rejected on insert. The UI just
+   shows the rows and passes error messages through. */
+function signoffRow(a){
+  const ap = prof(a.approver_id), rq = prof(a.requested_by);
+  const chip = a.status==='approved'? `<span class="chip" style="background:var(--green-soft);color:var(--green)">approved</span>`
+    : a.status==='rejected'? `<span class="chip" style="background:var(--red-soft);color:var(--red)">rejected</span>`
+    : `<span class="chip" style="background:var(--amber-soft);color:var(--amber)">pending</span>`;
+  const mine = a.status==='pending' && S.me && a.approver_id===S.me.id;
+  return `<div class="so-row" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:6px 0;font-size:13px">
+    ${avatar(ap,true)} <b>${esc(ap?.full_name||'—')}</b> ${chip}
+    <span style="color:var(--ink3);font-size:12px">asked by ${esc(rq?.full_name||'—')} · ${timeAgo(a.created_at)}</span>
+    ${a.note? `<span style="color:var(--ink2);font-size:12px">“${esc(a.note)}”</span>`:''}
+    ${mine? `<span style="margin-left:auto;white-space:nowrap"><button class="btn btn-green btn-sm" onclick="decideTaskApproval('${a.id}','approved','${a.task_id}')">Approve</button>
+      <button class="btn btn-danger btn-sm" onclick="decideTaskApproval('${a.id}','rejected','${a.task_id}')">Reject</button></span>`:''}
+  </div>`;
+}
+function signoffSectionHTML(t, apprs, gate){
+  const last = apprs[apprs.length-1];
+  const gateLabel = (STATUSES.find(s=>s.k===(gate.status||'done'))||{}).label||'Done';
+  return `<label>Sign-off</label>
+    <div id="tv-signoff">
+      ${apprs.map(signoffRow).join('') || '<div style="color:var(--ink3);font-size:13px">No sign-off requested yet</div>'}
+      ${last && last.status==='approved'? `<div style="font-size:12.5px;color:var(--green);margin-top:4px">Sign-off complete — this task can be marked ${esc(gateLabel)}</div>`:''}
+      ${isStaff()? `<button class="btn btn-ghost btn-sm" style="margin-top:6px" onclick="requestSignoffModal('${t.id}')">Request sign-off</button>`:''}
+    </div>`;
+}
+async function requestSignoffModal(taskId){
+  const {data:t} = await db.from('tasks').select('id,title,project_id').eq('id',taskId).single();
+  if(!t) return toast('Task not found', true);
+  const gate = (projById(t.project_id)||{}).approval_gate||{};
+  // gate approvers pre-fill the picker; never offer myself — the DB rejects self-approval
+  let pool = (gate.approvers||[]).map(prof).filter(u=>u && u.active && u.id!==S.me.id);
+  if(!pool.length) pool = S.profiles.filter(u=>u.active && ['admin','internal','management'].includes(u.role) && u.id!==S.me.id && !(u.email||'').startsWith('forms+'));
+  if(!pool.length) return toast('No one else can sign off yet — add another staff member first', true);
+  const m = modal(`<div class="modal-head"><h2>Request sign-off</h2><button class="x" onclick="closeModals()">✕</button></div>
+    <div class="modal-body">
+      <div style="font-size:13px;color:var(--ink2);margin-bottom:10px">${esc(t.title)}</div>
+      <label>Who signs off</label><select id="so-approver">${pool.map(u=>`<option value="${u.id}">${esc(u.full_name)}</option>`).join('')}</select>
+      <label>Note (optional)</label><input id="so-note" placeholder="Anything they should look at?">
+    </div>
+    <div class="modal-foot"><button class="btn btn-ghost" onclick="closeModals()">Cancel</button><button class="btn btn-primary" id="so-send">Send request</button></div>`);
+  m.querySelector('#so-send').onclick = async ()=>{
+    const approver_id = m.querySelector('#so-approver').value;
+    if(!approver_id) return toast('Pick an approver', true);
+    const {error} = await db.from('approvals').insert({task_id:t.id, title:t.title,
+      approver_id, requested_by:S.me.id, note:m.querySelector('#so-note').value.trim()});
+    if(error) return toast(error.message, true);
+    closeModals(); toast('Sign-off requested'); openTask(t.id);
+  };
+}
+/* ---- dependencies ----
+   The DB blocks moving a task forward while a dependency isn't done; the
+   error message it raises is human-readable and the status handlers already
+   toast it. The UI just lists and edits the links. */
+function depsSectionHTML(t, depsOn, depsBy, depTasks){
+  return `<label>Waiting on</label>
+    <div id="tv-deps">
+      ${depsOn.map(d=>{
+        const dt = (depTasks||[]).find(x=>x.id===d.depends_on);
+        return `<div class="dep-row" style="display:flex;align-items:center;gap:8px;padding:5px 0;font-size:13px">
+          <span style="flex:1;min-width:0">${esc(dt?.title||'(task)')}</span>${statusChip(dt?.status||'todo')}
+          ${isStaff()? `<span style="cursor:pointer;color:var(--ink3)" title="Remove dependency" onclick="removeDep('${d.task_id}','${d.depends_on}')">✕</span>`:''}
+        </div>`;}).join('') || '<div style="color:var(--ink3);font-size:13px">Not waiting on anything</div>'}
+      ${depsBy.length? `<div style="font-size:12px;color:var(--ink3);margin-top:4px">${depsBy.length} task${depsBy.length>1?'s are':' is'} waiting on this one</div>`:''}
+      ${isStaff()? (depCandidates(t.id).length
+        ? `<button class="btn btn-ghost btn-sm" style="margin-top:6px" onclick="addDepModal('${t.id}')">＋ Add dependency</button>`
+        : `<button class="btn btn-ghost btn-sm" style="margin-top:6px" disabled title="Every other task on this board is done, archived, or already linked" >＋ Add dependency</button>
+           <div style="font-size:12px;color:var(--ink3);margin-top:4px">Nothing on this board left to wait on.</div>`):''}
+    </div>`;
+}
+/* One definition of "what could this task wait on", so the button and the
+   picker can never disagree. */
+function depCandidates(taskId){
+  const linked = new Set((S._taskDeps||[]).map(d=>d.depends_on));
+  return (S._tasks||[]).filter(x=>x.id!==taskId && x.status!=='done' && !x.archived_at && !linked.has(x.id));
+}
+function addDepModal(taskId){
+  const pool = depCandidates(taskId);
+  // Not an error — a one-task board simply has nothing to point at.
+  if(!pool.length) return toast('Nothing on this board left to wait on');
+  const m = modal(`<div class="modal-head"><h2>Add dependency</h2><button class="x" onclick="closeModals()">✕</button></div>
+    <div class="modal-body">
+      <div style="font-size:13px;color:var(--ink2);margin-bottom:10px">This task can't move forward until the chosen one is done.</div>
+      <label>Waits on</label><select id="dep-pick">${pool.map(x=>`<option value="${x.id}">${esc(x.title)}</option>`).join('')}</select>
+    </div>
+    <div class="modal-foot"><button class="btn btn-ghost" onclick="closeModals()">Cancel</button><button class="btn btn-primary" id="dep-add">Add</button></div>`);
+  m.querySelector('#dep-add').onclick = async ()=>{
+    const depends_on = m.querySelector('#dep-pick').value;
+    if(!depends_on) return toast('Pick a task', true);
+    const {error} = await db.from('task_deps').insert({task_id:taskId, depends_on});
+    if(error) return toast(error.message, true);
+    (S._deps||(S._deps=[])).push({task_id:taskId, depends_on});
+    toast('Dependency added'); closeModals(); openTask(taskId);
+  };
+}
+async function removeDep(taskId, dependsOn){
+  const {error} = await db.from('task_deps').delete().eq('task_id',taskId).eq('depends_on',dependsOn);
+  if(error) return toast(error.message, true);
+  S._deps = (S._deps||[]).filter(d=>!(d.task_id===taskId && d.depends_on===dependsOn));
+  toast('Dependency removed'); closeModals(); openTask(taskId);
+}
+/* Same decision as decideApproval, but lands back in the task drawer.
+   The DB writes the notification + history rows itself. */
+async function decideTaskApproval(id, status, taskId){
+  let note = '';
+  if(status==='rejected'){ note = prompt('Reason for rejection (optional):')||''; }
+  const {error} = await db.from('approvals').update({status, note, decided_at:new Date().toISOString()}).eq('id',id);
+  if(error) return toast(error.message, true);
+  toast(status==='approved'? 'Approved':'Rejected');
+  updateApprovalBadge();
+  closeModals(); openTask(taskId);
+}
+/* ---- paste a list, get items: one per line, bullets/numbering stripped ---- */
+function splitPasteLines(text){
+  return String(text||'').split(/\r?\n/)
+    .map(s=> s.replace(/^\s*(?:[-–—•*▪◦✓☐]|\d+[.)])\s*/,'').trim())
+    .filter(Boolean);
+}
+function wireListPaste(input, addMany){
+  if(!input) return;
+  input.addEventListener('paste', e=>{
+    const txt = (e.clipboardData || window.clipboardData)?.getData('text') || '';
+    const lines = splitPasteLines(txt);
+    if(lines.length < 2) return;              // single line pastes normally
+    e.preventDefault();
+    addMany(lines);
+  });
+}
+async function addSubtasksBulk(taskId, lines, m){
+  const base = m.querySelectorAll('.strow').length;
+  const {data, error} = await db.from('subtasks').insert(
+    lines.map((title,i)=>({task_id:taskId, title, created_by:S.me.id, position:base+i+1}))).select();
+  if(error) return toast(error.message, true);
+  (data||[]).forEach(s=> m.querySelector('#tv-subs').insertAdjacentHTML('beforeend', stRow(s)));
+  m.querySelector('#tv-sub-new').value=''; refreshSubProg(taskId);
+  toast(`${(data||[]).length} subtasks added`);
+}
+async function addChecklistBulk(taskId, lines, m){
+  const base = m.querySelector('#tv-chk').children.length;
+  const {data, error} = await db.from('task_checklist').insert(
+    lines.map((label,i)=>({task_id:taskId, label, position:base+i+1}))).select();
+  if(error) return toast(error.message, true);
+  (data||[]).forEach(c=> m.querySelector('#tv-chk').insertAdjacentHTML('beforeend', chkRow(c)));
+  m.querySelector('#tv-chk-new').value='';
+  toast(`${(data||[]).length} checklist items added`);
+}
+function subProgressBar(subs){
+  const total=subs.length, done=subs.filter(s=>s.status==='done').length;
+  if(!total) return '';
+  const pct = Math.round(done/total*100);
+  return `<div class="prog"><div class="prog-bar"><div class="prog-fill" style="width:${pct}%"></div></div><span class="prog-lbl">${done}/${total} done</span></div>`;
+}
+async function refreshSubProg(taskId){
+  const {data:subs} = await db.from('subtasks').select('status').eq('task_id',taskId);
+  const box = document.getElementById('tv-subprog'); if(box) box.innerHTML = subProgressBar(subs||[]);
+}
+function stRow(s){
+  if(!canEdit()) return `<div class="strow ro" id="st-${s.id}">
+    <span class="tv-fill mini" style="background:${STATUSES.find(x=>x.k===s.status)?.color||'#8E93A8'}">${esc(STATUSES.find(x=>x.k===s.status)?.label||s.status)}</span>
+    <span style="font-size:12.5px">${esc(s.title)}</span><span style="font-size:12px;color:var(--ink3)">${esc(s.stype||'')}</span>
+    <span style="font-size:12px">${s.assignee_id? esc(prof(s.assignee_id)?.full_name||''):''}</span>
+    <span style="font-size:12px;color:var(--ink3)">${s.due_date||''}</span><span></span></div>`;
+  return `<div class="strow" id="st-${s.id}" data-task="${s.task_id}">
+    <select onchange="stUpd('${s.id}','status',this.value,'${s.task_id}')">${STATUSES.map(x=>`<option value="${x.k}" ${x.k===s.status?'selected':''}>${x.label}</option>`).join('')}</select>
+    <input type="text" value="${esc(s.title)}" onchange="stUpd('${s.id}','title',this.value.trim(),'${s.task_id}')">
+    <input type="text" value="${esc(s.stype||'')}" placeholder="Type" onchange="stUpd('${s.id}','stype',this.value.trim()||null,'${s.task_id}')">
+    <select onchange="stUpd('${s.id}','assignee_id',this.value||null,'${s.task_id}')"><option value="">Unassigned</option>${S.profiles.filter(p=>p.active && !(p.email||'').startsWith('forms+')).map(p=>`<option value="${p.id}" ${p.id===s.assignee_id?'selected':''}>${esc(p.full_name)}</option>`).join('')}</select>
+    <input type="date" value="${s.due_date||''}" onchange="stUpd('${s.id}','due_date',this.value||null,'${s.task_id}')">
+    <button class="del" onclick="delSubtask('${s.id}','${s.task_id}')">✕</button></div>`;
+}
+async function stUpd(id, field, val, taskId){
+  const {error} = await db.from('subtasks').update({[field]:val}).eq('id',id);
+  if(error) return toast(error.message, true);
+  if(field==='status') refreshSubProg(taskId);
+}
+async function delSubtask(id, taskId){
+  const {error} = await db.from('subtasks').delete().eq('id',id);
+  if(error) return toast(error.message, true);
+  document.getElementById('st-'+id)?.remove(); refreshSubProg(taskId);
+}
+function chkRow(c){
+  if(!canEdit()) return `<div class="chk ${c.done?'done':''}" id="chk-${c.id}">
+    <input type="checkbox" ${c.done?'checked':''} disabled><span>${esc(c.label)}</span></div>`;
+  return `<div class="chk ${c.done?'done':''}" id="chk-${c.id}">
+    <input type="checkbox" ${c.done?'checked':''} onchange="toggleChk('${c.id}', this.checked)">
+    <span>${esc(c.label)}</span>
+    <button class="del" onclick="delChk('${c.id}')">✕</button></div>`;
+}
+async function toggleChk(id, done){
+  await db.from('task_checklist').update({done}).eq('id',id);
+  const row = document.getElementById('chk-'+id); if(row) row.classList.toggle('done', done);
+}
+async function delChk(id){
+  await db.from('task_checklist').delete().eq('id',id);
+  document.getElementById('chk-'+id)?.remove();
+}
+function canRemoveComment(c){ return S.me && (c.author_id===S.me.id || isStaff()); }
+function canEditComment(c){ return S.me && c.author_id===S.me.id; }
+/* A removed comment disappears from the thread entirely — its trace, and the
+   Undo, live on the task History instead. */
+function commentRow(c){
+  if(c.deleted_at) return '';
+  const a = prof(c.author_id);
+  const atts = c.atts || [];
+  return `<div class="comment" data-cid="${c.id}">${avatar(a,true)}<div class="body">
+    <b>${esc(a?.full_name||'Unknown')}</b><span class="when">${fmtDateTime(c.created_at)}${c.edited_at? ' · edited':''}</span>
+    <span class="cmt-acts">
+      ${canEditComment(c)? `<button class="cmt-act" title="Edit" onclick="editComment('${c.id}')">Edit</button>`:''}
+      ${canRemoveComment(c)? `<button class="cmt-act danger" title="Remove" onclick="deleteComment('${c.id}')">Remove</button>`:''}
+    </span>
+    <p class="cmt-body">${c.body? renderMentionText(c.body, c.mentions):''}</p>
+    ${atts.length? `<div class="att-list in-comment">${atts.map(x=>attLink(x)).join('')}</div>`:''}
+  </div></div>`;
+}
+function commentsBoxEl(){ return document.querySelector('#tv-comments, #rv-comments'); }
+function renderCommentsBox(){
+  const box = commentsBoxEl(); if(!box) return;
+  const rows = Object.values(S._commentCache||{}).sort((a,b)=>(a.created_at||'').localeCompare(b.created_at||''));
+  box.innerHTML = rows.map(commentRow).join('') || '<div style="color:var(--ink3);font-size:13px">No comments yet</div>';
+}
+async function refreshTaskHistory(){
+  const boxEl = document.getElementById('tv-history'); if(!boxEl || !S._histEntity) return;
+  const {data} = await db.from('activity_log').select('*').eq('entity_type', S._histType||'task')
+    .eq('entity_id', S._histEntity).order('created_at',{ascending:false}).limit(200);
+  S._taskHist = data||[];
+  boxEl.innerHTML = historyHTML(S._taskHist);
+}
+async function deleteComment(id){
+  const {data, error} = await db.from('comments')
+    .update({deleted_at:new Date().toISOString(), deleted_by:S.me.id}).eq('id',id).select().single();
+  if(error) return toast(error.message, true);
+  cacheComment(data); renderCommentsBox(); refreshTaskHistory();
+  toastUndo('Comment removed', ()=>undoDeleteComment(id));
+}
+async function undoDeleteComment(id){
+  const {data, error} = await db.from('comments')
+    .update({deleted_at:null, deleted_by:null}).eq('id',id).select().single();
+  if(error) return toast(error.message, true);
+  cacheComment(data); renderCommentsBox(); refreshTaskHistory();
+  toast('Comment restored');
+}
+/* Edit in place: the text swaps for an input; Enter saves, Escape cancels. */
+function editComment(id){
+  const c = (S._commentCache||{})[id]; if(!c) return;
+  const body = document.querySelector(`.comment[data-cid="${id}"] .cmt-body`); if(!body) return;
+  if(body.querySelector('input')) return;
+  const inp = document.createElement('input');
+  inp.className = 'cmt-editbox'; inp.value = c.body||'';
+  body.textContent=''; body.appendChild(inp); inp.focus();
+  inp.setSelectionRange(inp.value.length, inp.value.length);
+  let done=false;
+  const cancel = ()=>{ if(done) return; done=true; body.innerHTML = renderMentionText(c.body, c.mentions); };
+  const save = async ()=>{
+    if(done) return;
+    const val = inp.value.trim();
+    if(!val || val===c.body) return cancel();
+    done=true;
+    const {data, error} = await db.from('comments')
+      .update({body:val, edited_at:new Date().toISOString()}).eq('id',id).select().single();
+    if(error){ done=false; return toast(error.message, true); }
+    cacheComment(data); renderCommentsBox(); refreshTaskHistory();
+  };
+  inp.onkeydown = e=>{ if(e.key==='Enter') save(); if(e.key==='Escape') cancel(); };
+  inp.onblur = ()=> setTimeout(save, 100);
+}
+function cacheComment(row){
+  if(!row) return;
+  const prev = (S._commentCache||{})[row.id];
+  if(prev) row.atts = prev.atts;
+  (S._commentCache = S._commentCache||{})[row.id] = row;
+}
+/* ---- task history ---- */
+const statusLabel = k => (STATUSES.find(s=>s.k===k)||{}).label || k || '—';
+const prioLabel   = k => (PRIORITIES.find(p=>p.k===k)||{}).label || k || '—';
+const groupLabel  = id => ((S._groups||[]).find(g=>g.id===id)||{}).name || (id? 'another group':'no group');
+const fieldLabel  = f => ({title:'Title', status:'Status', priority:'Priority', assignee:'Assignee',
+                           due_date:'Due date', group:'Group', board:'Board', description:'Description',
+                           archived:'Archive'})[f] || f;
+function histValue(field, v, key){
+  if(v===null || v===undefined || v==='') return '<em>empty</em>';
+  if(field==='status')   return esc(statusLabel(v));
+  if(field==='priority') return esc(prioLabel(v));
+  if(field==='assignee') return esc(prof(v)?.full_name || 'someone');
+  if(field==='group')    return esc(groupLabel(v));
+  if(field==='board')    return esc(projById(v)?.name || 'another board');
+  if(field==='due_date') return esc(fmtDate(v));
+  return esc(String(v));
+}
+function histLine(a){
+  const d = a.detail||{};
+  switch(a.action){
+    case 'created':        return 'created this task';
+    case 'deleted':        return 'deleted this task';
+    case 'commented':        return `commented${d.excerpt? ` — “${esc(d.excerpt)}”`:''}`;
+    case 'comment_deleted':  return `removed a comment${d.excerpt? ` — “${esc(d.excerpt)}”`:''}`;
+    case 'comment_restored': return `restored a comment${d.excerpt? ` — “${esc(d.excerpt)}”`:''}`;
+    case 'comment_edited':   return `edited a comment${d.was? ` — “${esc(d.was)}” → “${esc(d.excerpt||'')}”` : (d.excerpt? ` — now “${esc(d.excerpt)}”`:'')}`;
+    case 'file_added':     return `attached <b>${esc(d.file||'a file')}</b>`;
+    case 'file_removed':   return `removed <b>${esc(d.file||'a file')}</b>`;
+    case 'subtask_added':  return `added subtask <b>${esc(d.title||'')}</b>`;
+    case 'subtask_removed':return `removed subtask <b>${esc(d.title||'')}</b>`;
+    case 'subtask_status': return `marked subtask <b>${esc(d.title||'')}</b> ${esc(d.to==='done'?'done':'not done')}`;
+    case 'checklist_added':  return `added checklist item <b>${esc(d.label||'')}</b>`;
+    case 'checklist_removed':return `removed checklist item <b>${esc(d.label||'')}</b>`;
+    case 'checklist_toggled':return `${d.done?'checked':'unchecked'} <b>${esc(d.label||'')}</b>`;
+    case 'signoff_requested': return `requested a sign-off from <b>${esc(prof(d.approver)?.full_name||'someone')}</b>`;
+    case 'signoff_approved':  return `approved the sign-off${d.note? ` — “${esc(d.note)}”`:''}`;
+    case 'signoff_rejected':  return `rejected the sign-off${d.note? ` — “${esc(d.note)}”`:''}`;
+    // entries written before the history engine existed
+    case 'status_changed': return `changed <b>Status</b> from ${histValue('status',d.from)} to ${histValue('status',d.to)}`;
+    case 'updated': {
+      const cs = d.changes||[];
+      if(!cs.length && d.status){ const rs=(typeof REQ_STATUSES!=='undefined'?REQ_STATUSES:[]).find(s=>s.k===d.status);
+        return `moved this ticket to <b>${esc(rs?rs.label:d.status)}</b>`; }
+      if(!cs.length) return 'made a change';
+      return cs.map(c=>{
+        if(c.field==='description') return 'edited the description';
+        if(c.field==='archived')    return c.to==='archived'? 'archived this task' : 'restored this task';
+        if(c.field==='custom'){
+          const f = (S._fields||[]).find(x=>x.id===c.key);
+          return `set <b>${esc(f?f.name:'a field')}</b> to ${histValue('custom', c.to)}`;
+        }
+        const from = histValue(c.field, c.from), to = histValue(c.field, c.to);
+        if(c.field==='title') return `renamed it to <b>${to}</b>`;
+        return `changed <b>${esc(fieldLabel(c.field))}</b> from ${from} to ${to}`;
+      }).join(', ');
+    }
+    default: return esc(a.action.replace(/_/g,' '));
+  }
+}
+function historyHTML(rows, showAll){
+  if(!rows || !rows.length) return '<div style="color:var(--ink3);font-size:13px">Nothing recorded yet.</div>';
+  const shown = showAll ? rows : rows.slice(0,8);
+  return `<div class="hist">${shown.map(a=>{
+    const who = prof(a.actor_id);
+    const cid = a.action==='comment_deleted' ? (a.detail||{}).comment_id : null;
+    const cRow = cid ? (S._commentCache||{})[cid] : null;
+    const undo = cid && cRow && cRow.deleted_at && canRemoveComment(cRow)
+      ? `<button class="hist-undo" onclick="undoDeleteComment('${cid}')">Undo</button>` : '';
+    return `<div class="hist-row">
+      ${avatar(who,true)}
+      <div class="hist-txt"><b>${esc(who?.full_name||'Someone')}</b> ${histLine(a)}
+        <span class="hist-when" title="${fmtDateTime(a.created_at)}">${timeAgo(a.created_at)}</span>${undo}</div>
+    </div>`;
+  }).join('')}</div>
+  ${rows.length>8 && !showAll ? `<div class="hist-more" onclick="showAllHistory()">Show all ${rows.length} events</div>`:''}`;
+}
+function showAllHistory(){
+  const box = document.getElementById('tv-history'); if(!box) return;
+  box.innerHTML = historyHTML(S._taskHist||[], true);
+}
+/* The activity log stays folded until asked for — a click on the header opens it. */
+function historySectionHTML(){
+  const n = (S._taskHist||[]).length;
+  return `<div class="hist-toggle" onclick="toggleHistoryPanel(this)">
+      <label style="cursor:pointer;margin:0">Activity log</label>
+      <span class="hist-count">${n||''}</span><span class="hist-chev">▸</span>
+    </div>
+    <div id="tv-history" hidden>${historyHTML(S._taskHist)}</div>`;
+}
+function toggleHistoryPanel(head){
+  const box = document.getElementById('tv-history'); if(!box) return;
+  box.hidden = !box.hidden;
+  const ch = head.querySelector('.hist-chev'); if(ch) ch.textContent = box.hidden? '▸' : '▾';
+}
+/* Comments come back without their files; fetch them in one go and attach. */
+async function hydrateCommentAtts(comments){
+  const ids = (comments||[]).map(c=>c.id);
+  if(!ids.length) return comments||[];
+  const {data} = await db.from('attachments').select('*').eq('entity_type','comment').in('entity_id', ids).order('created_at');
+  const by = {};
+  (data||[]).forEach(a=> (by[a.entity_id] || (by[a.entity_id]=[])).push(a));
+  comments.forEach(c=> c.atts = by[c.id] || []);
+  return comments;
+}
+async function deleteTask(id, projectId){
+  if(!confirm('Delete this task permanently?')) return;
+  const {error} = await db.from('tasks').delete().eq('id',id);
+  if(error) return toast(error.message, true);
+  closeModals(); toast('Task deleted'); renderProject(projectId);
+}
+</script>

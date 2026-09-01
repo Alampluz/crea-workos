@@ -1,0 +1,267 @@
+<script>
+/* ================= REQUESTS ================= */
+let reqTab = 'mine';
+async function renderRequests(){
+  setTopbar('Requests', `<button class="btn btn-primary btn-sm" onclick="newRequestFlow()">＋ New request</button>`);
+  const C=$('#content'); C.innerHTML='<div class="empty">Loading…</div>';
+  if(!isStaff()) reqTab='mine';
+  let q = db.from('requests').select('*').order('created_at',{ascending:false});
+  if(reqTab==='mine') q = q.eq('submitted_by', S.me.id);
+  if(reqTab==='open') q = q.in('status',['submitted','in_review','approved','in_progress']);
+  const {data:reqs, error} = await q;
+  if(error){ C.innerHTML=`<div class="card empty">${esc(error.message)}</div>`; return; }
+  S._lastReqRows = reqs||[];          // what the queue is listing — the export reads this
+  C.innerHTML = `
+    <div class="page-head"><h1>Requests</h1>
+      ${isStaff()? `<div class="tabs">
+        <button class="tab ${reqTab==='open'?'active':''}" onclick="reqTab='open';renderRequests()">Open queue</button>
+        <button class="tab ${reqTab==='all'?'active':''}" onclick="reqTab='all';renderRequests()">All</button>
+        <button class="tab ${reqTab==='mine'?'active':''}" onclick="reqTab='mine';renderRequests()">Mine</button>
+      </div>`:''}
+      <div class="actions">${isStaff()? `<button class="btn btn-ghost" onclick="exportRequestsCSV()">Export Excel</button>`:''}<button class="btn btn-primary" onclick="newRequestFlow()">＋ New request</button></div></div>
+    <div class="card">${(reqs||[]).length? requestTable(reqs) : `<div class="empty">No requests here yet</div>`}</div>`;
+}
+function exportRequestsCSV(){
+  const out = [['WO','Title','Type','Status','Priority','Submitted by','Assigned to','Created','SLA due','Paused']];
+  (S._lastReqRows||[]).forEach(r=>{
+    const rt = S.requestTypes.find(x=>x.id===r.request_type_id);
+    out.push([
+      r.ticket_no? 'WO-'+r.ticket_no : '',
+      r.title||'',
+      rt? rt.name : '',
+      (REQ_STATUSES.find(s=>s.k===r.status)||{}).label||r.status||'',
+      (PRIORITIES.find(x=>x.k===r.priority)||{}).label||r.priority||'',
+      r.guest_name || (prof(r.submitted_by)||{}).full_name || '',
+      (prof(r.assigned_to)||{}).full_name||'',
+      (r.created_at||'').replace('T',' ').slice(0,16),
+      (r.sla_due_at||'').replace('T',' ').slice(0,16),
+      r.sla_paused_at? 'Yes':'No',
+    ]);
+  });
+  downloadXLSX(xlsxFilename('Requests'), out);
+}
+function newRequestFlow(){
+  const m = modal(`<div class="modal-head"><h2>What do you need?</h2><button class="x" onclick="closeModals()">✕</button></div>
+    <div class="modal-body" style="padding-top:14px"><div class="rt-grid">
+      ${S.requestTypes.map(rt=>`<button class="rt-pick" onclick="newRequestForm('${rt.id}')">
+        <span><b>${esc(rt.name)}</b><span>${esc(rt.description)}</span>
+        <span style="display:block;margin-top:5px;font-size:11px;color:var(--ink3)">SLA ${rt.sla_hours}h${rt.approval_required?' · needs approval':''}</span></span>
+      </button>`).join('')}
+    </div></div>`, true);
+}
+function fieldInput(f){
+  const req = f.required? '<span class="req">*</span>':'';
+  if(f.type==='textarea') return `<label>${esc(f.label)} ${req}</label><textarea data-fk="${f.key}" rows="3"></textarea>`;
+  if(f.type==='select') return `<label>${esc(f.label)} ${req}</label><select data-fk="${f.key}"><option value="">— select —</option>${(f.options||[]).map(o=>`<option>${esc(o)}</option>`).join('')}</select>`;
+  if(f.type==='brand') return `<label>${esc(f.label)} ${req}</label><select data-fk="${f.key}"><option value="">— select brand —</option>${(S.brandsList||[]).filter(b=>b.active).map(b=>`<option>${esc(b.name)}</option>`).join('')}</select>`;
+  if(f.type==='multiselect') return `<label>${esc(f.label)} ${req}</label><div style="display:flex;flex-wrap:wrap;gap:4px 16px;border:1px solid var(--line);border-radius:8px;padding:9px 11px;background:#fff">${(f.options||[]).map(o=>`<label style="display:inline-flex;align-items:center;gap:6px;margin:0;font-weight:500;color:var(--ink);cursor:pointer"><input type="checkbox" data-fkm="${f.key}" value="${esc(o)}" style="width:15px;height:15px;accent-color:var(--accent)">${esc(o)}</label>`).join('')}</div>`;
+  return `<label>${esc(f.label)} ${req}</label><input data-fk="${f.key}" type="${f.type==='number'?'number':f.type==='date'?'date':'text'}">`;
+}
+function readField(m, f){
+  if(f.type==='multiselect') return [...m.querySelectorAll(`input[data-fkm="${f.key}"]:checked`)].map(i=>i.value).join(', ');
+  return m.querySelector(`[data-fk="${f.key}"]`)?.value?.trim()||'';
+}
+function newRequestForm(rtId){
+  closeModals();
+  const rt = S.requestTypes.find(x=>x.id===rtId); if(!rt) return;
+  const m = modal(`<div class="modal-head"><h2>${esc(rt.name)}</h2><button class="x" onclick="closeModals()">✕</button></div>
+    <div class="modal-body">
+      <label>${esc(rt.title_label||'Request title')} <span class="req">*</span></label><input id="rq-title" placeholder="${esc(rt.title_hint||'Short summary of this request')}">
+      ${(rt.fields||[]).map(fieldInput).join('')}
+      <label>Priority</label><select id="rq-prio">${PRIORITIES.map(x=>`<option value="${x.k}" ${x.k==='normal'?'selected':''}>${x.label}</option>`).join('')}</select>
+      <label>Attachments (price lists, approvals, briefs…)</label><input id="rq-files" type="file" multiple>
+      <p style="margin-top:14px;font-size:12px;color:var(--ink3)">Response SLA: ${rt.sla_hours} hours${rt.approval_required? ' · This request requires approval before work starts.':''}</p>
+    </div>
+    <div class="modal-foot"><button class="btn btn-ghost" onclick="closeModals()">Cancel</button><button class="btn btn-primary" id="rq-save">Submit request</button></div>`, true);
+  m.querySelector('#rq-save').onclick = async ()=>{
+    const title = m.querySelector('#rq-title').value.trim(); if(!title) return toast('Title is required', true);
+    const data = {};
+    for(const f of (rt.fields||[])){
+      const v = readField(m, f);
+      if(f.required && !v) return toast(`"${f.label}" is required`, true);
+      data[f.key]=v;
+    }
+    const btn = m.querySelector('#rq-save'); btn.disabled = true; btn.textContent = 'Submitting…';
+    const {data:req, error} = await db.from('requests').insert({
+      request_type_id:rt.id, title, data, priority:m.querySelector('#rq-prio').value, submitted_by:S.me.id
+    }).select().single();
+    if(error){ btn.disabled=false; btn.textContent='Submit request'; return toast(error.message, true); }
+    const nUp = await uploadAttachments('request', req.id, m.querySelector('#rq-files'));
+    closeModals(); toast('Request WO-' + (req.ticket_no||'') + ' submitted' + (nUp? ' · '+nUp+' file'+(nUp>1?'s':'')+' attached':'')); logActivity('request', req.id, 'submitted', {title});
+    if(S.route.view==='requests') renderRequests(); else renderHome();
+  };
+}
+async function openRequest(id){
+  const [{data:r}, {data:comments}, {data:apprs}, {data:atts}, {data:hist}] = await Promise.all([
+    db.from('requests').select('*').eq('id',id).single(),
+    db.from('comments').select('*').eq('entity_type','request').eq('entity_id',id).order('created_at'),
+    db.from('approvals').select('*').eq('request_id',id).order('created_at'),
+    db.from('attachments').select('*').eq('entity_type','request').eq('entity_id',id).order('created_at'),
+    db.from('activity_log').select('*').eq('entity_type','request').eq('entity_id',id).order('created_at',{ascending:false}).limit(200),
+  ]);
+  if(!r) return toast('Request not found', true);
+  await hydrateCommentAtts(comments||[]);
+  S._commentCache = {}; (comments||[]).forEach(c=> S._commentCache[c.id]=c);
+  S._histEntity = id; S._histType = 'request'; S._taskHist = hist||[];
+  const rt = S.requestTypes.find(x=>x.id===r.request_type_id);
+  const staff = isStaff();
+  const canEditStatus = staff || r.assigned_to===S.me.id;
+  const m = modal(`<div class="modal-head"><h2>${r.ticket_no? `<span style="color:var(--ink3);font-size:13px;font-weight:700">WO-${r.ticket_no}</span> `:''}${esc(r.title)}</h2>${reqStatusChip(r.status)}<button class="x" onclick="closeModals()">✕</button></div>
+    <div class="modal-body">
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">
+        ${prioChip(r.priority)} ${slaBadge(r.sla_due_at, r.status, r.sla_paused_at)}
+        <span class="chip" style="background:var(--gray-soft);color:var(--ink2)">${rt? esc(rt.name):''}</span>
+      </div>
+      <div class="field-grid" style="margin-top:14px">
+        <div class="kv"><b>Submitted by</b>${r.guest_name? esc(r.guest_name)+' · '+esc(r.guest_email)+' (web form)' : esc(prof(r.submitted_by)?.full_name||'—')} · ${fmtDateTime(r.created_at)}</div>
+        <div class="kv"><b>Assigned to</b>${esc(prof(r.assigned_to)?.full_name||'Unassigned')}</div>
+      </div>
+      ${Object.keys(r.data||{}).length? `<div style="background:var(--gray-soft);border-radius:10px;padding:12px 14px;margin-top:6px">
+        ${(rt?.fields||[]).map(f=> r.data[f.key]? `<div class="kv"><b>${esc(f.label)}</b>${esc(r.data[f.key])}</div>`:'').join('')}</div>`:''}
+      ${(apprs||[]).length? `<label>Approvals</label>${apprs.map(a=>`
+        <div style="display:flex;align-items:center;gap:8px;padding:7px 0;font-size:13px">
+          ${avatar(prof(a.approver_id),true)} ${esc(prof(a.approver_id)?.full_name||'')}
+          <span class="chip" style="background:${a.status==='approved'?'var(--green-soft);color:var(--green)':a.status==='rejected'?'var(--red-soft);color:var(--red)':'var(--amber-soft);color:var(--amber)'}">${a.status}</span>
+          ${a.note? `<span style="color:var(--ink2)">· ${esc(a.note)}</span>`:''}
+          ${a.status==='pending' && a.approver_id===S.me.id? `
+            <span style="margin-left:auto"><button class="btn btn-green btn-sm" onclick="decideApproval('${a.id}','approved','${r.id}')">Approve</button>
+            <button class="btn btn-danger btn-sm" onclick="decideApproval('${a.id}','rejected','${r.id}')">Reject</button></span>`:''}
+        </div>`).join('')}`:''}
+      ${staff? `<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:16px;padding-top:14px;border-top:1px solid var(--line)">
+        <select id="rv-status" style="width:auto">${REQ_STATUSES.map(s=>`<option value="${s.k}" ${s.k===r.status?'selected':''}>${s.label}</option>`).join('')}</select>
+        <select id="rv-assign" style="width:auto"><option value="">Unassigned</option>${S.profiles.filter(p=>p.active).map(p=>`<option value="${p.id}" ${p.id===r.assigned_to?'selected':''}>${esc(p.full_name)}</option>`).join('')}</select>
+        <button class="btn btn-ghost btn-sm" id="rv-update">Update</button>
+        <button class="btn btn-ghost btn-sm" id="rv-askappr">Ask approval</button>
+        ${!r.project_id? `<button class="btn btn-ghost btn-sm" onclick="convertToTask('${r.id}')">Convert to task</button>`:'<span class="chip" style="background:var(--green-soft);color:var(--green)">Linked to a board task</span>'}
+      </div>`:''}
+      <label>Attachments</label>
+      <div id="rv-atts">${attListHTML(atts, isStaff())}</div>
+      ${attachZoneHTML('rv-drop')}
+      <label>Comments</label>
+      <div id="rv-comments">${(comments||[]).map(commentRow).join('')||'<div style="color:var(--ink3);font-size:13px">No comments yet</div>'}</div>
+      ${commentComposerHTML('rv')}
+      ${historySectionHTML()}
+    </div>
+    <div class="modal-foot">
+      ${r.submitted_by===S.me.id && ['submitted','in_review'].includes(r.status)? `<button class="btn btn-danger" id="rv-cancel">Cancel request</button>`:''}
+      <button class="btn btn-ghost" onclick="closeModals()">Close</button></div>`, true);
+
+  m.querySelector('#rv-askappr')?.addEventListener('click', ()=> requestApprovalModal(r.id, r.title));
+  m.querySelector('#rv-update')?.addEventListener('click', async ()=>{
+    const status = m.querySelector('#rv-status').value;
+    const assigned_to = m.querySelector('#rv-assign').value||null;
+    const upd = {status, assigned_to};
+    if(['approved','rejected'].includes(status) && r.status!==status){ upd.decided_by=S.me.id; upd.decided_at=new Date().toISOString(); }
+    const {error} = await db.from('requests').update(upd).eq('id',r.id);
+    if(error) return toast(error.message, true);
+    closeModals(); toast('Request updated'); logActivity('request', r.id, 'updated', {status});
+    if(S.route.view==='requests') renderRequests(); else renderHome();
+  });
+  m.querySelector('#rv-cancel')?.addEventListener('click', async ()=>{
+    if(!confirm('Cancel this request?')) return;
+    await db.from('requests').update({status:'cancelled'}).eq('id',r.id);
+    closeModals(); toast('Request cancelled');
+    if(S.route.view==='requests') renderRequests(); else renderHome();
+  });
+  wireAttachZone(m, 'rv-drop', 'request', r.id, m.querySelector('#rv-atts'));
+  const rIn = m.querySelector('#rv-comment');
+  wireComposer(m, 'rv');
+  wireMentions(rIn);
+  rIn.addEventListener('keydown', e=>{ if(e.key==='Enter' && !e.shiftKey && !document.querySelector('.mention-menu')){ e.preventDefault(); m.querySelector('#rv-comment-add').click(); } });
+  m.querySelector('#rv-comment-add').onclick = ()=> postComment('request', r.id, (r.ticket_no? r.ticket_no+' · ':'')+r.title, rIn, m.querySelector('#rv-comments'));
+}
+function requestApprovalModal(reqId, title){
+  const staffList = S.profiles.filter(p=>p.active && ['admin','internal','management'].includes(p.role));
+  const m = modal(`<div class="modal-head"><h2>Ask for approval</h2><button class="x" onclick="closeModals()">✕</button></div>
+    <div class="modal-body">
+      <label>Approver</label><select id="ap-who">${staffList.map(p=>`<option value="${p.id}">${esc(p.full_name)}</option>`).join('')}</select>
+      <label>What are they approving?</label><input id="ap-title" value="Approve: ${esc(title)}">
+    </div>
+    <div class="modal-foot"><button class="btn btn-ghost" onclick="closeModals()">Cancel</button><button class="btn btn-primary" id="ap-save">Send</button></div>`);
+  m.querySelector('#ap-save').onclick = async ()=>{
+    const {error} = await db.from('approvals').insert({
+      request_id:reqId, approver_id:m.querySelector('#ap-who').value,
+      requested_by:S.me.id, title:m.querySelector('#ap-title').value.trim()
+    });
+    if(error) return toast(error.message, true);
+    await db.from('requests').update({status:'in_review'}).eq('id',reqId).in('status',['submitted']);
+    closeModals(); toast('Approval requested');
+  };
+}
+async function convertToTask(reqId){
+  const {data:r} = await db.from('requests').select('*').eq('id',reqId).single();
+  if(!r) return;
+  const rt = S.requestTypes.find(x=>x.id===r.request_type_id);
+  const wsId = rt?.default_workspace_id || S.workspaces[0]?.id;
+  const projs = S.projects.filter(p=>p.status==='active');
+  const m = modal(`<div class="modal-head"><h2>Convert to task</h2><button class="x" onclick="closeModals()">✕</button></div>
+    <div class="modal-body">
+      <label>Into board</label><select id="cv-proj">${projs.map(p=>{
+        const w=wsById(p.workspace_id);
+        return `<option value="${p.id}" ${p.workspace_id===wsId?'selected':''}>${w?esc(w.name)+' · ':''}${esc(p.name)}</option>`;}).join('')}</select>
+      <label>Assignee</label><select id="cv-assignee"><option value="">Unassigned</option>${S.profiles.filter(p=>p.active).map(p=>`<option value="${p.id}" ${p.id===r.assigned_to?'selected':''}>${esc(p.full_name)}</option>`).join('')}</select>
+    </div>
+    <div class="modal-foot"><button class="btn btn-ghost" onclick="closeModals()">Cancel</button><button class="btn btn-primary" id="cv-save">Create task</button></div>`);
+  m.querySelector('#cv-save').onclick = async ()=>{
+    const project_id = m.querySelector('#cv-proj').value; if(!project_id) return toast('Pick a board', true);
+    const desc = (rt?.fields||[]).map(f=> r.data[f.key]? `${f.label}: ${r.data[f.key]}`:'').filter(Boolean).join('\n');
+    const {data:task, error} = await db.from('tasks').insert({
+      project_id, title:r.title, description:`From request (${rt?.name||'request'}):\n${desc}`,
+      priority:r.priority, assignee_id:m.querySelector('#cv-assignee').value||null,
+      due_date: r.sla_due_at? r.sla_due_at.slice(0,10):null, request_id:r.id, created_by:S.me.id,
+      tags:['request']
+    }).select().single();
+    if(error) return toast(error.message, true);
+    await db.from('requests').update({project_id, status: r.status==='submitted'||r.status==='in_review'?'in_progress':r.status}).eq('id',r.id);
+    closeModals(); toast('Task created from request'); logActivity('request', r.id, 'converted_to_task', {task:task.id});
+    location.hash = '#/project/'+project_id;
+  };
+}
+
+/* ================= APPROVALS ================= */
+let apprTab='pending';
+async function renderApprovals(){
+  setTopbar('Approvals');
+  const C=$('#content'); C.innerHTML='<div class="empty">Loading…</div>';
+  let q = db.from('approvals').select('*').order('created_at',{ascending:false});
+  if(apprTab==='pending') q=q.eq('status','pending').eq('approver_id',S.me.id);
+  if(apprTab==='requested') q=q.eq('requested_by',S.me.id);
+  const {data:apprs} = await q;
+  C.innerHTML = `
+    <div class="page-head"><h1>Approvals</h1>
+      <div class="tabs">
+        <button class="tab ${apprTab==='pending'?'active':''}" onclick="apprTab='pending';renderApprovals()">For me</button>
+        <button class="tab ${apprTab==='requested'?'active':''}" onclick="apprTab='requested';renderApprovals()">Requested by me</button>
+        ${isStaff()? `<button class="tab ${apprTab==='all'?'active':''}" onclick="apprTab='all';renderApprovals()">All</button>`:''}
+      </div></div>
+    <div class="card">${(apprs||[]).length?
+      `<table class="tbl"><thead><tr><th>Approval</th><th>Approver</th><th>Requested by</th><th>Status</th><th>Created</th><th></th></tr></thead><tbody>
+      ${apprs.map(a=>`<tr>
+        <td style="font-weight:600">${esc(a.title||'Approval')}</td>
+        <td>${avatar(prof(a.approver_id),true)}</td>
+        <td>${avatar(prof(a.requested_by),true)}</td>
+        <td><span class="chip" style="background:${a.status==='approved'?'var(--green-soft);color:var(--green)':a.status==='rejected'?'var(--red-soft);color:var(--red)':'var(--amber-soft);color:var(--amber)'}">${a.status}</span>${a.note?` <span style="color:var(--ink2);font-size:12px">${esc(a.note)}</span>`:''}</td>
+        <td style="color:var(--ink2)">${fmtDateTime(a.created_at)}</td>
+        <td style="text-align:right;white-space:nowrap">
+          ${a.request_id? `<button class="btn btn-ghost btn-sm" onclick="openRequest('${a.request_id}')">View</button>`:''}
+          ${a.task_id? `<button class="btn btn-ghost btn-sm" onclick="location.hash='#/task/${a.task_id}'">View</button>`:''}
+          ${a.status==='pending'&&a.approver_id===S.me.id? `<button class="btn btn-green btn-sm" onclick="decideApproval('${a.id}','approved')">Approve</button>
+          <button class="btn btn-danger btn-sm" onclick="decideApproval('${a.id}','rejected')">Reject</button>`:''}</td>
+      </tr>`).join('')}</tbody></table>`
+      : `<div class="empty">Nothing here — all clear</div>`}</div>`;
+}
+async function decideApproval(id, status, reqIdToRefresh){
+  let note = '';
+  if(status==='rejected'){ note = prompt('Reason for rejection (optional):')||''; }
+  const {data:a, error} = await db.from('approvals').update({status, note, decided_at:new Date().toISOString()}).eq('id',id).select().single();
+  if(error) return toast(error.message, true);
+  // reflect on the request if linked and staff
+  if(a?.request_id){
+    try{ await db.from('requests').update({status: status==='approved'?'approved':'rejected', decided_by:S.me.id, decided_at:new Date().toISOString(), decision_note:note}).eq('id',a.request_id).in('status',['submitted','in_review']); }catch(e){}
+  }
+  toast(status==='approved'? 'Approved':'Rejected'); logActivity('approval', id, status, {});
+  updateApprovalBadge();
+  closeModals();
+  if(S.route.view==='approvals') renderApprovals(); else if(S.route.view==='home') renderHome(); else if(reqIdToRefresh) openRequest(reqIdToRefresh);
+}
+</script>

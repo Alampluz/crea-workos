@@ -1,0 +1,1318 @@
+<script>
+/* ================= DASHBOARD ================= */
+/* One engine, two homes: the personal Dashboard, and each workspace's Report tab.
+   `wsSel` (a workspace id, or null for everything) scopes every widget. */
+async function buildDashCtx(wsSel){
+  const [tks, reqs, apprs] = await Promise.all([
+    db.from('tasks').select('id,project_id,title,status,priority,assignee_id,due_date,completed_at,created_at'),
+    db.from('requests').select('id,ticket_no,title,status,sla_due_at,completed_at,created_at,request_type_id,decided_at,submitted_by,assigned_to'),
+    db.from('approvals').select('id,status,request_id'),
+  ]);
+  let tasks=tks.data||[], requests=reqs.data||[], approvals=apprs.data||[];
+  const scopeProjects = wsSel ? S.projects.filter(p=>p.workspace_id===wsSel) : S.projects;
+  if(wsSel){
+    const pidSet = new Set(scopeProjects.map(p=>p.id));
+    tasks = tasks.filter(t=>pidSet.has(t.project_id));
+    const rtSet = new Set(S.requestTypes.filter(rt=>rt.default_workspace_id===wsSel).map(rt=>rt.id));
+    requests = requests.filter(r=>rtSet.has(r.request_type_id));
+    const reqSet = new Set(requests.map(r=>r.id));
+    approvals = approvals.filter(a=>a.request_id && reqSet.has(a.request_id));
+  }
+  const open = tasks.filter(t=>t.status!=='done');
+  const overdue = open.filter(t=>t.due_date && daysDiff(t.due_date)<0);
+  const dueWeek = open.filter(t=>t.due_date && daysDiff(t.due_date)>=0 && daysDiff(t.due_date)<=7);
+  const doneTasks = tasks.filter(t=>t.status==='done');
+  const onTime = doneTasks.filter(t=>!t.due_date || (t.completed_at && new Date(t.completed_at) <= new Date(t.due_date+'T23:59:59')));
+  const onTimePct = doneTasks.length? Math.round(onTime.length/doneTasks.length*100) : null;
+  const openReqs = requests.filter(r=>['submitted','in_review','approved','in_progress'].includes(r.status));
+  const slaBreach = openReqs.filter(r=>r.sla_due_at && new Date(r.sla_due_at)<Date.now());
+  const pendingAppr = approvals.filter(a=>a.status==='pending').length;
+  S._dashCtx = {tasks, requests, open, overdue, dueWeek, doneTasks, openReqs, slaBreach, scopeProjects, wsSel};
+  return {open, overdue, dueWeek, onTimePct, openReqs, slaBreach, pendingAppr};
+}
+function statRowHTML(k){
+  return `<div class="stat-row">
+      <div class="stat"><div class="n accent">${k.open.length}</div><div class="l">Open tasks</div></div>
+      <div class="stat"><div class="n ${k.overdue.length?'red':''}">${k.overdue.length}</div><div class="l">Overdue</div></div>
+      <div class="stat"><div class="n amber">${k.dueWeek.length}</div><div class="l">Due within 7 days</div></div>
+      <div class="stat"><div class="n ${k.onTimePct===null?'':k.onTimePct>=80?'green':k.onTimePct>=50?'amber':'red'}">${k.onTimePct===null?'—':k.onTimePct+'%'}</div><div class="l">On-time completion</div></div>
+      <div class="stat"><div class="n">${k.openReqs.length}</div><div class="l">Open requests</div></div>
+      <div class="stat"><div class="n ${k.slaBreach.length?'red':'green'}">${k.slaBreach.length}</div><div class="l">SLA breached</div></div>
+      <div class="stat"><div class="n ${k.pendingAppr?'amber':''}">${k.pendingAppr}</div><div class="l">Pending approvals</div></div>
+    </div>`;
+}
+/* Which widget set is on screen: personal dashboard, a workspace report, or one board's report. */
+let widgetScope = null;        // workspace id
+let widgetProjScope = null;    // board (project) id
+const widgetsEditable = ()=> (widgetScope||widgetProjScope) ? canEdit() : isStaff();
+function reRenderWidgets(){
+  if(widgetProjScope) renderBoardReport(widgetProjScope);
+  else if(widgetScope) renderWorkspaceReport(widgetScope);
+  else renderDashboard();
+}
+
+/* ================= BOARD REPORT ================= */
+/* One board's numbers and widgets — shared with everyone who can open the board. */
+async function renderBoardReport(pid){
+  const p = projById(pid); if(!p){ location.hash='#/home'; return; }
+  widgetProjScope = pid; widgetScope = null;
+  const C=$('#board-body') || $('#content');
+  C.innerHTML='<div class="empty">Loading report…</div>';
+  const [{data:reqs},{data:wdg}] = await Promise.all([
+    db.from('requests').select('id,ticket_no,title,status,sla_due_at,completed_at,created_at,request_type_id,decided_at,submitted_by,assigned_to').eq('project_id',pid),
+    db.from('dashboard_widgets').select('*').eq('project_id',pid).order('position'),
+  ]);
+  const tasks = (S._tasksAll||[]).filter(t=>!t.archived_at);
+  const open = tasks.filter(t=>t.status!=='done');
+  const overdue = open.filter(t=>t.due_date && daysDiff(t.due_date)<0);
+  const dueWeek = open.filter(t=>t.due_date && daysDiff(t.due_date)>=0 && daysDiff(t.due_date)<=7);
+  const doneTasks = tasks.filter(t=>t.status==='done');
+  const onTime = doneTasks.filter(t=>!t.due_date || (t.completed_at && new Date(t.completed_at) <= new Date(t.due_date+'T23:59:59')));
+  const onTimePct = doneTasks.length? Math.round(onTime.length/doneTasks.length*100) : null;
+  const requests = reqs||[];
+  const openReqs = requests.filter(r=>['submitted','in_review','approved','in_progress'].includes(r.status));
+  const slaBreach = openReqs.filter(r=>r.sla_due_at && new Date(r.sla_due_at)<Date.now());
+  S._dashCtx = {tasks, requests, open, overdue, dueWeek, doneTasks, openReqs, slaBreach,
+                scopeProjects:[p], wsSel:p.workspace_id, groups:S._groups||[]};
+  S._widgets = wdg||[];
+  if(!S._widgets.length && canEdit() && !(S._seededBoardReports?.[pid])){
+    (S._seededBoardReports = S._seededBoardReports||{})[pid] = true;
+    const defaults = [
+      {wtype:'donut', title:'Tasks by status',    config:{entity:'tasks', groupBy:'status'},   position:0},
+      {wtype:'bar',   title:'Open tasks by group',config:{entity:'tasks', groupBy:'group'},    position:1},
+      {wtype:'bar',   title:'Workload by person', config:{entity:'tasks', groupBy:'assignee'}, position:2},
+      {wtype:'list',  title:'Overdue',            config:{entity:'tasks', show:'overdue'},     position:3},
+    ].map(x=>({...x, project_id:pid, user_id:S.me.id}));
+    const {data:seeded, error} = await db.from('dashboard_widgets').insert(defaults).select();
+    if(!error) S._widgets = seeded||[];
+  }
+  S._reportName = p.name + ' report';
+  S._reportStats = [
+    ['Open tasks', open.length], ['Overdue', overdue.length], ['Due within 7 days', dueWeek.length],
+    ['On-time completion', onTimePct===null? '—' : onTimePct+'%'], ['Done', doneTasks.length],
+    ...(requests.length? [['SLA breached', slaBreach.length]] : []),
+  ];
+  C.innerHTML = `
+    <div class="stat-row">
+      <div class="stat"><div class="n accent">${open.length}</div><div class="l">Open tasks</div></div>
+      <div class="stat"><div class="n ${overdue.length?'red':''}">${overdue.length}</div><div class="l">Overdue</div></div>
+      <div class="stat"><div class="n amber">${dueWeek.length}</div><div class="l">Due within 7 days</div></div>
+      <div class="stat"><div class="n ${onTimePct===null?'':onTimePct>=80?'green':onTimePct>=50?'amber':'red'}">${onTimePct===null?'—':onTimePct+'%'}</div><div class="l">On-time completion</div></div>
+      <div class="stat"><div class="n">${doneTasks.length}</div><div class="l">Done</div></div>
+      ${requests.length? `<div class="stat"><div class="n ${slaBreach.length?'red':'green'}">${slaBreach.length}</div><div class="l">SLA breached</div></div>`:''}
+    </div>
+    <div class="section-title" style="margin-top:22px;display:flex;align-items:center;gap:12px">Widgets
+      <span style="flex:1"></span>${isStaff()? `<button class="btn btn-ghost btn-sm" onclick="exportReportCSV()">Export report</button>`:''}${canEdit()? `<button class="btn btn-primary btn-sm" onclick="widgetModal(null,null,'${pid}')">＋ Add widget</button>`:''}</div>
+    <div class="wgrid" id="wgrid">${(S._widgets||[]).map(x=>widgetCard(x)).join('')
+      || `<div class="card empty" style="grid-column:1/-1">${canEdit()? 'No widgets yet — add the first one.':'No widgets on this report yet.'}</div>`}</div>`;
+}
+
+let dashWs = 'all';
+async function renderDashboard(){
+  if(!isStaff() && !isRequester()){ location.hash='#/home'; return; }
+  widgetScope = null; widgetProjScope = null;
+  setTopbar('Dashboard', `<select id="dash-ws" style="width:auto;min-width:200px" onchange="dashWs=this.value;renderDashboard()">
+    <option value="all">All workspaces</option>
+    ${S.workspaces.map(w=>`<option value="${w.id}" ${dashWs===w.id?'selected':''}>${esc(w.name)}</option>`).join('')}</select>`);
+  const C=$('#content'); C.innerHTML='<div class="empty">Loading…</div>';
+  const wsSel = dashWs !== 'all' ? dashWs : null;
+  const [k, wdg] = await Promise.all([
+    buildDashCtx(wsSel),
+    db.from('dashboard_widgets').select('*').eq('user_id', S.me.id).is('workspace_id', null).order('position'),
+  ]);
+  S._widgets = wdg.data||[];
+  if(!S._widgets.length && !S._widgetsSeeded && isStaff()){
+    S._widgetsSeeded = true;
+    const defaults = [
+      {wtype:'bar',   title:'Open tasks by workspace', config:{entity:'tasks', groupBy:'workspace'}, position:0},
+      {wtype:'donut', title:'Tasks by status',         config:{entity:'tasks', groupBy:'status'},    position:1},
+      {wtype:'bar',   title:'Open workload by person', config:{entity:'tasks', groupBy:'assignee'},  position:2},
+      {wtype:'list',  title:'My tasks due soon',       config:{entity:'tasks', show:'due7', mine:true}, position:3},
+    ].map(w=>({...w, user_id:S.me.id}));
+    const {data:seeded} = await db.from('dashboard_widgets').insert(defaults).select();
+    S._widgets = seeded||[];
+  }
+  const wsObj = wsSel ? wsById(wsSel) : null;
+  C.innerHTML = `
+    <div class="page-head"><div><h1>${wsObj? esc(wsObj.name):'Operations Dashboard'}</h1><div class="sub">${wsObj? 'Workspace view — tasks, requests and approvals routed here':'Live view across all workspaces'}</div></div></div>
+    ${statRowHTML(k)}
+    <div class="section-title" style="margin-top:22px;display:flex;align-items:center;gap:12px">Widgets
+      <span style="flex:1"></span>${isStaff()? `<button class="btn btn-primary btn-sm" onclick="widgetModal()">＋ Add widget</button>`:''}</div>
+    <div class="wgrid" id="wgrid">${(S._widgets||[]).map(w=>widgetCard(w)).join('') || `<div class="card empty" style="grid-column:1/-1">No widgets yet — add your first one.</div>`}</div>
+    ${k.overdue.length? `<div class="section-title" style="margin-top:22px">Overdue tasks <span class="count">${k.overdue.length}</span></div>
+      <div class="card">${taskTable(k.overdue)}</div>`:''}`;
+}
+
+/* ================= WORKSPACE REPORT ================= */
+/* A shared report per workspace — everyone on the team sees the same widgets. */
+async function renderWorkspaceReport(wsId){
+  const w = wsById(wsId); if(!w){ location.hash='#/home'; return; }
+  widgetScope = wsId; widgetProjScope = null;
+  const C=$('#content'); C.innerHTML='<div class="empty">Loading report…</div>';
+  const [k, wdg] = await Promise.all([
+    buildDashCtx(wsId),
+    db.from('dashboard_widgets').select('*').eq('workspace_id', wsId).order('position'),
+  ]);
+  S._widgets = wdg.data||[];
+  if(!S._widgets.length && canEdit() && !S._seededReports?.[wsId]){
+    (S._seededReports = S._seededReports||{})[wsId] = true;
+    const defaults = [
+      {wtype:'donut', title:'Tasks by status',        config:{entity:'tasks', groupBy:'status'},   position:0},
+      {wtype:'bar',   title:'Workload by person',     config:{entity:'tasks', groupBy:'assignee'}, position:1},
+      {wtype:'bar',   title:'Open tasks by board',    config:{entity:'tasks', groupBy:'project'},  position:2},
+      {wtype:'list',  title:'Overdue',                config:{entity:'tasks', show:'overdue'},     position:3},
+    ].map(x=>({...x, workspace_id:wsId, user_id:S.me.id}));
+    const {data:seeded, error} = await db.from('dashboard_widgets').insert(defaults).select();
+    if(!error) S._widgets = seeded||[];
+  }
+  S._reportName = w.name + ' report';
+  S._reportStats = [
+    ['Open tasks', k.open.length], ['Overdue', k.overdue.length], ['Due within 7 days', k.dueWeek.length],
+    ['On-time completion', k.onTimePct===null? '—' : k.onTimePct+'%'], ['Open requests', k.openReqs.length],
+    ['SLA breached', k.slaBreach.length], ['Pending approvals', k.pendingAppr],
+  ];
+  C.innerHTML = `
+    ${wsTabsHTML(wsId,'report')}
+    <div class="page-head"><div><h1>${esc(w.name)} — Report</h1>
+      <div class="sub">Shared with everyone in this workspace${canEdit()? ' · your changes are visible to the whole team':''}</div></div></div>
+    ${statRowHTML(k)}
+    <div class="section-title" style="margin-top:22px;display:flex;align-items:center;gap:12px">Widgets
+      <span style="flex:1"></span>${isStaff()? `<button class="btn btn-ghost btn-sm" onclick="exportReportCSV()">Export report</button>`:''}${canEdit()? `<button class="btn btn-primary btn-sm" onclick="widgetModal(null,'${wsId}')">＋ Add widget</button>`:''}</div>
+    <div class="wgrid" id="wgrid">${(S._widgets||[]).map(x=>widgetCard(x)).join('')
+      || `<div class="card empty" style="grid-column:1/-1">${canEdit()? 'No widgets yet — add the first one.':'No widgets on this report yet.'}</div>`}</div>`;
+}
+
+/* ================= DASHBOARD WIDGETS ================= */
+const W_SHOWS_TASKS = [['open','Open'],['overdue','Overdue'],['due7','Due within 7 days'],['done','Done'],['blocked','Blocked'],['review','In review'],['all','All']];
+const W_SHOWS_REQS  = [['open','Open'],['sla','SLA breached'],['all','All']];
+const W_GROUPS_TASKS= [['status','Status'],['priority','Priority'],['workspace','Workspace'],['project','Board'],['assignee','Assignee'],['group','Group']];
+const W_GROUPS_REQS = [['status','Status'],['type','Request type']];
+
+function widgetTaskRows(cfg){
+  const c=S._dashCtx;
+  let rows = cfg.entity==='requests'? c.requests : c.tasks;
+  if(cfg.entity==='requests'){
+    if(cfg.show==='open') rows=c.openReqs;
+    else if(cfg.show==='sla') rows=c.slaBreach;
+  } else {
+    if(cfg.show==='open') rows=c.open;
+    else if(cfg.show==='overdue') rows=c.overdue;
+    else if(cfg.show==='due7') rows=c.dueWeek;
+    else if(cfg.show==='done') rows=c.doneTasks;
+    else if(cfg.show==='blocked') rows=rows.filter(t=>t.status==='blocked');
+    else if(cfg.show==='review') rows=rows.filter(t=>t.status==='review');
+    if(cfg.mine) rows=rows.filter(t=>t.assignee_id===S.me.id);
+  }
+  return rows;
+}
+function widgetGroups(cfg){
+  const c=S._dashCtx;
+  if(cfg.entity==='requests'){
+    if(cfg.groupBy==='type') return S.requestTypes.map(rt=>({label:rt.name, color:'#0F766E', n:c.requests.filter(r=>r.request_type_id===rt.id).length})).filter(x=>x.n>0).sort((a,b)=>b.n-a.n).slice(0,10);
+    return REQ_STATUSES.map(s=>({label:s.label, color:s.color.startsWith('var')? '#0F766E':s.color, n:c.requests.filter(r=>r.status===s.k).length})).filter(x=>x.n>0);
+  }
+  if(cfg.groupBy==='priority') return PRIORITIES.map(p=>({label:p.label, color:p.color.startsWith('var')? '#8E93A8':p.color, n:c.open.filter(t=>t.priority===p.k).length})).filter(x=>x.n>0);
+  if(cfg.groupBy==='workspace') return (c.wsSel? c.scopeProjects.map(p=>({label:p.name,color:p.color,n:c.open.filter(t=>t.project_id===p.id).length}))
+    : S.workspaces.map(w=>{ const pids=new Set(S.projects.filter(p=>p.workspace_id===w.id).map(p=>p.id)); return {label:w.name,color:w.color,n:c.open.filter(t=>pids.has(t.project_id)).length}; })).filter(x=>x.n>0).sort((a,b)=>b.n-a.n);
+  if(cfg.groupBy==='project') return c.scopeProjects.map(p=>({label:p.name, color:p.color, n:c.open.filter(t=>t.project_id===p.id).length})).filter(x=>x.n>0).sort((a,b)=>b.n-a.n).slice(0,10);
+  if(cfg.groupBy==='group') return (c.groups||[]).map(g=>({label:g.name, color:g.color, n:c.open.filter(t=>t.group_id===g.id).length})).filter(x=>x.n>0);
+  if(cfg.groupBy==='assignee') return S.profiles.map(p=>({label:p.full_name, color:p.avatar_color||'#0F766E', n:c.open.filter(t=>t.assignee_id===p.id).length})).filter(x=>x.n>0).sort((a,b)=>b.n-a.n).slice(0,8);
+  return STATUSES.map(s=>({label:s.label, color:s.color, n:c.tasks.filter(t=>t.status===s.k).length})).filter(x=>x.n>0);
+}
+function donutSVG(rows){
+  const total = rows.reduce((a,r)=>a+r.n,0);
+  if(!total) return '<div style="color:var(--ink3);font-size:13px;padding:8px 0">No data yet</div>';
+  const C1=2*Math.PI*44; let acc=0;
+  const segs = rows.map(r=>{
+    const frac=r.n/total, off=acc; acc+=frac;
+    return `<circle r="44" cx="60" cy="60" fill="none" stroke="${r.color}" stroke-width="16"
+      stroke-dasharray="${(frac*C1).toFixed(2)} ${(C1-frac*C1).toFixed(2)}" stroke-dashoffset="${(-off*C1+C1/4).toFixed(2)}"></circle>`;
+  }).join('');
+  return `<div class="donut-wrap"><svg viewBox="0 0 120 120" width="140" height="140">${segs}
+      <text x="60" y="58" text-anchor="middle" style="font-size:22px;font-weight:800;fill:var(--ink)">${total}</text>
+      <text x="60" y="76" text-anchor="middle" style="font-size:9px;font-weight:700;fill:var(--ink3);letter-spacing:.6px">TOTAL</text></svg>
+    <div class="donut-legend">${rows.map(r=>`<div class="dl-row"><span class="dl-dot" style="background:${r.color}"></span><span class="dl-l" title="${esc(r.label)}">${esc(r.label)}</span><b>${r.n}</b></div>`).join('')}</div></div>`;
+}
+function widgetCard(w){
+  const cfg = w.config||{};
+  let body='';
+  if(w.wtype==='stat'){
+    const rows = widgetTaskRows(cfg);
+    const danger = ['overdue','sla'].includes(cfg.show);
+    body = `<div class="w-stat ${danger&&rows.length?'red':''}">${rows.length}</div><div class="w-stat-l">${esc(cfg.entity==='requests'?'requests':'tasks')}</div>`;
+  }
+  else if(w.wtype==='bar') body = hbars(widgetGroups(cfg));
+  else if(w.wtype==='donut') body = donutSVG(widgetGroups(cfg));
+  else if(w.wtype==='progress'){
+    const c=S._dashCtx, total=c.tasks.length, done=c.doneTasks.length;
+    const pct = total? Math.round(done/total*100):0;
+    body = `<div class="w-stat accent">${pct}%</div><div class="w-stat-l">${done} of ${total} tasks done</div>
+      <div class="prog-bar" style="margin-top:10px"><div class="prog-fill" style="width:${pct}%"></div></div>`;
+  }
+  else if(w.wtype==='list'){
+    let rows = widgetTaskRows(cfg);
+    if(cfg.entity==='requests') rows=[...rows].sort((a,b)=>(b.created_at||'').localeCompare(a.created_at||'')).slice(0,6);
+    else rows=[...rows].sort((a,b)=>(a.due_date||'9999').localeCompare(b.due_date||'9999')).slice(0,6);
+    body = rows.length? (cfg.entity==='requests'? requestTable(rows): taskTable(rows)) : '<div style="color:var(--ink3);font-size:13px;padding:8px 0">Nothing here</div>';
+  }
+  const acts = (isStaff()? `<span onclick="exportWidgetCSV('${w.id}')">Excel</span>`:'')
+    + (widgetsEditable()? `<span onclick="widgetModal('${w.id}')">Edit</span><span onclick="deleteWidget('${w.id}')">Remove</span>`:'');
+  return `<div class="card widget-card ${w.wtype==='list'?'w-wide':''}" draggable="${widgetsEditable()}" data-wid="${w.id}"
+      ondragstart="wDragStart(event,'${w.id}')" ondragover="event.preventDefault()" ondrop="wDrop(event,'${w.id}')">
+    <div class="w-head"><h3>${esc(w.title)}</h3>
+      ${acts? `<span class="w-actions">${acts}</span>`:''}</div>
+    ${body}</div>`;
+}
+function exportWidgetCSV(id){
+  const w = (S._widgets||[]).find(x=>x.id===id); if(!w) return;
+  downloadXLSX(xlsxFilename(w.title||'Widget'),
+    [['Label','Count'], ...widgetGroups(w.config||{}).map(g=>[g.label, g.n])]);
+}
+/* Stat tiles, a blank line, then every widget's grouped numbers — one file. */
+function exportReportCSV(){
+  const out = [['Label','Value'], ...(S._reportStats||[])];
+  (S._widgets||[]).forEach(w=>{
+    out.push([], [w.title], ['Label','Count']);
+    widgetGroups(w.config||{}).forEach(g=>out.push([g.label, g.n]));
+  });
+  downloadXLSX(xlsxFilename(S._reportName||'Report'), out);
+}
+let wDragId=null;
+function wDragStart(e,id){ wDragId=id; }
+async function wDrop(e,targetId){
+  e.preventDefault();
+  if(!widgetsEditable()) return;
+  if(!wDragId || wDragId===targetId) return;
+  const ws=S._widgets, from=ws.findIndex(x=>x.id===wDragId), to=ws.findIndex(x=>x.id===targetId);
+  if(from<0||to<0) return;
+  const [m]=ws.splice(from,1); ws.splice(to,0,m); wDragId=null;
+  document.getElementById('wgrid').innerHTML = ws.map(widgetCard).join('');
+  for(let i=0;i<ws.length;i++){ if(ws[i].position!==i){ ws[i].position=i; await db.from('dashboard_widgets').update({position:i}).eq('id',ws[i].id); } }
+}
+async function deleteWidget(id){
+  const {error}=await db.from('dashboard_widgets').delete().eq('id',id);
+  if(error) return toast(error.message,true);
+  S._widgets = S._widgets.filter(w=>w.id!==id);
+  document.getElementById('wgrid').innerHTML = S._widgets.map(widgetCard).join('') || `<div class="card empty" style="grid-column:1/-1">No widgets yet — add your first one.</div>`;
+  toast('Widget removed');
+}
+function widgetModal(id, wsId, projId){
+  const w = id? S._widgets.find(x=>x.id===id): null;
+  const scope = wsId || (w? w.workspace_id : null) || widgetScope || null;
+  const pScope = projId || (w? w.project_id : null) || widgetProjScope || null;
+  const cfg = w? (w.config||{}) : {entity:'tasks', show:'open', groupBy:'status'};
+  const types=[['stat','Number','A single big number'],['bar','Bar chart','Compare groups side by side'],['donut','Donut','Share of a total'],['list','List','The items themselves'],['progress','Progress','Done vs total']];
+  const m = modal(`<div class="modal-head"><h2>${w?'Edit widget':'Add widget'}</h2><button class="x" onclick="closeModals()">✕</button></div>
+    <div class="modal-body">
+      <label>Widget type</label>
+      <div class="type-pick" id="wm-type">${types.map(([k,l,d])=>`<div class="tp ${ (w?w.wtype:'bar')===k?'sel':''}" data-k="${k}" onclick="[...this.parentNode.children].forEach(x=>x.classList.remove('sel'));this.classList.add('sel');wmRefresh()"><b>${l}</b><span>${d}</span></div>`).join('')}</div>
+      <label>Title</label><input id="wm-title" value="${w? esc(w.title):''}" placeholder="e.g. Creative workload">
+      <div class="field-grid">
+        <div><label>Source</label><select id="wm-entity" onchange="wmRefresh()">
+          <option value="tasks" ${cfg.entity!=='requests'?'selected':''}>Tasks</option>
+          <option value="requests" ${cfg.entity==='requests'?'selected':''}>Requests</option></select></div>
+        <div id="wm-dim"></div>
+      </div>
+      <div class="chk" id="wm-mine-wrap" style="margin-top:6px"><input type="checkbox" id="wm-mine" ${cfg.mine?'checked':''}> <span>Only items assigned to me</span></div>
+      <p style="color:var(--ink3);font-size:12.5px;margin-top:10px">${pScope? 'This widget lives on this board\'s report — everyone who can open the board sees it.' : scope? 'This widget lives on the workspace report — everyone on the team sees it.' : 'Widgets follow the workspace selector at the top of the dashboard, and only you see them.'}</p>
+    </div>
+    <div class="modal-foot"><button class="btn btn-ghost" onclick="closeModals()">Cancel</button><button class="btn btn-primary" id="wm-save">${w?'Save':'Add widget'}</button></div>`);
+  window.wmRefresh = ()=>{
+    const t = m.querySelector('#wm-type .sel')?.dataset.k || 'bar';
+    const ent = m.querySelector('#wm-entity').value;
+    const dim = m.querySelector('#wm-dim');
+    if(t==='bar'||t==='donut'){
+      const gs = ent==='requests'? W_GROUPS_REQS: W_GROUPS_TASKS;
+      dim.innerHTML = `<label>Group by</label><select id="wm-group">${gs.map(([k,l])=>`<option value="${k}" ${cfg.groupBy===k?'selected':''}>${l}</option>`).join('')}</select>`;
+    } else if(t==='stat'||t==='list'){
+      const ss = ent==='requests'? W_SHOWS_REQS: W_SHOWS_TASKS;
+      dim.innerHTML = `<label>Show</label><select id="wm-show">${ss.map(([k,l])=>`<option value="${k}" ${cfg.show===k?'selected':''}>${l}</option>`).join('')}</select>`;
+    } else dim.innerHTML='';
+    m.querySelector('#wm-mine-wrap').style.display = (ent==='tasks' && (t==='stat'||t==='list'))? 'flex':'none';
+  };
+  wmRefresh();
+  m.querySelector('#wm-save').onclick = async ()=>{
+    const wtype = m.querySelector('#wm-type .sel')?.dataset.k || 'bar';
+    const entity = m.querySelector('#wm-entity').value;
+    const config = {entity};
+    if(wtype==='bar'||wtype==='donut') config.groupBy = m.querySelector('#wm-group')?.value || 'status';
+    if(wtype==='stat'||wtype==='list'){ config.show = m.querySelector('#wm-show')?.value || 'open'; config.mine = m.querySelector('#wm-mine')?.checked || false; }
+    let title = m.querySelector('#wm-title').value.trim();
+    if(!title){
+      const dimL = config.groupBy? ' by '+config.groupBy : config.show? ' — '+config.show : '';
+      title = (entity==='requests'?'Requests':'Tasks') + dimL;
+    }
+    let error;
+    if(w){ ({error} = await db.from('dashboard_widgets').update({wtype, title, config}).eq('id',w.id)); }
+    else { ({error} = await db.from('dashboard_widgets').insert({user_id:S.me.id, workspace_id:pScope? null : scope, project_id:pScope, wtype, title, config, position:(S._widgets||[]).length})); }
+    if(error) return toast(error.message,true);
+    closeModals(); toast(w?'Widget updated':'Widget added'); reRenderWidgets();
+  };
+}
+function hbars(rows){
+  if(!rows.length) return '<div style="color:var(--ink3);font-size:13px;padding:8px 0">No data yet</div>';
+  const max = Math.max(...rows.map(r=>r.n));
+  return rows.map(r=>`<div class="hbar-row">
+    <div class="hbar-label" title="${esc(r.label)}">${esc(r.label)}</div>
+    <div class="hbar-track"><div class="hbar-fill" style="width:${Math.round(r.n/max*100)}%;background:${r.color}"></div></div>
+    <div class="hbar-val">${r.n}</div></div>`).join('');
+}
+/* ================= ADMIN ================= */
+let adminTab='users';
+async function renderAdmin(){
+  if(!isAdmin()){ location.hash='#/home'; return; }
+  setTopbar('Admin');
+  const C=$('#content'); C.innerHTML='<div class="empty">Loading…</div>';
+  await refreshCore();
+  C.innerHTML = `
+    <div class="page-head"><h1>Admin</h1>
+      <div class="tabs">
+        <button class="tab ${adminTab==='users'?'active':''}" onclick="adminTab='users';renderAdmin()">Users</button>
+        <button class="tab ${adminTab==='workspaces'?'active':''}" onclick="adminTab='workspaces';renderAdmin()">Workspaces</button>
+        <button class="tab ${adminTab==='teams'?'active':''}" onclick="adminTab='teams';renderAdmin()">Teams</button>
+        <button class="tab ${adminTab==='brands'?'active':''}" onclick="adminTab='brands';renderAdmin()">Brands</button>
+        <button class="tab ${adminTab==='types'?'active':''}" onclick="adminTab='types';renderAdmin()">Request types</button>
+        <button class="tab ${adminTab==='sla'?'active':''}" onclick="adminTab='sla';renderAdmin()">SLA</button>
+        <button class="tab ${adminTab==='automations'?'active':''}" onclick="adminTab='automations';renderAdmin()">Automations</button>
+      </div>
+      <div class="actions">${adminTab==='users'? '<button class="btn btn-primary" onclick="inviteUserModal()">＋ Add user</button>':''}
+        ${adminTab==='workspaces'? '<button class="btn btn-primary" onclick="newWorkspaceModal()">＋ Add workspace</button>':''}
+        ${adminTab==='teams'? '<button class="btn btn-primary" onclick="editTeamModal(null)">＋ Add team</button>':''}</div></div>
+    <div id="admin-body"></div>`;
+  const B=$('#admin-body');
+  if(adminTab==='users'){
+    const {data:wm} = await db.from('workspace_members').select('user_id, workspace_id');
+    const byUser = {}; (wm||[]).forEach(r=>{ (byUser[r.user_id]||(byUser[r.user_id]=[])).push(r.workspace_id); });
+    const wsCell = p=>{
+      if(p.role==='admin'||p.role==='management') return '<span class="chip" style="background:var(--accent-soft);color:var(--accent-ink)">All workspaces</span>';
+      const ids = byUser[p.id]||[];
+      if(!ids.length) return '<span style="color:var(--ink3)">none yet</span>';
+      const names = ids.map(i=>wsById(i)).filter(Boolean);
+      return names.slice(0,2).map(w=>`<span class="chip" style="background:var(--gray-soft);color:var(--ink2)"><span class="ws-dot" style="display:inline-block;background:${w.color}"></span> ${esc(w.name)}</span>`).join(' ')
+        + (names.length>2? ` <span class="chip" style="background:var(--gray-soft);color:var(--ink3)">+${names.length-2}</span>`:'');
+    };
+    const teamCell = p=>{
+      const ts = teamsForUser(p.id);
+      if(!ts.length) return '<span style="color:var(--ink3)">none</span>';
+      return ts.slice(0,2).map(teamChip).join(' ')
+        + (ts.length>2? ` <span class="chip" style="background:var(--gray-soft);color:var(--ink3)">+${ts.length-2}</span>`:'');
+    };
+    B.innerHTML = `<div class="card"><table class="tbl"><thead><tr><th>User</th><th>Email</th><th>Role</th><th>Teams</th><th>Workspaces</th><th>Status</th><th></th></tr></thead><tbody>
+      ${S.profiles.map(p=>`<tr>
+        <td style="font-weight:600">${avatar(p,true)} ${esc(p.full_name)}${p.id===S.me.id?' <span style="color:var(--ink3)">(you)</span>':''}</td>
+        <td style="color:var(--ink2)">${esc(p.email)}</td>
+        <td><select onchange="setRole('${p.id}', this.value)" style="width:auto;padding:5px 8px" ${p.id===S.me.id?'disabled':''}>
+          ${['admin','management','internal','requester','partner','freelancer'].map(r=>`<option ${r===p.role?'selected':''}>${r}</option>`).join('')}</select></td>
+        <td style="line-height:2">${teamCell(p)}</td>
+        <td style="line-height:2">${wsCell(p)}</td>
+        <td><span class="chip" style="background:${p.active?'var(--green-soft);color:var(--green)':'var(--gray-soft);color:var(--ink3)'}">${p.active?'active':'inactive'}</span></td>
+        <td style="text-align:right;white-space:nowrap">
+          <button class="btn btn-ghost btn-sm" onclick="userWorkspacesModal('${p.id}')">Workspaces</button>
+          <button class="btn btn-ghost btn-sm" onclick="resetPassword('${p.id}','${esc(p.full_name).replace(/'/g,"\\'")}')">Reset password</button>
+          ${p.id!==S.me.id? `<button class="btn btn-ghost btn-sm" onclick="toggleActive('${p.id}', ${!p.active})">${p.active?'Deactivate':'Activate'}</button>`:''}</td>
+      </tr>`).join('')}</tbody></table></div>
+      <p style="margin-top:12px;font-size:12.5px;color:var(--ink2)">Roles — <b>admin</b>: everything · <b>management</b>: sees all workspaces · <b>internal</b>: only the workspaces they are members of · <b>requester</b>: read-only in their workspaces — can raise tasks &amp; tickets and comment, but cannot edit anything · <b>partner / freelancer</b>: only boards they're added to + their own requests.</p>`;
+  }
+  if(adminTab==='teams'){
+    B.innerHTML = (S.teams||[]).length
+      ? `<div class="card"><table class="tbl"><thead><tr><th>Team</th><th>People</th><th></th></tr></thead><tbody>
+        ${S.teams.map(t=>{
+          const ids = teamMemberIds(t.id);
+          return `<tr>
+            <td style="font-weight:600"><span class="ws-dot" style="display:inline-block;background:${t.color||'#5C6470'}"></span> ${esc(t.name)}</td>
+            <td style="line-height:2">${ids.length
+              ? `${avatarStack(ids,6)} <span style="color:var(--ink2);font-size:12.5px;margin-left:6px">${ids.length}</span>`
+              : '<span style="color:var(--ink3)">nobody yet</span>'}</td>
+            <td style="text-align:right;white-space:nowrap">
+              <button class="btn btn-ghost btn-sm" onclick="teamMembersEditModal('${t.id}')">People</button>
+              <button class="btn btn-ghost btn-sm" onclick="editTeamModal('${t.id}')">Rename</button>
+              <button class="btn btn-ghost btn-sm" style="color:var(--red)" onclick="deleteTeamModal('${t.id}')">Delete</button></td>
+          </tr>`;}).join('')}</tbody></table></div>
+        <p style="margin-top:12px;font-size:12.5px;color:var(--ink2)">A team is a saved group of people — a shortcut when picking workspace or board members. <b>Being in a team grants no access on its own</b>: adding someone to a team here does not put them on any workspace, and removing them takes nothing away.</p>`
+      : `<div class="empty">No teams yet. Create one to bulk-add people to workspaces and boards.</div>`;
+  }
+  if(adminTab==='workspaces'){
+    B.innerHTML = `<div class="card"><table class="tbl"><thead><tr><th>Workspace</th><th>Description</th><th>Boards</th><th></th></tr></thead><tbody>
+      ${S.workspaces.map(w=>`<tr><td style="font-weight:600"><span class="ws-dot" style="display:inline-block;background:${w.color}"></span> ${esc(w.name)}
+        <div style="font-weight:400;font-size:12px;color:var(--ink3);margin-top:2px">Owner: ${esc(ownerNames(wsOwnerIds(w.id)))}</div></td>
+        <td style="color:var(--ink2)">${esc(w.description)}</td>
+        <td>${S.projects.filter(p=>p.workspace_id===w.id).length}</td>
+        <td style="text-align:right;white-space:nowrap">
+          <button class="btn btn-ghost btn-sm" onclick="editWorkspaceModal('${w.id}')">Edit</button>
+          <button class="btn btn-ghost btn-sm" onclick="teamMembersModal('${w.id}')">Members</button>
+          <button class="btn btn-ghost btn-sm" style="color:var(--red)" onclick="deleteWorkspaceModal('${w.id}')">Delete</button></td></tr>`).join('')}</tbody></table></div>
+      <p style="margin-top:12px;font-size:12.5px;color:var(--ink2)">Internal staff only see workspaces they are members of. Admin and Management see everything. Deleting a workspace also deletes its boards and tasks — you'll be asked to type the name to confirm.</p>`;
+  }
+  if(adminTab==='brands'){
+    const brs = S.brandsList||[];
+    B.innerHTML = `<div style="display:flex;gap:8px;margin-bottom:14px;max-width:520px">
+        <input id="nb-name" placeholder="New brand name" style="flex:1">
+        <input id="nb-group" placeholder="Group (optional)" style="width:140px">
+        <button class="btn btn-primary btn-sm" id="nb-add">Add</button></div>
+      <div class="card"><table class="tbl"><thead><tr><th>Brand</th><th>Group</th><th>Platforms</th><th>Status</th><th></th></tr></thead><tbody>
+      ${brs.map(b=>`<tr>
+        <td style="font-weight:600">${esc(b.name)}</td>
+        <td style="color:var(--ink2)">${esc(b.brand_group||'')}</td>
+        <td style="color:var(--ink2)">${(b.platforms||[]).map(esc).join(', ')}</td>
+        <td><span class="chip" style="background:${b.active?'var(--green-soft);color:var(--green)':'var(--gray-soft);color:var(--ink3)'}">${b.active?'active':'offboarded'}</span></td>
+        <td style="text-align:right"><button class="btn btn-ghost btn-sm" onclick="toggleBrand('${b.id}', ${!b.active})">${b.active?'Offboard':'Reactivate'}</button></td>
+      </tr>`).join('')}</tbody></table></div>
+      <p style="margin-top:12px;font-size:12.5px;color:var(--ink2)">${brs.filter(b=>b.active).length} active · ${brs.filter(b=>!b.active).length} offboarded. Seeded from the CS brand master list. Only active brands appear in request forms.</p>`;
+    B.querySelector('#nb-add').onclick = async ()=>{
+      const name = B.querySelector('#nb-name').value.trim(); if(!name) return toast('Brand name required', true);
+      const {error} = await db.from('brands').insert({name, brand_group:B.querySelector('#nb-group').value.trim()});
+      if(error) return toast(error.message, true);
+      toast('Brand added'); await refreshCore(); renderAdmin();
+    };
+  }
+  if(adminTab==='automations'){ await renderAutomationsTab(B); }
+  if(adminTab==='sla'){ await renderSlaTab(B); }
+  if(adminTab==='types'){
+    const {data:allTypes} = await db.from('request_types').select('*').order('position');
+    window._allTypes = allTypes||[];
+    B.innerHTML = `<div style="margin-bottom:14px"><button class="btn btn-primary btn-sm" onclick="editTypeModal()">＋ New request type / form</button></div>
+      <div class="card"><table class="tbl"><thead><tr><th>Type</th><th>SLA</th><th>Approval</th><th>Routes to</th><th>Public form</th><th>Status</th><th></th></tr></thead><tbody>
+      ${window._allTypes.map(rt=>{
+        const w = wsById(rt.default_workspace_id);
+        const link = location.origin + location.pathname + '#/f/' + rt.public_token;
+        return `<tr><td style="font-weight:600">${esc(rt.name)}<div style="font-size:11.5px;color:var(--ink3);font-weight:400">${(rt.fields||[]).length} fields</div></td>
+        <td>${rt.sla_hours}h</td><td>${rt.approval_required?'Required':'—'}</td>
+        <td style="color:var(--ink2)">${w? esc(w.name):'All staff'}</td>
+        <td>${rt.public_enabled? `<button class="btn btn-ghost btn-sm" onclick="navigator.clipboard.writeText('${link}').then(()=>toast('Form link copied'))">Copy link</button>`:'<span style="color:var(--ink3)">Off</span>'}</td>
+        <td><span class="chip" style="background:${rt.active?'var(--green-soft);color:var(--green)':'var(--gray-soft);color:var(--ink3)'}">${rt.active?'active':'inactive'}</span></td>
+        <td style="text-align:right"><button class="btn btn-ghost btn-sm" onclick="editTypeModal('${rt.id}')">Edit</button></td></tr>`;}).join('')}</tbody></table></div>
+      <p style="margin-top:12px;font-size:12.5px;color:var(--ink2)">Turn on “Public form link” to get a shareable URL — anyone can submit a ticket through it without an account. Submissions land in the Requests queue with a WO number and SLA timer.</p>`;
+  }
+}
+/* ================= AUTOMATIONS (editable in-app) ================= */
+const AUTO_RULES = [
+  {key:'request_submitted', label:'New ticket alerts the team',      how:'When a request is submitted, everyone on the routed workspace gets a notification.'},
+  {key:'task_assigned',     label:'Assignee is notified',            how:'When a task is assigned or reassigned, the new owner hears about it.'},
+  {key:'status_review',     label:'Review notifies the requester',   how:'When a task moves to Review, whoever raised it is told it is ready to check.'},
+  {key:'subtasks_done',     label:'Subtasks done → parent to Review',how:'When the last open subtask is finished, the parent task moves to Review by itself.'},
+  {key:'task_completed',    label:'Done stamps the turnaround',      how:'Marking a task Done records the completion time — this powers the on-time numbers on the dashboard.'},
+  {key:'sla_warning',       label:'SLA warning at 80%',              how:'A ticket that has used 80% of its SLA notifies its owner. Checked every 15 minutes.'},
+  {key:'sla_breach',        label:'SLA breach escalates',            how:'A breached ticket notifies every admin and manager, once. Checked every 15 minutes.'},
+  {key:'task_overdue',      label:'Overdue task nudges its owner',   how:'A task past its due date notifies its assignee, once. Checked every 15 minutes.'},
+];
+let autoWs = '';   // '' = everywhere
+let _autoPin = null;                       // set when the tab lives inside one workspace
+let autoRerender = ()=>renderAdmin();      // whoever hosts the tab decides how to redraw it
+/* Automations tab — hosted by Admin (pick any scope) or by a workspace (pinned to it). */
+async function renderAutomationsTab(B, pinnedWs){
+  _autoPin = pinnedWs||null;
+  autoRerender = pinnedWs? ()=>renderWorkspaceAutomations(pinnedWs) : ()=>renderAdmin();
+  const effWs = pinnedWs || autoWs;
+  const canA = isAdmin();
+  const runsQ = db.from('automation_runs').select('*');
+  const [{data:rules},{data:runs},{data:customs}] = await Promise.all([
+    db.from('automation_rules').select('*'),
+    (pinnedWs? runsQ.eq('workspace_id',pinnedWs) : runsQ).order('created_at',{ascending:false}).limit(30),
+    db.from('custom_automations').select('*').order('created_at'),
+  ]);
+  S._autoRules = rules||[]; S._customAutos = customs||[];
+  const wsBoards = pinnedWs? new Set(S.projects.filter(p=>p.workspace_id===pinnedWs).map(p=>p.id)) : null;
+  const caList = pinnedWs
+    ? S._customAutos.filter(c=> (!c.workspace_id && !c.project_id) || c.workspace_id===pinnedWs || (c.project_id && wsBoards.has(c.project_id)))
+    : S._customAutos;
+  const stateOf = (key)=>{
+    const wsRow = effWs? S._autoRules.find(r=>r.rule_key===key && r.workspace_id===effWs) : null;
+    const glRow = S._autoRules.find(r=>r.rule_key===key && !r.workspace_id);
+    if(wsRow) return {on:wsRow.enabled, src:'custom'};
+    if(glRow) return {on:glRow.enabled, src: effWs? 'inherited':'set'};
+    return {on:true, src: effWs? 'inherited':'default'};
+  };
+  const ruleLabel = k => (AUTO_RULES.find(r=>r.key===k)||{}).label || k;
+  B.innerHTML = `
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;flex-wrap:wrap">
+      ${pinnedWs
+        ? `<span style="font-size:12.5px;color:var(--ink2)">Rules for this workspace — anything you don't change here follows the Everywhere setting.</span>`
+        : `<label style="margin:0">Rules apply to</label>
+      <select style="width:auto;min-width:200px" onchange="autoWs=this.value;renderAdmin()">
+        <option value="">Everywhere</option>
+        ${S.workspaces.map(w=>`<option value="${w.id}" ${autoWs===w.id?'selected':''}>${esc(w.name)}</option>`).join('')}
+      </select>`}
+      <span style="flex:1"></span>
+      ${canA? `<button class="btn btn-ghost btn-sm" onclick="runSweepNow(this)">Run timed checks now</button>`:''}
+    </div>
+    <div class="section-title" style="display:flex;align-items:center;gap:10px;margin-top:4px">Your automations
+      <span style="flex:1"></span>${canA? `<button class="btn btn-primary btn-sm" onclick="caModal(null,'${pinnedWs? 'w:'+pinnedWs:''}')">＋ Add automation</button>`:''}</div>
+    <div class="card" style="margin-bottom:24px">
+      ${caList.length? `<table class="tbl"><tbody>
+        ${caList.map(c=>`<tr>
+          <td style="width:40px"><label class="sw"><input type="checkbox" ${c.enabled?'checked':''} ${canA?'':'disabled'} onchange="caToggle('${c.id}', this.checked)"><span></span></label></td>
+          <td style="font-weight:600">${esc(c.name||'Untitled automation')}</td>
+          <td style="width:160px;color:var(--ink3);font-size:12px">${caScopeLabel(c)}</td>
+          <td style="text-align:right;white-space:nowrap;width:140px">${canA? `
+            <button class="btn btn-ghost btn-sm" onclick="caModal('${c.id}')">Edit</button>
+            <button class="btn btn-ghost btn-sm" onclick="caDelete('${c.id}')">Remove</button>`:''}</td>
+        </tr>`).join('')}</tbody></table>`
+      : `<div class="empty" style="padding:26px">Build your own rule — when something happens on a task, WorkOS reacts for you.</div>`}
+    </div>
+    <div class="section-title">Built-in rules</div>
+    <div class="card"><table class="tbl"><thead><tr><th style="width:40px"></th><th>Automation</th><th>What it does</th><th style="width:90px"></th></tr></thead><tbody>
+      ${AUTO_RULES.map(r=>{
+        const st = stateOf(r.key);
+        return `<tr>
+          <td><label class="sw"><input type="checkbox" ${st.on?'checked':''} ${canA?'':'disabled'} onchange="setAutoRule('${r.key}', this.checked)"><span></span></label></td>
+          <td style="font-weight:600">${esc(r.label)}</td>
+          <td style="color:var(--ink2)">${esc(r.how)}</td>
+          <td style="text-align:right">${effWs? (st.src==='custom'
+              ? (canA? `<button class="btn btn-ghost btn-sm" onclick="clearAutoRule('${r.key}')" title="Follow the Everywhere setting again">Reset</button>` : '<span style="font-size:11px;color:var(--ink3)">customized</span>')
+              : '<span style="font-size:11px;color:var(--ink3)">inherited</span>') : ''}</td>
+        </tr>`;}).join('')}
+    </tbody></table></div>
+    <p style="margin-top:10px;font-size:12.5px;color:var(--ink2)">Switching a rule off here stops it ${effWs? 'for this workspace only — everywhere else follows the global setting':'everywhere, unless a workspace has its own setting'}. Timed rules run every 15 minutes on their own.</p>
+    <div class="section-title" style="margin-top:24px">Recent runs</div>
+    <div class="card"><table class="tbl"><thead><tr><th>When</th><th>Rule</th><th>On</th><th>Result</th></tr></thead><tbody>
+      ${(runs||[]).length? runs.map(x=>`<tr>
+        <td style="white-space:nowrap;color:var(--ink2)">${timeAgo(x.created_at)}</td>
+        <td style="font-weight:600">${x.rule_key==='custom'? esc(x.detail?.name||'Custom automation') : esc(ruleLabel(x.rule_key))}</td>
+        <td style="color:var(--ink2)">${x.entity_type==='task'? 'a task':'a ticket'}${x.detail?.notified? ` · ${x.detail.notified} notified`:''}${x.detail?.hours? ` · ${x.detail.hours}h turnaround`:''}</td>
+        <td><span class="chip" style="background:${x.status==='ok'?'var(--green-soft);color:var(--green)':'var(--red-soft);color:var(--red)'}">${esc(x.status)}</span></td>
+      </tr>`).join('') : '<tr><td colspan="4"><div class="empty" style="padding:22px">Nothing has fired yet.</div></td></tr>'}
+    </tbody></table></div>`;
+}
+async function setAutoRule(key, on){
+  const scopeWs = _autoPin || autoWs;
+  const payload = {rule_key:key, workspace_id: scopeWs||null, enabled:on};
+  const existing = (S._autoRules||[]).find(r=>r.rule_key===key && (r.workspace_id||'')===(scopeWs||''));
+  const {error} = existing
+    ? await db.from('automation_rules').update({enabled:on}).eq('id',existing.id)
+    : await db.from('automation_rules').insert(payload);
+  if(error){ toast(error.message, true); autoRerender(); return; }
+  toast(`${(AUTO_RULES.find(r=>r.key===key)||{}).label||key} ${on?'on':'off'}${scopeWs? ' for this workspace':''}`);
+  autoRerender();
+}
+async function clearAutoRule(key){
+  const scopeWs = _autoPin || autoWs;
+  const existing = (S._autoRules||[]).find(r=>r.rule_key===key && r.workspace_id===scopeWs);
+  if(!existing) return;
+  const {error} = await db.from('automation_rules').delete().eq('id',existing.id);
+  if(error) return toast(error.message, true);
+  toast('Back to the Everywhere setting'); autoRerender();
+}
+async function runSweepNow(btn){
+  btn.disabled=true; btn.textContent='Checking…';
+  const {data, error} = await db.rpc('run_automation_sweep');
+  btn.disabled=false; btn.textContent='Run timed checks now';
+  if(error) return toast(error.message, true);
+  const n = (data?.sla_warning||0)+(data?.sla_breach||0)+(data?.task_overdue||0)+(data?.custom||0)+(data?.recurring||0);
+  toast(n? `${n} alert${n>1?'s':''} sent` : 'All clear — nothing new to flag');
+  autoRerender();
+}
+/* ================= SLA (fully customizable) ================= */
+const SLA_DAYS = [[1,'Mon'],[2,'Tue'],[3,'Wed'],[4,'Thu'],[5,'Fri'],[6,'Sat'],[7,'Sun']];
+const SLA_PAUSABLE = ['submitted','in_review','approved','in_progress','pending_info'];
+const SLA_DEFAULTS = {use_working_time:false, work_start:'09:00', work_end:'18:00', work_days:[1,2,3,4,5],
+  warn_pct:80, pause_statuses:['pending_info'], prio_pct:{urgent:50,high:75,normal:100,low:100}, tz:'Asia/Bangkok'};
+let _sla = null;
+async function renderSlaTab(B){
+  const [{data:setRows},{data:hols},{data:types}] = await Promise.all([
+    db.from('sla_settings').select('*'),
+    db.from('sla_holidays').select('*').order('day'),
+    db.from('request_types').select('*').order('position'),
+  ]);
+  _sla = {...SLA_DEFAULTS, ...((setRows||[])[0]||{})};
+  _sla.prio_pct = {...SLA_DEFAULTS.prio_pct, ...(_sla.prio_pct||{})};
+  S._slaHolidays = hols||[]; S._slaTypes = types||[];
+  const canA = isAdmin();
+  const dis = canA? '' : 'disabled';
+  const reqLabel = k => (REQ_STATUSES.find(s=>s.k===k)||{}).label||k;
+  B.innerHTML = `
+    <div class="card" style="padding:18px;margin-bottom:16px">
+      <div class="section-title" style="margin-top:0">How the clock runs</div>
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
+        <label class="sw"><input type="checkbox" id="sla-wt" ${_sla.use_working_time?'checked':''} ${dis}><span></span></label>
+        <span>Count <b>working hours only</b> — evenings, non-working days and holidays don't burn the SLA</span>
+      </div>
+      <div style="display:flex;gap:18px;flex-wrap:wrap;align-items:flex-end">
+        <div><label>Work starts</label><input type="time" id="sla-ws" value="${_sla.work_start.slice(0,5)}" ${dis} style="width:110px"></div>
+        <div><label>Work ends</label><input type="time" id="sla-we" value="${_sla.work_end.slice(0,5)}" ${dis} style="width:110px"></div>
+        <div><label>Working days</label><div style="display:flex;gap:8px;padding-top:4px">
+          ${SLA_DAYS.map(([n,l])=>`<label style="display:flex;gap:4px;align-items:center;font-size:12.5px;margin:0">
+            <input type="checkbox" class="sla-day" data-d="${n}" ${(_sla.work_days||[]).includes(n)?'checked':''} ${dis}>${l}</label>`).join('')}</div></div>
+        <div><label>Warn at</label><div style="display:flex;align-items:center;gap:6px">
+          <input type="number" id="sla-warn" min="10" max="95" value="${_sla.warn_pct}" ${dis} style="width:76px"><span>% of the SLA used</span></div></div>
+      </div>
+      <div style="margin-top:14px"><label>Pause the clock while a ticket is</label>
+        <div style="display:flex;gap:14px;flex-wrap:wrap;padding-top:4px">
+          ${SLA_PAUSABLE.map(k=>`<label style="display:flex;gap:5px;align-items:center;font-size:13px;margin:0">
+            <input type="checkbox" class="sla-pause" data-s="${k}" ${(_sla.pause_statuses||[]).includes(k)?'checked':''} ${dis}>${esc(reqLabel(k))}</label>`).join('')}
+        </div>
+        <div style="font-size:12px;color:var(--ink3);margin-top:4px">While paused a ticket sends no warnings, and the time it spends paused is added back to its deadline.</div></div>
+    </div>
+    <div class="card" style="padding:18px;margin-bottom:16px">
+      <div class="section-title" style="margin-top:0">Speed by priority</div>
+      <div style="font-size:12.5px;color:var(--ink2);margin-bottom:10px">Each priority gets this share of the request type's SLA time — 50% means an urgent ticket must be handled twice as fast.</div>
+      <div style="display:flex;gap:22px;flex-wrap:wrap">
+        ${PRIORITIES.map(p=>`<div><label>${p.label}</label><div style="display:flex;align-items:center;gap:6px">
+          <input type="number" class="sla-prio" data-p="${p.k}" min="10" max="500" value="${_sla.prio_pct[p.k]??100}" ${dis} style="width:80px"><span>%</span></div></div>`).join('')}
+      </div>
+    </div>
+    <div class="card" style="padding:18px;margin-bottom:16px">
+      <div class="section-title" style="margin-top:0">Holidays</div>
+      <div style="font-size:12.5px;color:var(--ink2);margin-bottom:10px">Skipped entirely when counting working hours. Fixed-date Thai public holidays for 2026 are pre-loaded — lunar ones (Makha Bucha, Visakha Bucha, Asarnha Bucha, Khao Phansa) move every year, so add them here.</div>
+      ${S._slaHolidays.length? `<table class="tbl"><tbody>
+        ${S._slaHolidays.map(h=>`<tr><td style="width:130px;white-space:nowrap">${h.day}</td>
+          <td>${esc(h.name)}</td>
+          <td style="text-align:right;width:60px">${canA? `<button class="btn btn-ghost btn-sm" onclick="slaDelHoliday('${h.id}')">✕</button>`:''}</td></tr>`).join('')}
+      </tbody></table>` : '<div class="empty" style="padding:16px">No holidays yet.</div>'}
+      ${canA? `<div style="display:flex;gap:10px;margin-top:12px;align-items:flex-end">
+        <div><label>Date</label><input type="date" id="sla-hd" style="width:160px"></div>
+        <div style="flex:1"><label>Name</label><input id="sla-hn" placeholder="e.g. Visakha Bucha Day"></div>
+        <button class="btn btn-ghost" onclick="slaAddHoliday()">＋ Add holiday</button></div>`:''}
+    </div>
+    <div class="card" style="padding:18px;margin-bottom:16px">
+      <div class="section-title" style="margin-top:0">SLA hours per request type</div>
+      <table class="tbl"><tbody>
+        ${S._slaTypes.map(rt=>`<tr><td style="font-weight:600">${esc(rt.name)}</td>
+          <td style="width:180px"><div style="display:flex;align-items:center;gap:6px">
+            <input type="number" class="sla-th" data-id="${rt.id}" min="1" max="2000" value="${rt.sla_hours}" ${dis} style="width:90px"><span>hours</span></div></td></tr>`).join('')}
+      </tbody></table>
+    </div>
+    ${canA? `<div style="display:flex;gap:10px;align-items:center">
+      <button class="btn btn-primary" onclick="slaSave(this)">Save SLA settings</button>
+      <button class="btn btn-ghost" onclick="slaApplyOpen(this)" title="Recompute the deadline of every open, unpaused ticket with the current settings">Apply to open tickets</button>
+      <span style="font-size:12px;color:var(--ink3)">Changes apply to new tickets right away; use “Apply to open tickets” to restamp the queue.</span>
+    </div>`:''}`;
+}
+async function slaSave(btn){
+  const days = [...document.querySelectorAll('.sla-day:checked')].map(x=>parseInt(x.dataset.d,10));
+  if(!days.length) return toast('Pick at least one working day', true);
+  const ws = document.getElementById('sla-ws').value, we = document.getElementById('sla-we').value;
+  if(!ws || !we || ws >= we) return toast('Work must start before it ends', true);
+  const prio = {}; [...document.querySelectorAll('.sla-prio')].forEach(x=>{ prio[x.dataset.p] = Math.min(500, Math.max(10, parseInt(x.value,10)||100)); });
+  const payload = {
+    company_id: S.me.company_id,
+    use_working_time: document.getElementById('sla-wt').checked,
+    work_start: ws, work_end: we, work_days: days,
+    warn_pct: Math.min(95, Math.max(10, parseInt(document.getElementById('sla-warn').value,10)||80)),
+    pause_statuses: [...document.querySelectorAll('.sla-pause:checked')].map(x=>x.dataset.s),
+    prio_pct: prio, updated_at: new Date().toISOString(),
+  };
+  btn.disabled = true;
+  const {error} = await db.from('sla_settings').upsert(payload);
+  let terr = null;
+  for(const inp of document.querySelectorAll('.sla-th')){
+    const rt = (S._slaTypes||[]).find(t=>t.id===inp.dataset.id);
+    const hrs = Math.min(2000, Math.max(1, parseInt(inp.value,10)||24));
+    if(rt && rt.sla_hours !== hrs){
+      const {error:e2} = await db.from('request_types').update({sla_hours:hrs}).eq('id',rt.id);
+      if(e2) terr = e2;
+    }
+  }
+  btn.disabled = false;
+  if(error||terr) return toast((error||terr).message, true);
+  toast('SLA settings saved — new tickets use them right away');
+  await refreshCore(); renderAdmin();
+}
+async function slaAddHoliday(){
+  const d = document.getElementById('sla-hd').value, n = document.getElementById('sla-hn').value.trim();
+  if(!d) return toast('Pick the date', true);
+  const {error} = await db.from('sla_holidays').insert({day:d, name:n||'Holiday'});
+  if(error) return toast(/duplicate/i.test(error.message)? 'That date is already a holiday':error.message, true);
+  toast('Holiday added'); renderAdmin();
+}
+async function slaDelHoliday(id){
+  const {error} = await db.from('sla_holidays').delete().eq('id',id);
+  if(error) return toast(error.message, true);
+  toast('Holiday removed'); renderAdmin();
+}
+async function slaApplyOpen(btn){
+  btn.disabled = true; btn.textContent = 'Recomputing…';
+  const {data, error} = await db.rpc('recompute_open_slas');
+  btn.disabled = false; btn.textContent = 'Apply to open tickets';
+  if(error) return toast(error.message, true);
+  toast(`${data||0} open ticket${data===1?'':'s'} restamped with the new rules`);
+  renderAdmin();
+}
+/* Each workspace carries the same Automations tab, pinned to itself. */
+async function renderWorkspaceAutomations(wsId){
+  const w = wsById(wsId); if(!w){ location.hash='#/home'; return; }
+  if(!isStaff()){ location.hash='#/ws/'+wsId; return; }
+  widgetScope = null; widgetProjScope = null;
+  setTopbar(esc(w.name), '');
+  const C = $('#content');
+  C.innerHTML = `${wsTabsHTML(wsId,'automations')}
+    <div class="page-head"><div><h1>Automations</h1><div class="sub">Rules that run by themselves in ${esc(w.name)}.</div></div></div>
+    <div id="ws-auto"><div class="empty">Loading…</div></div>`;
+  await renderAutomationsTab(C.querySelector('#ws-auto'), wsId);
+}
+/* ---------- Custom automations: build your own When → Then recipe ---------- */
+const CA_TRIGGERS = [
+  {key:'status_changed',   label:'Status changes',          cond:'status'},
+  {key:'priority_changed', label:'Priority changes',        cond:'priority'},
+  {key:'task_assigned',    label:'A task is assigned',      cond:null},
+  {key:'task_created',     label:'A task is created',       cond:null},
+  {key:'moved_to_group',   label:'A task moves to a group', cond:'group'},
+  {key:'field_changed',    label:'A column changes',        cond:'field'},
+  {key:'due_date_arrives', label:'The due date arrives',    cond:null},
+];
+const CA_ACTIONS = [
+  {key:'notify_person',   label:'Notify a person',            cfg:'person'},
+  {key:'notify_assignee', label:'Notify the assignee',        cfg:null},
+  {key:'notify_creator',  label:'Notify whoever created it',  cfg:null},
+  {key:'notify_team',     label:'Notify the whole workspace', cfg:null},
+  {key:'set_status',      label:'Set status',                 cfg:'status'},
+  {key:'set_priority',    label:'Set priority',               cfg:'priority'},
+  {key:'assign_person',   label:'Assign it to someone',       cfg:'person'},
+  {key:'move_to_group',   label:'Move it to a group',         cfg:'group'},
+  {key:'set_field',       label:'Set a column value',         cfg:'field'},
+  {key:'set_due_in_days', label:'Set the due date',           cfg:'days'},
+  {key:'archive_task',    label:'Archive the task',           cfg:null},
+];
+function caScopeLabel(c){
+  if(c.project_id){ const p=(S.projects||[]).find(x=>x.id===c.project_id); return p? esc(p.name):'One board'; }
+  if(c.workspace_id){ const w=wsById(c.workspace_id); return w? esc(w.name):'One workspace'; }
+  return 'Everywhere';
+}
+function caGroupName(pid, gid){
+  const g = ((window._caGroups||{})[pid]||[]).find(x=>x.id===gid);
+  return g? g.name : 'a group';
+}
+function caSentence(d){
+  const sL = k => (STATUSES.find(s=>s.k===k)||{}).label||k;
+  const pL = k => (PRIORITIES.find(p=>p.k===k)||{}).label||k;
+  const uN = id => { const u=S.profiles.find(p=>p.id===id); return u? u.full_name : 'someone'; };
+  const pid = d.scope.startsWith('p:')? d.scope.slice(2) : null;
+  let when='';
+  switch(d.trigger){
+    case 'status_changed':   when = 'When status changes' + (d.cond.to? ` to ${sL(d.cond.to)}`:''); break;
+    case 'priority_changed': when = 'When priority changes' + (d.cond.to? ` to ${pL(d.cond.to)}`:''); break;
+    case 'task_assigned':    when = 'When a task is assigned'; break;
+    case 'task_created':     when = 'When a task is created'; break;
+    case 'moved_to_group':   when = 'When a task moves' + (d.cond.group_id? ` to ${caGroupName(pid,d.cond.group_id)}`:' to a new group'); break;
+    case 'field_changed':    when = 'When ' + (d.cond.field_id? caFieldName(pid,d.cond.field_id):'a column') + (d.cond.to? ` becomes ${d.cond.to}`:' changes'); break;
+    case 'due_date_arrives': when = 'When the due date arrives'; break;
+  }
+  let then='';
+  switch(d.action){
+    case 'notify_person':   then = `notify ${uN(d.cfg.user_id)}`; break;
+    case 'notify_assignee': then = 'notify the assignee'; break;
+    case 'notify_creator':  then = 'notify whoever created it'; break;
+    case 'notify_team':     then = 'notify the whole workspace'; break;
+    case 'set_status':      then = `set status to ${sL(d.cfg.status)}`; break;
+    case 'set_priority':    then = `set priority to ${pL(d.cfg.priority)}`; break;
+    case 'assign_person':   then = `assign it to ${uN(d.cfg.user_id)}`; break;
+    case 'move_to_group':   then = `move it to ${caGroupName(pid,d.cfg.group_id)}`; break;
+    case 'set_field':       then = `set ${d.cfg.field_id? caFieldName(pid,d.cfg.field_id):'a column'}${d.cfg.value? ` to ${d.cfg.value}`:''}`; break;
+    case 'set_due_in_days': { const n=parseInt(d.cfg.days??1,10); then = `set the due date ${n} day${n===1?'':'s'} from now`; break; }
+    case 'archive_task':    then = 'archive it'; break;
+  }
+  return `${when}, ${then}`;
+}
+let _ca = null;
+function caModal(id, defScope){
+  const rec = id? (S._customAutos||[]).find(x=>x.id===id) : null;
+  _ca = rec? {id:rec.id, trigger:rec.trigger_key, cond:{...(rec.condition||{})}, action:rec.action_key,
+              cfg:{...(rec.action_config||{})},
+              scope: rec.project_id? 'p:'+rec.project_id : (rec.workspace_id? 'w:'+rec.workspace_id : '')}
+           : {id:null, trigger:'status_changed', cond:{}, action:'notify_assignee', cfg:{}, scope:defScope||''};
+  modal(`<div class="modal-head"><h2>${id? 'Edit automation':'Add automation'}</h2><button class="x" onclick="closeModals()">✕</button></div>
+    <div class="modal-body" id="ca-body"></div>
+    <div class="modal-foot"><button class="btn btn-ghost" onclick="closeModals()">Cancel</button>
+      <button class="btn btn-primary" id="ca-save" onclick="caSave()">${id? 'Save changes':'Add automation'}</button></div>`);
+  const pid = _ca.scope.startsWith('p:')? _ca.scope.slice(2) : null;
+  if(pid) caLoadGroups(pid); else caDraw();
+}
+async function caLoadGroups(pid){
+  window._caGroups = window._caGroups||{}; window._caFields = window._caFields||{};
+  const jobs=[];
+  if(!window._caGroups[pid]) jobs.push(db.from('project_groups').select('id,name').eq('project_id',pid)
+    .then(({data})=>{window._caGroups[pid]=data||[];}));
+  if(!window._caFields[pid]) jobs.push(db.from('project_fields').select('id,label,ftype,options').eq('project_id',pid)
+    .then(({data})=>{window._caFields[pid]=(data||[]).filter(f=>f.ftype==='select');}));
+  if(jobs.length) await Promise.all(jobs);
+  caDraw();
+}
+function caFieldName(pid, fid){
+  const f = ((window._caFields||{})[pid]||[]).find(x=>x.id===fid); return f? f.label : 'a column';
+}
+function caDraw(){
+  const B = document.getElementById('ca-body'); if(!B || !_ca) return;
+  const trg = CA_TRIGGERS.find(t=>t.key===_ca.trigger)||CA_TRIGGERS[0];
+  const act = CA_ACTIONS.find(a=>a.key===_ca.action)||CA_ACTIONS[0];
+  const pid = _ca.scope.startsWith('p:')? _ca.scope.slice(2) : null;
+  const groups = pid? ((window._caGroups||{})[pid]||[]) : [];
+  const people = (S.profiles||[]).filter(p=>p.active);
+  const fields = pid? ((window._caFields||{})[pid]||[]) : [];
+  const groupCtl = (val, id, anyLabel)=> pid
+    ? `<select id="${id}" onchange="_ca.${id==='ca-cond'?'cond.group_id':'cfg.group_id'}=this.value;caDraw()">
+        ${anyLabel? `<option value="">${anyLabel}</option>`:''}
+        ${groups.map(g=>`<option value="${g.id}" ${val===g.id?'selected':''}>${esc(g.name)}</option>`).join('')}</select>`
+    : `<div style="font-size:12.5px;color:var(--ink3);padding:8px 2px">Choose a board below first — groups belong to a board.</div>`;
+  // A board's own status-type columns (select fields) — for "A column changes" / "Set a column value"
+  const fieldCtl = (where, anyValLabel)=>{  // where: 'cond' | 'cfg'
+    if(!pid) return `<div style="font-size:12.5px;color:var(--ink3);padding:8px 2px">Choose a board below first — columns belong to a board.</div>`;
+    if(!fields.length) return `<div style="font-size:12.5px;color:var(--ink3);padding:8px 2px">This board has no status-type (dropdown) columns yet.</div>`;
+    const st = _ca[where]; const fid = st.field_id;
+    const valKey = where==='cond'? 'to' : 'value';
+    const opts = fid? ((fields.find(f=>f.id===fid)||{}).options||[]) : [];
+    const idBase = where==='cond'? 'ca-cond':'ca-cfg';
+    return `<select id="${idBase}" onchange="_ca.${where}.field_id=this.value;_ca.${where}.${valKey}='';caDraw()">
+        <option value="">Pick a column…</option>
+        ${fields.map(f=>`<option value="${f.id}" ${fid===f.id?'selected':''}>${esc(f.label)}</option>`).join('')}</select>
+      ${fid? `<select id="${idBase}-v" style="margin-top:8px" onchange="_ca.${where}.${valKey}=this.value;caDraw()">
+        ${anyValLabel? `<option value="">${anyValLabel}</option>`:'<option value="">Pick a value…</option>'}
+        ${opts.map(o=>`<option value="${esc(o)}" ${st[valKey]===o?'selected':''}>${esc(o)}</option>`).join('')}</select>`:''}`;
+  };
+  let condCtl='';
+  if(trg.cond==='status') condCtl = `<select id="ca-cond" onchange="_ca.cond.to=this.value;caDraw()">
+      <option value="">to any status</option>
+      ${STATUSES.map(s=>`<option value="${s.k}" ${_ca.cond.to===s.k?'selected':''}>to ${s.label}</option>`).join('')}</select>`;
+  if(trg.cond==='priority') condCtl = `<select id="ca-cond" onchange="_ca.cond.to=this.value;caDraw()">
+      <option value="">to any priority</option>
+      ${PRIORITIES.map(p=>`<option value="${p.k}" ${_ca.cond.to===p.k?'selected':''}>to ${p.label}</option>`).join('')}</select>`;
+  if(trg.cond==='group') condCtl = groupCtl(_ca.cond.group_id, 'ca-cond', 'to any group');
+  if(trg.cond==='field') condCtl = fieldCtl('cond', 'to any value');
+  let cfgCtl='';
+  if(act.cfg==='person') cfgCtl = `<select id="ca-cfg" onchange="_ca.cfg.user_id=this.value;caDraw()">
+      <option value="">Pick a person…</option>
+      ${people.map(u=>`<option value="${u.id}" ${_ca.cfg.user_id===u.id?'selected':''}>${esc(u.full_name)}</option>`).join('')}</select>`;
+  if(act.cfg==='status') cfgCtl = `<select id="ca-cfg" onchange="_ca.cfg.status=this.value;caDraw()">
+      ${STATUSES.map(s=>`<option value="${s.k}" ${(_ca.cfg.status||'todo')===s.k?'selected':''}>${s.label}</option>`).join('')}</select>`;
+  if(act.cfg==='priority') cfgCtl = `<select id="ca-cfg" onchange="_ca.cfg.priority=this.value;caDraw()">
+      ${PRIORITIES.map(p=>`<option value="${p.k}" ${(_ca.cfg.priority||'urgent')===p.k?'selected':''}>${p.label}</option>`).join('')}</select>`;
+  if(act.cfg==='group') cfgCtl = groupCtl(_ca.cfg.group_id, 'ca-cfg', null);
+  if(act.cfg==='field') cfgCtl = fieldCtl('cfg', null);
+  if(act.cfg==='days') cfgCtl = `<div style="display:flex;align-items:center;gap:8px">
+      <input id="ca-cfg" type="number" min="0" max="365" style="width:90px" value="${parseInt(_ca.cfg.days??1,10)}" onchange="_ca.cfg.days=this.value">
+      <span style="color:var(--ink2);font-size:13px">days from the day it fires</span></div>`;
+  B.innerHTML = `
+    <label>When</label>
+    <select onchange="_ca.trigger=this.value;_ca.cond={};caDraw()">
+      ${CA_TRIGGERS.map(t=>`<option value="${t.key}" ${_ca.trigger===t.key?'selected':''}>${t.label}</option>`).join('')}</select>
+    ${condCtl? `<div style="margin-top:8px">${condCtl}</div>`:''}
+    <label style="margin-top:16px">Then</label>
+    <select onchange="_ca.action=this.value;_ca.cfg={};caDraw()">
+      ${CA_ACTIONS.map(a=>`<option value="${a.key}" ${_ca.action===a.key?'selected':''}>${a.label}</option>`).join('')}</select>
+    ${cfgCtl? `<div style="margin-top:8px">${cfgCtl}</div>`:''}
+    <label style="margin-top:16px">Where it applies</label>
+    <select id="ca-scope" onchange="_ca.scope=this.value;delete _ca.cond.group_id;delete _ca.cond.field_id;delete _ca.cfg.group_id;delete _ca.cfg.field_id;const p=this.value.startsWith('p:')?this.value.slice(2):null;p?caLoadGroups(p):caDraw()">
+      <option value="">Everywhere</option>
+      <optgroup label="Workspaces">
+        ${(S.workspaces||[]).map(w=>`<option value="w:${w.id}" ${_ca.scope==='w:'+w.id?'selected':''}>${esc(w.name)}</option>`).join('')}</optgroup>
+      <optgroup label="Boards">
+        ${(S.projects||[]).filter(p=>p.status!=='archived').map(p=>{const w=wsById(p.workspace_id);
+          return `<option value="p:${p.id}" ${_ca.scope==='p:'+p.id?'selected':''}>${esc(p.name)}${w?` — ${esc(w.name)}`:''}</option>`;}).join('')}</optgroup>
+    </select>
+    <div style="margin-top:18px;padding:12px 14px;background:var(--gray-soft);border-radius:10px;font-size:13.5px;color:var(--ink2)" id="ca-preview">
+      ${esc(caSentence(_ca))}<span style="color:var(--ink3)"> · ${_ca.trigger==='due_date_arrives'? 'checked every 15 minutes, fires once per task':'fires the moment it happens'}</span>
+    </div>`;
+}
+async function caSave(){
+  const act = CA_ACTIONS.find(a=>a.key===_ca.action)||{};
+  const trg = CA_TRIGGERS.find(t=>t.key===_ca.trigger)||{};
+  const pid = _ca.scope.startsWith('p:')? _ca.scope.slice(2) : null;
+  const wid = _ca.scope.startsWith('w:')? _ca.scope.slice(2) : null;
+  if(act.cfg==='person' && !_ca.cfg.user_id) return toast('Pick who to '+(_ca.action==='assign_person'?'assign':'notify'), true);
+  if(act.cfg==='group' && !pid) return toast('Choose a board — groups belong to a board', true);
+  if(act.cfg==='group' && !_ca.cfg.group_id) return toast('Pick the group to move to', true);
+  if(trg.cond==='field' && !pid) return toast('Choose a board — columns belong to a board', true);
+  if(trg.cond==='field' && !_ca.cond.field_id) return toast('Pick which column to watch', true);
+  if(act.cfg==='field' && !pid) return toast('Choose a board — columns belong to a board', true);
+  if(act.cfg==='field' && !_ca.cfg.field_id) return toast('Pick which column to set', true);
+  if(act.cfg==='field' && !_ca.cfg.value) return toast('Pick the value to set', true);
+  const condition = {};
+  if(trg.cond==='status' || trg.cond==='priority'){ if(_ca.cond.to) condition.to = _ca.cond.to; }
+  if(trg.cond==='group' && pid && _ca.cond.group_id) condition.group_id = _ca.cond.group_id;
+  if(trg.cond==='field'){ condition.field_id = _ca.cond.field_id; if(_ca.cond.to) condition.to = _ca.cond.to; }
+  const cfg = {};
+  if(act.cfg==='person') cfg.user_id = _ca.cfg.user_id;
+  if(act.cfg==='status') cfg.status = _ca.cfg.status||'todo';
+  if(act.cfg==='priority') cfg.priority = _ca.cfg.priority||'urgent';
+  if(act.cfg==='group') cfg.group_id = _ca.cfg.group_id;
+  if(act.cfg==='field'){ cfg.field_id = _ca.cfg.field_id; cfg.value = _ca.cfg.value; }
+  if(act.cfg==='days') cfg.days = Math.max(0, parseInt(_ca.cfg.days??1,10)||0);
+  const payload = {workspace_id:wid, project_id:pid, trigger_key:_ca.trigger, condition,
+                   action_key:_ca.action, action_config:cfg, name:caSentence(_ca)};
+  const {error} = _ca.id
+    ? await db.from('custom_automations').update(payload).eq('id',_ca.id)
+    : await db.from('custom_automations').insert(payload);
+  if(error) return toast(error.message, true);
+  toast(_ca.id? 'Automation updated':'Automation added — it is live now');
+  closeModals(); autoRerender();
+}
+async function caToggle(id, on){
+  const {error} = await db.from('custom_automations').update({enabled:on}).eq('id',id);
+  if(error){ toast(error.message, true); autoRerender(); return; }
+  const c=(S._customAutos||[]).find(x=>x.id===id); if(c) c.enabled=on;
+  toast(on? 'Automation on':'Automation off');
+}
+async function caDelete(id){
+  const {error} = await db.from('custom_automations').delete().eq('id',id);
+  if(error) return toast(error.message, true);
+  toast('Automation removed'); autoRerender();
+}
+function inviteUserModal(){
+  const m = modal(`<div class="modal-head"><h2>Add user</h2><button class="x" onclick="closeModals()">✕</button></div>
+    <div class="modal-body">
+      <label>Full name <span class="req">*</span></label><input id="iu-name" placeholder="e.g. Somchai P.">
+      <label>Email <span class="req">*</span></label><input id="iu-email" type="email" placeholder="name@crea.asia or partner email">
+      <div class="field-grid">
+        <div><label>Role</label><select id="iu-role">
+          <option value="internal">Internal staff — full edit in their workspaces</option>
+          <option value="requester">Requester — view, raise tasks/tickets &amp; comment only</option>
+          <option value="management">Management — sees all workspaces</option>
+          <option value="partner">Partner (external)</option><option value="freelancer">Freelancer (external)</option>
+          <option value="admin">Admin — everything</option></select></div>
+        <div><label>Temporary password <span class="req">*</span></label><input id="iu-pass" value="${'Crea'+Math.random().toString(36).slice(2,8)+'!'}"></div>
+      </div>
+      <label style="margin-top:14px">Workspaces they can open <span style="font-weight:400;color:var(--ink3)">— tick as many as you need</span></label>
+      <div id="iu-ws">${S.workspaces.map(w=>`<div class="chk"><input type="checkbox" data-wid="${w.id}">
+        <span class="ws-dot" style="display:inline-block;background:${w.color}"></span><span>${esc(w.name)}</span></div>`).join('') || '<div style="font-size:12.5px;color:var(--ink3)">No workspaces yet.</div>'}</div>
+      <p id="iu-wsnote" style="margin-top:8px;font-size:12px;color:var(--ink3);display:none">Admin and management see every workspace — these ticks are ignored for those roles.</p>
+      <p style="margin-top:12px;font-size:12.5px;color:var(--ink2)">Share the email + temporary password with them directly. They can change it after signing in with the key button in the sidebar.</p>
+    </div>
+    <div class="modal-foot"><button class="btn btn-ghost" onclick="closeModals()">Cancel</button><button class="btn btn-primary" id="iu-save">Create account</button></div>`);
+  const roleSel = m.querySelector('#iu-role');
+  const syncWsNote = ()=>{
+    const sup = roleSel.value==='admin' || roleSel.value==='management';
+    m.querySelector('#iu-ws').style.opacity = sup? '.4':'1';
+    m.querySelectorAll('#iu-ws input').forEach(i=> i.disabled = sup);
+    m.querySelector('#iu-wsnote').style.display = sup? 'block':'none';
+  };
+  roleSel.onchange = syncWsNote; syncWsNote();
+  m.querySelector('#iu-save').onclick = async ()=>{
+    const full_name=m.querySelector('#iu-name').value.trim(), email=m.querySelector('#iu-email').value.trim(),
+          role=m.querySelector('#iu-role').value, password=m.querySelector('#iu-pass').value;
+    if(!full_name||!email||password.length<8) return toast('Fill name, email, and a password of 8+ chars', true);
+    const btn=m.querySelector('#iu-save'); btn.disabled=true; btn.textContent='Creating…';
+    try{
+      const res = await fetch(ADMIN_API+'/create-user', {method:'POST',
+        headers:{'Content-Type':'application/json','Authorization':'Bearer '+S.session.access_token, 'apikey':SUPABASE_ANON},
+        body:JSON.stringify({email, password, full_name, role})});
+      const out = await res.json();
+      if(!res.ok) throw new Error(out.error||'Failed');
+      // roles the server does not yet know about are applied straight to the profile
+      if(out.user_id && role==='requester') await db.from('profiles').update({role:'requester'}).eq('id', out.user_id);
+      // assign every ticked workspace — one person, as many workspaces as needed
+      const wids = [...m.querySelectorAll('#iu-ws input[data-wid]:checked')].map(i=>i.dataset.wid);
+      if(out.user_id && wids.length && role!=='admin' && role!=='management'){
+        const {error:wmErr} = await db.from('workspace_members').insert(wids.map(workspace_id=>({workspace_id, user_id:out.user_id})));
+        if(wmErr) toast('User created, but workspaces failed: '+wmErr.message, true);
+      }
+      closeModals(); toast('User created'+(wids.length&&role!=='admin'&&role!=='management'? ` · ${wids.length} workspace${wids.length>1?'s':''}`:'')); await refreshCore(); renderAdmin();
+    }catch(e){ toast(e.message, true); btn.disabled=false; btn.textContent='Create account'; }
+  };
+}
+function editTypeModal(id, wsDefault){
+  const t = id? (window._allTypes||[]).find(x=>x.id===id) : null;
+  const FT=['text','textarea','number','date','select','multiselect','brand'];
+  const wsOpts = (sel)=>'<option value="">— all staff (no routing) —</option>'+S.workspaces.map(w=>`<option value="${w.id}" ${w.id===sel?'selected':''}>${esc(w.name)}</option>`).join('');
+  const fieldRow = (f)=>`<div class="tf-row" data-key="${esc(f?.key||'')}" style="display:flex;gap:6px;margin-bottom:6px;align-items:center">
+    <input data-fr="label" placeholder="Label" value="${esc(f?.label||'')}" style="flex:2">
+    <select data-fr="type" style="flex:1;width:auto">${FT.map(x=>`<option ${x===(f?.type||'text')?'selected':''}>${x}</option>`).join('')}</select>
+    <input data-fr="options" placeholder="Options (comma)" value="${esc((f?.options||[]).join(', '))}" style="flex:2">
+    <label style="display:flex;align-items:center;gap:4px;margin:0;font-size:11px">Req<input type="checkbox" data-fr="required" ${f?.required?'checked':''} style="width:14px;height:14px"></label>
+    <button onclick="this.parentElement.remove()" style="color:var(--ink3)">✕</button></div>`;
+  window._tyFieldRow = fieldRow;
+  const m = modal(`<div class="modal-head"><h2>${t?'Edit':'New'} request type</h2><button class="x" onclick="closeModals()">✕</button></div>
+    <div class="modal-body">
+      <label>Name <span class="req">*</span></label><input id="ty-name" value="${esc(t?.name||'')}">
+      <label>Description</label><input id="ty-desc" value="${esc(t?.description||'')}">
+      <div class="field-grid">
+        <div><label>SLA (hours)</label><input id="ty-sla" type="number" value="${t?.sla_hours??48}"></div>
+        <div><label>Routes to workspace</label><select id="ty-ws">${wsOpts(t? t.default_workspace_id : (wsDefault||null))}</select></div>
+      </div>
+      <div style="display:flex;gap:22px;margin-top:14px;flex-wrap:wrap">
+        <label style="display:flex;align-items:center;gap:7px;margin:0;color:var(--ink)"><input type="checkbox" id="ty-appr" ${t?.approval_required?'checked':''} style="width:15px;height:15px">Requires approval</label>
+        <label style="display:flex;align-items:center;gap:7px;margin:0;color:var(--ink)"><input type="checkbox" id="ty-pub" ${t?.public_enabled?'checked':''} style="width:15px;height:15px">Public form link</label>
+      </div>
+      ${t?.public_token? `<div style="margin-top:10px;font-size:12px;color:var(--ink2);word-break:break-all">Form link: <a href="${location.origin+location.pathname}#/f/${t.public_token}" target="_blank" rel="noopener">${location.origin+location.pathname}#/f/${t.public_token}</a></div>`:''}
+      <label>Form fields</label>
+      <div id="ty-fields">${(t?.fields||[]).map(fieldRow).join('')}</div>
+      <button class="btn btn-ghost btn-sm" id="ty-addf" style="margin-top:6px">＋ Add field</button>
+    </div>
+    <div class="modal-foot">
+      ${t? `<button class="btn btn-ghost" id="ty-toggle">${t.active?'Deactivate':'Activate'}</button>`:''}
+      <button class="btn btn-ghost" onclick="closeModals()">Cancel</button>
+      <button class="btn btn-primary" id="ty-save">Save</button></div>`, true);
+  m.querySelector('#ty-addf').onclick = ()=> m.querySelector('#ty-fields').insertAdjacentHTML('beforeend', fieldRow(null));
+  m.querySelector('#ty-toggle')?.addEventListener('click', async ()=>{
+    const {error} = await db.from('request_types').update({active:!t.active}).eq('id',t.id);
+    if(error) return toast(error.message, true);
+    closeModals(); toast(t.active?'Type deactivated':'Type activated'); await refreshCore(); renderAdmin();
+  });
+  m.querySelector('#ty-save').onclick = async ()=>{
+    const name = m.querySelector('#ty-name').value.trim(); if(!name) return toast('Name required', true);
+    const fields = [...m.querySelectorAll('.tf-row')].map(r=>{
+      const label=r.querySelector('[data-fr=label]').value.trim();
+      if(!label) return null;
+      const type=r.querySelector('[data-fr=type]').value;
+      const options=r.querySelector('[data-fr=options]').value.split(',').map(s=>s.trim()).filter(Boolean);
+      const required=r.querySelector('[data-fr=required]').checked;
+      const key = r.dataset.key || label.toLowerCase().replace(/[^a-z0-9]+/g,'_').replace(/^_+|_+$/g,'') || ('f'+Math.random().toString(36).slice(2,6));
+      const f={key,label,type,required};
+      if(type==='select'||type==='multiselect') f.options=options;
+      return f;
+    }).filter(Boolean);
+    const payload = {name, description:m.querySelector('#ty-desc').value.trim(), sla_hours:parseInt(m.querySelector('#ty-sla').value)||48,
+      default_workspace_id:m.querySelector('#ty-ws').value||null, approval_required:m.querySelector('#ty-appr').checked,
+      public_enabled:m.querySelector('#ty-pub').checked, fields};
+    let error;
+    if(t) ({error} = await db.from('request_types').update(payload).eq('id',t.id));
+    else ({error} = await db.from('request_types').insert(Object.assign({}, payload, {position:100})));
+    if(error) return toast(error.message, true);
+    closeModals(); toast('Request type saved'); await refreshCore();
+    if(S.route.view==='admin') renderAdmin();
+  };
+}
+async function toggleBrand(id, active){
+  const {error} = await db.from('brands').update({active}).eq('id',id);
+  if(error) return toast(error.message, true);
+  toast(active?'Brand reactivated':'Brand offboarded'); await refreshCore(); renderAdmin();
+}
+async function setRole(uid, role){
+  const {error} = await db.from('profiles').update({role}).eq('id',uid);
+  if(error) return toast(error.message, true);
+  toast('Role updated'); await refreshCore();
+}
+async function toggleActive(uid, active){
+  const {error} = await db.from('profiles').update({active}).eq('id',uid);
+  if(error) return toast(error.message, true);
+  toast(active?'User activated':'User deactivated'); await refreshCore(); renderAdmin();
+}
+async function resetPassword(uid, name){
+  const p = prompt(`New temporary password for ${name}:`, 'Crea'+Math.random().toString(36).slice(2,8)+'!');
+  if(!p || p.length<8) return;
+  try{
+    const res = await fetch(ADMIN_API+'/reset-password', {method:'POST',
+      headers:{'Content-Type':'application/json','Authorization':'Bearer '+S.session.access_token, 'apikey':SUPABASE_ANON},
+      body:JSON.stringify({user_id:uid, password:p})});
+    const out = await res.json();
+    if(!res.ok) throw new Error(out.error||'Failed');
+    toast('Password reset — share it with them');
+  }catch(e){ toast(e.message, true); }
+}
+const WS_COLORS=['#0F766E','#3E5C95','#8C5A3B','#5A6B4F','#6E56B8','#A8770E','#7D3C55','#C2434F','#12915E','#2B6CB0'];
+function wsMenu(anchor, wid){
+  const w = wsById(wid); if(!w) return;
+  const mine = canManageWs(wid);
+  const items = [{label:'New board', fn:()=>newProjectModal(wid)}];
+  if(mine){ items.push('-');
+            items.push({label:'Rename / edit', fn:()=>editWorkspaceModal(wid)});
+            items.push({label:'Members', fn:()=>teamMembersModal(wid)}); }
+  else items.push({label:`Owned by ${ownerNames(wsOwnerIds(wid))}`, fn:()=>{}});
+  if(canDeleteWs()){ items.push('-'); items.push({label:'Delete workspace', danger:true, fn:()=>deleteWorkspaceModal(wid)}); }
+  ctxMenu(anchor, items);
+}
+function editWorkspaceModal(wid){
+  const w = wsById(wid); if(!w) return;
+  const m = modal(`<div class="modal-head"><h2>Edit workspace</h2><button class="x" onclick="closeModals()">✕</button></div>
+    <div class="modal-body">
+      <label>Name <span class="req">*</span></label><input id="ew-name" value="${esc(w.name)}">
+      <label>Description</label><input id="ew-desc" value="${esc(w.description||'')}">
+      <label style="margin-top:14px">Workspace owners</label>
+      <div style="display:flex;align-items:center;gap:8px;margin-top:4px;flex-wrap:wrap">
+        ${avatarStack(wsOwnerIds(wid))}
+        <span style="font-size:13px;color:var(--ink2);flex:1;min-width:120px">${esc(ownerNames(wsOwnerIds(wid)))}</span>
+        <button type="button" class="btn btn-ghost btn-sm" id="ew-owners">Manage owners</button>
+      </div>
+      <div style="font-size:12px;color:var(--ink3);margin-top:4px">Owners and admins rename this workspace, manage its members, and manage every board inside it. <b>Only an admin can delete the workspace itself.</b></div>
+      <label style="margin-top:14px">Colour</label>
+      <div id="ew-cols" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:4px">
+        ${WS_COLORS.map(c=>`<span data-c="${c}" style="width:26px;height:26px;border-radius:50%;background:${c};cursor:pointer;box-shadow:${c===w.color?'0 0 0 3px #fff,0 0 0 5px '+c:'none'}"></span>`).join('')}
+      </div>
+    </div>
+    <div class="modal-foot"><button class="btn btn-ghost" onclick="closeModals()">Cancel</button><button class="btn btn-primary" id="ew-save">Save</button></div>`);
+  let colour = w.color;
+  m.querySelector('#ew-owners').onclick = ()=>{ closeModals(); teamMembersModal(wid); };
+  m.querySelectorAll('#ew-cols span').forEach(s=> s.onclick=()=>{
+    colour = s.dataset.c;
+    m.querySelectorAll('#ew-cols span').forEach(x=> x.style.boxShadow = x.dataset.c===colour? '0 0 0 3px #fff,0 0 0 5px '+colour : 'none');
+  });
+  m.querySelector('#ew-save').onclick = async ()=>{
+    const name = m.querySelector('#ew-name').value.trim(); if(!name) return toast('Name required', true);
+    const upd = {name, description:m.querySelector('#ew-desc').value.trim(), color:colour};
+    const {error} = await db.from('workspaces').update(upd).eq('id',wid);
+    if(error) return toast(error.message, true);
+    closeModals(); toast('Workspace updated'); await refreshCore(); renderSidebar();
+    if(S.route.view==='admin') renderAdmin(); else if(S.route.view==='ws') renderWorkspace(wid, S.route.tab);
+  };
+}
+async function deleteWorkspaceModal(wid){
+  const w = wsById(wid); if(!w) return;
+  // An owner runs everything inside a workspace, but deleting it destroys every
+  // board and task in it, so that stays with admins.
+  if(!canDeleteWs()) return toast('Only an admin can delete a workspace. As an owner you can rename it, manage its members and delete the boards inside it.', true);
+  const projs = S.projects.filter(p=>p.workspace_id===wid);
+  let nTasks = 0;
+  if(projs.length){
+    const {count} = await db.from('tasks').select('id',{count:'exact',head:true}).in('project_id', projs.map(p=>p.id));
+    nTasks = count||0;
+  }
+  const m = modal(`<div class="modal-head"><h2>Delete “${esc(w.name)}”?</h2><button class="x" onclick="closeModals()">✕</button></div>
+    <div class="modal-body">
+      <div class="danger-note"><b>This cannot be undone.</b> Deleting this workspace also deletes everything inside it.</div>
+      <div style="display:flex;gap:26px;margin:14px 0 16px">
+        <div><div style="font-size:26px;font-weight:800;line-height:1">${projs.length}</div><div style="font-size:12px;color:var(--ink3)">board${projs.length===1?'':'s'}</div></div>
+        <div><div style="font-size:26px;font-weight:800;line-height:1;color:${nTasks?'var(--red)':'inherit'}">${nTasks}</div><div style="font-size:12px;color:var(--ink3)">task${nTasks===1?'':'s'}</div></div>
+      </div>
+      ${projs.length? `<div style="font-size:13px;color:var(--ink2);margin-bottom:14px">Boards that will go: ${projs.slice(0,6).map(p=>'<b>'+esc(p.name)+'</b>').join(', ')}${projs.length>6?' and '+(projs.length-6)+' more':''}.</div>`:''}
+      <label>Type the workspace name to confirm</label>
+      <input id="dw-confirm" autocomplete="off" placeholder="${esc(w.name)}">
+    </div>
+    <div class="modal-foot"><button class="btn btn-ghost" onclick="closeModals()">Cancel</button>
+      <button class="btn btn-danger" id="dw-go" disabled>Delete workspace</button></div>`);
+  const inp=m.querySelector('#dw-confirm'), go=m.querySelector('#dw-go');
+  inp.oninput = ()=>{ go.disabled = inp.value.trim().toLowerCase() !== w.name.trim().toLowerCase(); };
+  go.onclick = async ()=>{
+    go.disabled=true; go.textContent='Deleting…';
+    const {data, error} = await db.from('workspaces').delete().eq('id',wid).select('id');
+    if(error){ go.disabled=false; go.textContent='Delete workspace'; return toast(error.message, true); }
+    if(!data || !data.length){ go.disabled=false; go.textContent='Delete workspace'; return toast('Nothing was deleted — only an admin can delete a workspace', true); }
+    logActivity('workspace', wid, 'delete', {name:w.name, projects:projs.length, tasks:nTasks});
+    closeModals(); toast('Workspace deleted'); await refreshCore();
+    if(S.route.view==='ws' && S.route.id===wid) location.hash='#/home'; else { renderSidebar(); if(S.route.view==='admin') renderAdmin(); }
+  };
+  setTimeout(()=>inp.focus(), 30);
+}
+function newWorkspaceModal(){
+  const m = modal(`<div class="modal-head"><h2>New workspace</h2><button class="x" onclick="closeModals()">✕</button></div>
+    <div class="modal-body">
+      <label>Workspace name <span class="req">*</span></label><input id="nw-name" placeholder="e.g. Livestream Squad">
+      <label>Description</label><input id="nw-desc">
+      <p style="margin-top:12px;font-size:12.5px;color:var(--ink2)">You'll be added as a member automatically. Add colleagues from the workspace page → Members.</p>
+    </div>
+    <div class="modal-foot"><button class="btn btn-ghost" onclick="closeModals()">Cancel</button><button class="btn btn-primary" id="nw-save">Create workspace</button></div>`);
+  m.querySelector('#nw-save').onclick = async ()=>{
+    const name=m.querySelector('#nw-name').value.trim(); if(!name) return toast('Name required', true);
+    const colors=['#0F766E','#3E5C95','#8C5A3B','#5A6B4F','#6E56B8','#A8770E','#7D3C55'];
+    const {data, error} = await db.from('workspaces').insert({name,
+      description:m.querySelector('#nw-desc').value.trim(), color:colors[Math.floor(Math.random()*colors.length)],
+      position:S.workspaces.length+1}).select().single();
+    if(error) return toast(error.message, true);
+    closeModals(); toast('Workspace created'); await refreshCore(); renderSidebar();
+    if(S.route.view==='admin') renderAdmin(); else if(data) location.hash='#/ws/'+data.id;
+  };
+}
+
+/* ================= PLATFORM (SaaS console) ================= */
+async function renderPlatform(){
+  if(!S.me.platform_admin){ location.hash='#/home'; return; }
+  setTopbar('Platform');
+  const C=$('#content'); C.innerHTML='<div class="empty">Loading…</div>';
+  const [{data:cos}, {data:pf}] = await Promise.all([
+    db.from('companies').select('*').order('created_at'),
+    db.from('profiles').select('id, company_id, active'),
+  ]);
+  const counts = {};
+  (pf||[]).forEach(p=>{ if(p.company_id && p.active){ counts[p.company_id]=(counts[p.company_id]||0)+1; } });
+  const PLANS=['internal','trial','starter','pro','enterprise'];
+  const STATS=['trial','active','past_due','suspended','cancelled'];
+  C.innerHTML = `
+    <div class="page-head"><div><h1>Platform</h1><div class="sub">Customer companies, plans and subscription status</div></div></div>
+    <div class="stat-row">
+      <div class="stat"><div class="n accent">${(cos||[]).length}</div><div class="l">Companies</div></div>
+      <div class="stat"><div class="n green">${(cos||[]).filter(c=>c.status==='active').length}</div><div class="l">Active subscriptions</div></div>
+      <div class="stat"><div class="n amber">${(cos||[]).filter(c=>c.status==='trial').length}</div><div class="l">On trial</div></div>
+      <div class="stat"><div class="n">${(pf||[]).filter(p=>p.active).length}</div><div class="l">Total active users</div></div>
+    </div>
+    <div class="card"><table class="tbl"><thead><tr><th>Company</th><th>Plan</th><th>Status</th><th>Seats</th><th>Users</th><th>Trial ends</th><th></th></tr></thead><tbody>
+    ${(cos||[]).map(c=>`<tr id="co-${c.id}">
+      <td style="font-weight:600">${esc(c.name)}<div style="font-size:11px;color:var(--ink3)">${esc(c.slug||'')} · since ${fmtDate(c.created_at)}</div></td>
+      <td><select data-k="plan" style="width:auto;padding:5px 8px">${PLANS.map(p=>`<option ${p===c.plan?'selected':''}>${p}</option>`).join('')}</select></td>
+      <td><select data-k="status" style="width:auto;padding:5px 8px">${STATS.map(s=>`<option ${s===c.status?'selected':''}>${s}</option>`).join('')}</select></td>
+      <td><input data-k="seats" type="number" value="${c.seats}" style="width:70px;padding:5px 8px"></td>
+      <td>${counts[c.id]||0}</td>
+      <td style="color:var(--ink2)">${c.trial_ends_at? fmtDate(c.trial_ends_at):'—'}</td>
+      <td style="text-align:right"><button class="btn btn-ghost btn-sm" onclick="savePlatformCo('${c.id}')">Save</button></td>
+    </tr>`).join('')}</tbody></table></div>
+    <p style="margin-top:12px;font-size:12.5px;color:var(--ink2)">Billing is manual for now — set plan/status here when a customer pays (or stops paying). Suspended and cancelled companies are locked out at sign-in. Stripe checkout can be wired in later.</p>`;
+}
+async function savePlatformCo(id){
+  const row = document.getElementById('co-'+id); if(!row) return;
+  const plan = row.querySelector('select[data-k=plan]').value;
+  const status = row.querySelector('select[data-k=status]').value;
+  const seats = parseInt(row.querySelector('input[data-k=seats]').value)||10;
+  const {error} = await db.from('companies').update({plan, status, seats}).eq('id',id);
+  if(error) return toast(error.message, true);
+  toast('Company updated');
+}
+
+/* ================= INIT ================= */
+(async ()=>{
+  if(location.hash.startsWith('#/f/')){ renderPublicForm(location.hash.slice(4).split('?')[0]); return; }
+  const {data:{session}} = await db.auth.getSession();
+  S.session = session;
+  if(session) await boot();
+  else $('#login-screen').classList.remove('hidden');
+})();
+</script>
+</body>
+</html>
+
+<script>
+/* ================= TEAMS (admin) =================
+   A team is a saved group of people, used to bulk-tick members in the
+   workspace and board pickers. It grants nothing by itself. */
+function editTeamModal(tid){
+  const t = tid? teamById(tid) : null;
+  let colour = t? (t.color||TEAM_COLORS[0]) : TEAM_COLORS[0];
+  const m = modal(`<div class="modal-head"><h2>${t?'Rename team':'New team'}</h2><button class="x" onclick="closeModals()">✕</button></div>
+    <div class="modal-body">
+      <label>Team name <span class="req">*</span></label>
+      <input id="tt-name" value="${t? esc(t.name):''}" placeholder="e.g. Customer Service">
+      <label style="margin-top:14px">Colour</label>
+      <div id="tt-cols" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:4px">
+        ${TEAM_COLORS.map(c=>`<span data-c="${c}" style="width:26px;height:26px;border-radius:50%;background:${c};cursor:pointer;box-shadow:${c===colour?'0 0 0 3px #fff,0 0 0 5px '+c:'none'}"></span>`).join('')}
+      </div>
+    </div>
+    <div class="modal-foot"><button class="btn btn-ghost" onclick="closeModals()">Cancel</button><button class="btn btn-primary" id="tt-save">Save</button></div>`);
+  m.querySelectorAll('#tt-cols span').forEach(s=> s.onclick=()=>{
+    colour = s.dataset.c;
+    m.querySelectorAll('#tt-cols span').forEach(x=> x.style.boxShadow = x.dataset.c===colour? '0 0 0 3px #fff,0 0 0 5px '+colour : 'none');
+  });
+  m.querySelector('#tt-save').onclick = async ()=>{
+    const name = m.querySelector('#tt-name').value.trim();
+    if(!name) return toast('Name required', true);
+    const {error} = t
+      ? await db.from('teams').update({name, color:colour}).eq('id', tid)
+      : await db.from('teams').insert({name, color:colour});
+    // The unique index is on (company, lower(name)) — say so in words.
+    if(error) return toast(/duplicate|unique/i.test(error.message)? `There is already a team called ${name}` : error.message, true);
+    closeModals(); toast(t? 'Team renamed':'Team created'); await refreshCore(); renderAdmin();
+  };
+}
+async function teamMembersEditModal(tid){
+  const t = teamById(tid); if(!t) return;
+  const inTeam = new Set(teamMemberIds(tid));
+  const pool = S.profiles.filter(p=>p.active && !(p.email||'').startsWith('forms+'))
+    .sort((a,b)=> (inTeam.has(b.id)) - (inTeam.has(a.id)) || (a.full_name||'').localeCompare(b.full_name||''));
+  const m = modal(`<div class="modal-head"><h2>People in ${esc(t.name)}</h2><button class="x" onclick="closeModals()">✕</button></div>
+    <div class="modal-body">
+      ${searchBoxHTML('tp-q','Search by name, role, or email address')}
+      <div id="tp-count" style="font-size:12.5px;color:var(--ink2);margin:2px 0"></div>
+      ${pool.map(p=>`<div class="chk" data-search="${esc(searchKey(p))}">
+        <input type="checkbox" data-uid="${p.id}" ${inTeam.has(p.id)?'checked':''}>
+        ${avatar(p,true)} <span style="flex:1">${esc(p.full_name||p.email)}
+          <span style="color:var(--ink3)">· ${esc(p.email)}</span></span></div>`).join('')
+      || '<div class="empty">No active accounts yet.</div>'}
+    </div>
+    <div class="modal-foot"><button class="btn btn-ghost" onclick="closeModals()">Close</button><button class="btn btn-primary" id="tp-save">Save</button></div>`);
+  wireMemberSearch(m, 'tp-q');
+  const boxes = [...m.querySelectorAll('input[data-uid]')], countEl = m.querySelector('#tp-count');
+  const recount = ()=>{ countEl.textContent = `${boxes.filter(b=>b.checked).length} of ${boxes.length} people in this team`; };
+  boxes.forEach(b=> b.addEventListener('change', recount)); recount();
+  m.querySelector('#tp-save').onclick = async ()=>{
+    const want = new Set(boxes.filter(b=>b.checked).map(b=>b.dataset.uid));
+    const add = [...want].filter(u=>!inTeam.has(u)).map(user_id=>({team_id:tid, user_id}));
+    const rm  = [...inTeam].filter(u=>!want.has(u));
+    if(add.length){ const {error} = await db.from('team_members').insert(add); if(error) return toast(error.message, true); }
+    if(rm.length){ const {error} = await db.from('team_members').delete().eq('team_id',tid).in('user_id',rm); if(error) return toast(error.message, true); }
+    closeModals(); toast('Team updated'); await refreshCore(); renderAdmin();
+  };
+}
+async function deleteTeamModal(tid){
+  const t = teamById(tid); if(!t) return;
+  const n = teamMemberIds(tid).length;
+  // Deleting a team takes nobody's access away — it is only a saved grouping.
+  if(!confirm(`Delete the team ${t.name}?`
+    + (n? ` Its ${n} ${n===1?'person keeps':'people keep'} every workspace and board they are on — only the grouping goes.`:''))) return;
+  const {error} = await db.from('teams').delete().eq('id', tid);
+  if(error) return toast(error.message, true);
+  toast('Team deleted'); await refreshCore(); renderAdmin();
+}
+</script>

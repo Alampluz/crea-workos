@@ -1,0 +1,1909 @@
+<script>
+/* ================= HOME (My Work) ================= */
+async function renderHome(){
+  setTopbar('My Work');
+  const C=$('#content');
+  C.innerHTML = '<div class="empty">Loading…</div>';
+  const [tks, reqs, apprs] = await Promise.all([
+    db.from('tasks').select('*').eq('assignee_id',S.me.id).neq('status','done').order('due_date',{ascending:true,nullsFirst:false}),
+    db.from('requests').select('*').eq('submitted_by',S.me.id).not('status','in',"(done,cancelled)").order('created_at',{ascending:false}),
+    db.from('approvals').select('*').eq('approver_id',S.me.id).eq('status','pending'),
+  ]);
+  const tasks = tks.data||[], requests = reqs.data||[], approvals = apprs.data||[];
+  const overdue = tasks.filter(t=>t.due_date && daysDiff(t.due_date)<0);
+  const today = tasks.filter(t=>t.due_date && daysDiff(t.due_date)===0);
+
+  const hello = new Date().getHours()<12?'Good morning':new Date().getHours()<17?'Good afternoon':'Good evening';
+  // Role tiers: admin & management land with the company pulse on top;
+  // everyone else's Home is already their personal tier.
+  let pulse = null;
+  if(['admin','management'].includes(S.me.role)){
+    const openSet = ['submitted','in_review','approved','in_progress','pending_info'];
+    const todayISO = new Date().toISOString().slice(0,10);
+    const [a,b,c,d] = await Promise.all([
+      db.from('tasks').select('id',{count:'exact',head:true}).neq('status','done').is('archived_at',null),
+      db.from('tasks').select('id',{count:'exact',head:true}).neq('status','done').is('archived_at',null).lt('due_date', todayISO),
+      db.from('requests').select('id',{count:'exact',head:true}).in('status', openSet),
+      db.from('requests').select('id',{count:'exact',head:true}).in('status', openSet).lt('sla_due_at', new Date().toISOString()).is('sla_paused_at',null),
+    ]);
+    pulse = {open:a.count||0, overdue:b.count||0, tickets:c.count||0, breach:d.count||0};
+  }
+  C.innerHTML = `
+    ${pulse? `<div class="section-title" style="margin-top:0;display:flex;align-items:center">Company pulse
+        <span style="flex:1"></span><button class="btn btn-ghost btn-sm" onclick="location.hash='#/dashboard'">Open dashboard</button></div>
+      <div class="stat-row">
+        <div class="stat"><div class="n accent">${pulse.open}</div><div class="l">Open tasks — everyone</div></div>
+        <div class="stat"><div class="n ${pulse.overdue?'red':''}">${pulse.overdue}</div><div class="l">Overdue — everyone</div></div>
+        <div class="stat"><div class="n">${pulse.tickets}</div><div class="l">Open tickets</div></div>
+        <div class="stat"><div class="n ${pulse.breach?'red':''}">${pulse.breach}</div><div class="l">SLA breached</div></div>
+      </div>`:''}
+    <div class="page-head"><div><h1>${hello}, ${esc(S.me.full_name.split(' ')[0])}</h1>
+      <div class="sub">${new Date().toLocaleDateString('en-GB',{weekday:'long', day:'numeric', month:'long', year:'numeric'})}</div></div>
+      <div class="actions"><button class="btn btn-primary" onclick="newRequestFlow()">＋ New request</button></div></div>
+    <div class="stat-row">
+      <div class="stat"><div class="n ${overdue.length?'red':''}">${overdue.length}</div><div class="l">Overdue tasks</div></div>
+      <div class="stat"><div class="n amber">${today.length}</div><div class="l">Due today</div></div>
+      <div class="stat"><div class="n accent">${tasks.length}</div><div class="l">Open tasks</div></div>
+      <div class="stat"><div class="n">${requests.length}</div><div class="l">My open requests</div></div>
+      <div class="stat"><div class="n ${approvals.length?'red':''}">${approvals.length}</div><div class="l">Waiting for my approval</div></div>
+    </div>
+    <div class="section-title">My tasks <span class="count">${tasks.length}</span></div>
+    <div class="card">${tasks.length? taskTable(tasks) : `<div class="empty">No open tasks assigned to you</div>`}</div>
+    <div class="section-title">My requests <span class="count">${requests.length}</span></div>
+    <div class="card">${requests.length? requestTable(requests) : `<div class="empty">No open requests yet</div>`}</div>
+    ${approvals.length? `<div class="section-title">Waiting for my approval <span class="count">${approvals.length}</span></div>
+      <div class="card">${approvalTable(approvals)}</div>`:''}
+  `;
+}
+function taskTable(tasks){
+  return `<table class="tbl"><thead><tr><th>Task</th><th>Board</th><th>Status</th><th>Priority</th><th>Due</th><th>Assignee</th></tr></thead><tbody>
+    ${tasks.map(t=>{
+      const p=projById(t.project_id);
+      return `<tr class="rowlink" onclick="openTask('${t.id}')">
+        <td style="font-weight:600">${esc(t.title)}</td>
+        <td style="color:var(--ink2)">${esc(p?p.name:'—')}</td>
+        <td>${statusChip(t.status)}</td><td>${prioChip(t.priority)}</td>
+        <td>${dueBadge(t.due_date, t.status==='done')||'<span style="color:var(--ink3)">—</span>'}</td>
+        <td>${avatar(prof(t.assignee_id), true)}</td></tr>`;
+    }).join('')}</tbody></table>`;
+}
+function requestTable(reqs){
+  return `<table class="tbl"><thead><tr><th>Request</th><th>Type</th><th>Status</th><th>SLA</th><th>Submitted by</th><th>Assigned</th></tr></thead><tbody>
+    ${reqs.map(r=>{
+      const rt=S.requestTypes.find(x=>x.id===r.request_type_id);
+      return `<tr class="rowlink" onclick="openRequest('${r.id}')">
+        <td style="font-weight:600">${r.ticket_no? `<span style="color:var(--ink3);font-weight:700;font-size:11.5px;margin-right:6px">WO-${r.ticket_no}</span>`:''}${esc(r.title)}</td>
+        <td style="color:var(--ink2)">${rt? esc(rt.name):'—'}</td>
+        <td>${reqStatusChip(r.status)}</td>
+        <td>${slaBadge(r.sla_due_at, r.status)}</td>
+        <td>${avatar(prof(r.submitted_by), true)}</td>
+        <td>${avatar(prof(r.assigned_to), true)}</td></tr>`;
+    }).join('')}</tbody></table>`;
+}
+function approvalTable(apprs){
+  return `<table class="tbl"><thead><tr><th>Approval</th><th>Requested by</th><th>Created</th><th></th></tr></thead><tbody>
+    ${apprs.map(a=>`<tr>
+      <td style="font-weight:600">${esc(a.title||'Approval')}</td>
+      <td>${avatar(prof(a.requested_by), true)} <span style="color:var(--ink2)">${esc(prof(a.requested_by)?.full_name||'')}</span></td>
+      <td style="color:var(--ink2)">${fmtDateTime(a.created_at)}</td>
+      <td style="text-align:right;white-space:nowrap">
+        ${a.request_id? `<button class="btn btn-ghost btn-sm" onclick="openRequest('${a.request_id}')">View</button>`:''}
+        ${a.task_id? `<button class="btn btn-ghost btn-sm" onclick="location.hash='#/task/${a.task_id}'">View</button>`:''}
+        <button class="btn btn-green btn-sm" onclick="decideApproval('${a.id}','approved')">Approve</button>
+        <button class="btn btn-danger btn-sm" onclick="decideApproval('${a.id}','rejected')">Reject</button></td>
+    </tr>`).join('')}</tbody></table>`;
+}
+
+/* ================= WORKSPACE ================= */
+/* Boards | Report — the two faces of a workspace. */
+function wsTabsHTML(wsId, active){
+  return `<div class="tabs" style="margin-bottom:18px;width:fit-content">
+    <button class="tab ${active==='boards'?'active':''}" onclick="location.hash='#/ws/${wsId}'">Boards</button>
+    <button class="tab ${active==='report'?'active':''}" onclick="location.hash='#/ws/${wsId}/report'">Report</button>
+    ${isStaff()? `<button class="tab ${active==='automations'?'active':''}" onclick="location.hash='#/ws/${wsId}/automations'">Automations</button>`:''}
+  </div>`;
+}
+async function renderWorkspace(id, tab){
+  const w = wsById(id); if(!w){ location.hash='#/home'; return; }
+  if(tab==='report') return renderWorkspaceReport(id);
+  if(tab==='automations') return renderWorkspaceAutomations(id);
+  widgetScope = null; widgetProjScope = null;
+  setTopbar(esc(w.name), (canManageWs(w.id)? `<button class="btn btn-ghost btn-sm" onclick="editWorkspaceModal('${w.id}')">Edit workspace</button>`:'')
+    + (isStaff()? `<button class="btn btn-ghost btn-sm" onclick="teamMembersModal('${w.id}')">Members</button>
+    <button class="btn btn-primary btn-sm" onclick="wsAddMenu(this,'${w.id}')">＋ Add</button>`:''));
+  const C=$('#content'); C.innerHTML='<div class="empty">Loading…</div>';
+  const projects = S.projects.filter(p=>p.workspace_id===id && p.status!=='archived');
+  const ids = projects.map(p=>p.id);
+  let counts = {};
+  if(ids.length){
+    const {data} = await db.from('tasks').select('project_id,status').in('project_id', ids);
+    (data||[]).forEach(t=>{ counts[t.project_id]=counts[t.project_id]||{open:0,done:0}; t.status==='done'?counts[t.project_id].done++:counts[t.project_id].open++; });
+  }
+  C.innerHTML = `
+    ${wsTabsHTML(id,'boards')}
+    <div class="page-head"><div><h1>${esc(w.name)}</h1><div class="sub">${esc(w.description)}</div></div></div>
+    ${projects.length? `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:14px">
+      ${projects.map(p=>{
+        const c = counts[p.id]||{open:0,done:0}; const total=c.open+c.done;
+        const pct = total? Math.round(c.done/total*100):0;
+        return `<div class="card" style="padding:16px;cursor:pointer" onclick="location.hash='#/project/${p.id}'">
+          <div style="display:flex;align-items:center;gap:9px;margin-bottom:6px">
+            <span class="ws-dot" style="background:${p.color};width:11px;height:11px"></span>
+            <b style="font-size:14.5px;flex:1">${esc(p.name)}</b>
+            ${visChip(p.visibility)}
+            ${p.status!=='active'? `<span class="chip" style="background:var(--gray-soft);color:var(--ink2)">${p.status.replace('_',' ')}</span>`:''}
+            ${canEdit()? `<span class="pj-menu" title="Board options" onclick="event.stopPropagation();projMenu(this,'${p.id}')">⋯</span>`:''}
+          </div>
+          <div style="color:var(--ink2);font-size:12.5px;min-height:18px;margin-bottom:12px">${esc(p.description||'')}</div>
+          <div style="display:flex;align-items:center;gap:10px;font-size:12px;color:var(--ink2)">
+            <div style="flex:1;height:6px;background:var(--gray-soft);border-radius:4px"><div style="width:${pct}%;height:100%;border-radius:4px;background:${p.color}"></div></div>
+            <span style="font-weight:700">${pct}%</span><span>${c.open} open</span>
+          </div></div>`;
+      }).join('')}</div>`
+    : `<div class="card empty">No boards yet in this workspace${isStaff()? ' — create the first one.':''}</div>`}`;
+}
+/* ---- Board visibility: private | collaborate | shareable ---- */
+const ico = p => `<svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${p}</svg>`;
+const VIS = {
+  private: {label:'Private',
+    icon: ico('<rect x="4.5" y="10.5" width="15" height="10" rx="2.5"/><path d="M8 10.5V7.5a4 4 0 0 1 8 0v3"/>'),
+    blurb:'Only the people you add to this board. Nobody else in the workspace sees it.'},
+  collaborate: {label:'Collaborate',
+    icon: ico('<circle cx="9" cy="8.5" r="3"/><path d="M3.5 19.5a5.5 5.5 0 0 1 11 0"/><path d="M16 6.2a3 3 0 0 1 0 5.6"/><path d="M17.4 14.6a5.2 5.2 0 0 1 3.1 4.9"/>'),
+    blurb:'Everyone in the workspace can open and work on it. This is the normal setting.'},
+  shareable: {label:'Shareable',
+    icon: ico('<circle cx="12" cy="12" r="8.5"/><path d="M3.5 12h17"/><path d="M12 3.5c2.2 2.4 3.4 5.4 3.4 8.5S14.2 18.1 12 20.5c-2.2-2.4-3.4-5.4-3.4-8.5S9.8 5.9 12 3.5Z"/>'),
+    blurb:'Everyone in the workspace, plus outside partners and freelancers you invite to this board.'},
+};
+const visChip = v=>{
+  const d = VIS[v] || VIS.collaborate;
+  if(v==='collaborate') return '';
+  return `<span class="chip vis-chip" title="${esc(d.blurb)}">${d.icon}${d.label}</span>`;
+};
+function visPickerHTML(id, cur){
+  return `<div class="vis-pick" id="${id}" data-sel="${cur||'collaborate'}">
+    ${Object.entries(VIS).map(([k,d])=>`<div class="vis-opt ${k===(cur||'collaborate')?'on':''}" data-v="${k}">
+      <div class="vis-t">${d.icon}${d.label}</div><div class="vis-b">${d.blurb}</div></div>`).join('')}
+  </div>`;
+}
+function wireVisPicker(root, id){
+  const box = root.querySelector('#'+id); if(!box) return;
+  box.querySelectorAll('.vis-opt').forEach(o=> o.onclick = ()=>{
+    box.dataset.sel = o.dataset.v;
+    box.querySelectorAll('.vis-opt').forEach(x=> x.classList.toggle('on', x===o));
+  });
+}
+/* monday-style "Add to workspace": everything you can create here, one menu. */
+function wsAddMenu(anchor, wid){
+  const items = [
+    {label:'Board — tasks in groups and columns', fn:()=>newProjectModal(wid)},
+    {label:'Report widget — chart on this workspace', fn:()=>{
+      const go=()=>widgetModal(null, wid);
+      if(S.route.view==='ws' && S.route.id===wid && S.route.tab==='report') go();
+      else { location.hash = '#/ws/'+wid+'/report'; setTimeout(go, 600); }
+    }},
+  ];
+  if(isAdmin()) items.push({label:'Form — public request form routed here', fn:()=>editTypeModal(null, wid)});
+  ctxMenu(anchor, items);
+}
+/* ---- Boards (projects): rename, recolour, delete ---- */
+const PJ_COLORS=['#00B894','#0984E3','#6C5CE7','#E17055','#E84393','#D63031','#FDCB6E','#00CEC9','#0F766E','#7D3C55'];
+const canDeleteBoard = pid => canManageBoard(pid);   // kept for call sites; ownership rules now
+function projMenu(anchor, pid){
+  const p = (S.projects||[]).find(x=>x.id===pid); if(!p) return;
+  const mine = canManageBoard(pid);
+  const items = [];
+  if(mine) items.push({label:'Rename / edit board', fn:()=>editProjectModal(pid)});
+  if(isStaff()) items.push({label:'Partner access', fn:()=>projectMembersModal(pid)});
+  if(mine){ items.push({label:'Save as template', fn:()=>saveTemplateModal(pid)});
+            items.push({label:'Recurring tasks', fn:()=>recurringModal(pid)}); }
+  if(mine){ items.push('-'); items.push({label:'Delete board', danger:true, fn:()=>deleteProjectModal(pid)}); }
+  if(!items.length) items.push({label:`Owned by ${ownerNames(boardOwnerIds(pid))}`, fn:()=>{}});
+  ctxMenu(anchor, items);
+}
+/* ---- Board templates: snapshot groups/columns/tasks, replay onto a new board ---- */
+async function saveTemplateModal(pid){
+  const p = projById(pid); if(!p) return;
+  // Use the loaded board when we're on it; otherwise fetch a fresh snapshot.
+  let groups=S._groups||[], fields=S._fields||[], tasks=S._tasksAll||[];
+  if(!(S.route.view==='project' && S.route.id===pid)){
+    const [{data:g},{data:f},{data:t}] = await Promise.all([
+      db.from('project_groups').select('*').eq('project_id',pid).order('position').order('created_at'),
+      db.from('project_fields').select('*').eq('project_id',pid).order('position').order('created_at'),
+      db.from('tasks').select('*').eq('project_id',pid).order('position'),
+    ]);
+    groups=g||[]; fields=f||[]; tasks=t||[];
+  }
+  const m = modal(`<div class="modal-head"><h2>Save as template</h2><button class="x" onclick="closeModals()">✕</button></div>
+    <div class="modal-body">
+      <label>Template name <span class="req">*</span></label><input id="tp-name" value="${esc(p.name)}">
+      <div style="font-size:12.5px;color:var(--ink3);margin-top:8px">Saves this board's groups, columns and tasks (statuses and priorities included, archived tasks left out). Pick it under "Start from" when creating a board.</div>
+    </div>
+    <div class="modal-foot"><button class="btn btn-ghost" onclick="closeModals()">Cancel</button><button class="btn btn-primary" id="tp-save">Save template</button></div>`);
+  m.querySelector('#tp-save').onclick = async ()=>{
+    const name = m.querySelector('#tp-name').value.trim(); if(!name) return toast('Name is required', true);
+    const gidx = {}; groups.forEach((g,i)=> gidx[g.id]=i);
+    const spec = {
+      groups: groups.map(g=>({name:g.name, color:g.color, position:g.position})),
+      fields: fields.map(f=>({label:f.label, ftype:f.ftype, options:f.options, position:f.position})),
+      tasks: tasks.filter(t=>!t.archived_at).map(t=>({title:t.title, status:t.status, priority:t.priority,
+        group_index: gidx[t.group_id] ?? null})),
+    };
+    const {error} = await db.from('board_templates').insert({name, spec});
+    if(error) return toast(error.message, true);
+    closeModals(); toast('Template saved');
+  };
+}
+/* Replays a template spec onto a freshly created board. Errors toast but the
+   board stays — a partial start beats losing the board. */
+async function applyTemplate(pid, spec){
+  let gids = [];
+  if((spec.groups||[]).length){
+    const {data:gs, error} = await db.from('project_groups').insert(spec.groups.map((g,i)=>(
+      {project_id:pid, name:g.name, color:g.color, position:g.position ?? i}))).select();
+    if(error) return toast(error.message, true);
+    gids = (gs||[]).map(g=>g.id);
+  }
+  if((spec.fields||[]).length){
+    const {error} = await db.from('project_fields').insert(spec.fields.map((f,i)=>(
+      {project_id:pid, label:f.label, ftype:f.ftype, options:f.options||[], position:f.position ?? i, created_by:S.me.id})));
+    if(error) return toast(error.message, true);
+  }
+  if((spec.tasks||[]).length){
+    const {error} = await db.from('tasks').insert(spec.tasks.map((t,i)=>(
+      {project_id:pid, title:t.title, status:t.status||'todo', priority:t.priority||'normal',
+       group_id: t.group_index==null? null : (gids[t.group_index]||null),
+       created_by:S.me.id, position:i+1})));
+    if(error) return toast(error.message, true);
+  }
+}
+/* ---- Recurring tasks: rules only — a 15-min DB sweep creates the tasks ---- */
+const RC_EVERY = {daily:'Every day', weekly:'Every week', monthly:'Every month'};
+function rcRow(r, groups){
+  const g = (groups||[]).find(x=>x.id===r.group_id);
+  return `<div class="rc-row" style="display:flex;align-items:center;gap:8px;padding:7px 0;font-size:13px;border-bottom:1px solid var(--line)">
+    <label class="sw"><input type="checkbox" ${r.enabled?'checked':''} onchange="rcToggle('${r.id}',this.checked,'${r.project_id}')"><span></span></label>
+    <b>${esc(r.title)}</b> ${prioChip(r.priority)}
+    <span style="color:var(--ink3);font-size:12px">${RC_EVERY[r.every]||esc(r.every)} · next ${esc(r.next_run||'—')}${g? ' · '+esc(g.name):''}${r.due_in_days? ` · due +${r.due_in_days}d`:''}</span>
+    <span style="margin-left:auto;display:flex;align-items:center;gap:8px">${avatar(prof(r.assignee_id), true)}
+      <span style="cursor:pointer;color:var(--ink3)" title="Delete rule" onclick="rcDelete('${r.id}','${r.project_id}')">✕</span></span>
+  </div>`;
+}
+async function recurringModal(pid){
+  const p = projById(pid); if(!p) return;
+  const [{data:rules},{data:groups}] = await Promise.all([
+    db.from('recurring_tasks').select('*').eq('project_id',pid).order('created_at'),
+    db.from('project_groups').select('*').eq('project_id',pid).order('position').order('created_at'),
+  ]);
+  S._rcGroups = groups||[];
+  const people = S.profiles.filter(u=>u.active && !(u.email||'').startsWith('forms+'));
+  const today = new Date().toISOString().slice(0,10);
+  const m = modal(`<div class="modal-head"><h2>Recurring tasks — ${esc(p.name)}</h2><button class="x" onclick="closeModals()">✕</button></div>
+    <div class="modal-body">
+      <div style="font-size:12.5px;color:var(--ink3);margin-bottom:6px">Each rule creates a fresh task on schedule — within 15 minutes of its next-run date.</div>
+      <div id="rc-list">${(rules||[]).map(r=>rcRow(r, groups||[])).join('') || '<div style="color:var(--ink3);font-size:13px;padding:6px 0">No recurring tasks on this board yet</div>'}</div>
+      <label style="margin-top:14px">New rule</label>
+      <input id="rc-title" placeholder="Task title, e.g. Weekly stock check">
+      <div class="field-grid">
+        <div><label>Group</label><select id="rc-group"><option value="">No group</option>${(groups||[]).map(g=>`<option value="${g.id}">${esc(g.name)}</option>`).join('')}</select></div>
+        <div><label>Priority</label><select id="rc-prio">${PRIORITIES.map(x=>`<option value="${x.k}" ${x.k==='normal'?'selected':''}>${x.label}</option>`).join('')}</select></div>
+        <div><label>Assignee</label><select id="rc-assignee"><option value="">Unassigned</option>${people.map(u=>`<option value="${u.id}">${esc(u.full_name)}</option>`).join('')}</select></div>
+        <div><label>Repeats</label><select id="rc-every">${Object.entries(RC_EVERY).map(([k,l])=>`<option value="${k}">${l}</option>`).join('')}</select></div>
+        <div><label>First run</label><input id="rc-next" type="date" value="${today}"></div>
+        <div><label>Due (days after created — 0 = none)</label><input id="rc-due" type="number" min="0" max="365" value="0"></div>
+      </div>
+    </div>
+    <div class="modal-foot"><button class="btn btn-ghost" onclick="closeModals()">Close</button><button class="btn btn-primary" id="rc-add">Add rule</button></div>`, true);
+  m.querySelector('#rc-add').onclick = async ()=>{
+    const title = m.querySelector('#rc-title').value.trim(); if(!title) return toast('Title is required', true);
+    const next_run = m.querySelector('#rc-next').value; if(!next_run) return toast('Pick a first run date', true);
+    const due_in_days = Math.min(365, Math.max(0, parseInt(m.querySelector('#rc-due').value,10)||0));
+    const {error} = await db.from('recurring_tasks').insert({
+      project_id:pid, group_id:m.querySelector('#rc-group').value||null, title, description:'',
+      priority:m.querySelector('#rc-prio').value, assignee_id:m.querySelector('#rc-assignee').value||null,
+      every:m.querySelector('#rc-every').value, next_run, due_in_days, enabled:true});
+    if(error) return toast(error.message, true);
+    toast('Recurring task added'); closeModals(); recurringModal(pid);
+  };
+}
+async function rcToggle(id, enabled, pid){
+  const {error} = await db.from('recurring_tasks').update({enabled}).eq('id',id);
+  if(error){ toast(error.message, true); closeModals(); recurringModal(pid); return; }
+  toast(enabled? 'Rule switched on':'Rule paused');
+}
+async function rcDelete(id, pid){
+  const {error} = await db.from('recurring_tasks').delete().eq('id',id);
+  if(error) return toast(error.message, true);
+  toast('Rule deleted'); closeModals(); recurringModal(pid);
+}
+function editProjectModal(pid){
+  const p = (S.projects||[]).find(x=>x.id===pid); if(!p) return;
+  const gate = p.approval_gate||{};
+  const canGate = canManageBoard(pid);
+  const gatePool = S.profiles.filter(u=>u.active && ['admin','internal','management'].includes(u.role) && !(u.email||'').startsWith('forms+'));
+  const gateSection = canGate? `
+      <label style="margin-top:14px">Sign-off</label>
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:4px">
+        <label class="sw"><input type="checkbox" id="ep-gate-on" ${gate.on?'checked':''}><span></span></label>
+        <span style="font-size:13px">Require sign-off before a task can be marked</span>
+        <select id="ep-gate-status" style="width:auto">${STATUSES.map(s=>`<option value="${s.k}" ${s.k===(gate.status||'done')?'selected':''}>${s.label}</option>`).join('')}</select>
+      </div>
+      <div id="ep-gate-appr" style="margin-top:8px" ${gate.on?'':'hidden'}>
+        <div style="font-size:12px;color:var(--ink3);margin-bottom:4px">Who usually signs off — they pre-fill the request picker</div>
+        ${gatePool.map(u=>`<div class="chk"><input type="checkbox" data-gapp="${u.id}" ${(gate.approvers||[]).includes(u.id)?'checked':''}>
+          ${avatar(u,true)} <span>${esc(u.full_name)}</span></div>`).join('')}
+      </div>`:'';
+  const m = modal(`<div class="modal-head"><h2>Edit board</h2><button class="x" onclick="closeModals()">✕</button></div>
+    <div class="modal-body">
+      <label>Board name <span class="req">*</span></label><input id="ep-name" value="${esc(p.name)}">
+      <label>Description</label><input id="ep-desc" value="${esc(p.description||'')}">
+      <div class="field-grid">
+        <div><label>Workspace</label><select id="ep-ws">${S.workspaces.map(w=>`<option value="${w.id}" ${w.id===p.workspace_id?'selected':''}>${esc(w.name)}</option>`).join('')}</select></div>
+        <div><label>Status</label><select id="ep-status">${['active','on_hold','archived'].map(s=>`<option value="${s}" ${s===p.status?'selected':''}>${s.replace('_',' ')}</option>`).join('')}</select></div>
+      </div>
+      <label style="margin-top:14px">Board owners</label>
+      <div style="display:flex;align-items:center;gap:8px;margin-top:4px;flex-wrap:wrap">
+        ${avatarStack(boardOwnerIds(pid))}
+        <span style="font-size:13px;color:var(--ink2);flex:1;min-width:120px">${esc(ownerNames(boardOwnerIds(pid)))}</span>
+        <button type="button" class="btn btn-ghost btn-sm" id="ep-owners">Manage owners</button>
+      </div>
+      <div style="font-size:12px;color:var(--ink3);margin-top:4px">Owners and admins manage this board's settings, columns, groups and sign-off. Everyone with access still works on its tasks.</div>
+      <label style="margin-top:14px">Who can open this board</label>
+      ${visPickerHTML('ep-vis', p.visibility||'collaborate')}
+      <label style="margin-top:14px">Colour</label>
+      <div id="ep-cols" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:4px">
+        ${PJ_COLORS.map(c=>`<span data-c="${c}" style="width:26px;height:26px;border-radius:50%;background:${c};cursor:pointer;box-shadow:${c===p.color?'0 0 0 3px #fff,0 0 0 5px '+c:'none'}"></span>`).join('')}
+      </div>${gateSection}
+    </div>
+    <div class="modal-foot"><button class="btn btn-ghost" onclick="closeModals()">Cancel</button><button class="btn btn-primary" id="ep-save">Save</button></div>`);
+  let colour = p.color;
+  m.querySelector('#ep-owners').onclick = ()=>{ closeModals(); projectMembersModal(pid); };
+  wireVisPicker(m,'ep-vis');
+  const gateOn = m.querySelector('#ep-gate-on');
+  if(gateOn) gateOn.onchange = ()=>{ m.querySelector('#ep-gate-appr').hidden = !gateOn.checked; };
+  m.querySelectorAll('#ep-cols span').forEach(s=> s.onclick=()=>{
+    colour = s.dataset.c;
+    m.querySelectorAll('#ep-cols span').forEach(x=> x.style.boxShadow = x.dataset.c===colour? '0 0 0 3px #fff,0 0 0 5px '+colour : 'none');
+  });
+  m.querySelector('#ep-save').onclick = async ()=>{
+    const name = m.querySelector('#ep-name').value.trim(); if(!name) return toast('Name required', true);
+    const vis = m.querySelector('#ep-vis').dataset.sel || 'collaborate';
+    // Narrowing away from Shareable would strand external guests — warn first.
+    if(p.visibility==='shareable' && vis!=='shareable'){
+      const {data:pms} = await db.from('project_members').select('user_id').eq('project_id',pid);
+      const ext = (pms||[]).map(r=>prof(r.user_id)).filter(u=>u && ['partner','freelancer'].includes(u.role));
+      if(ext.length && !confirm(`${ext.map(u=>u.full_name).join(', ')} ${ext.length>1?'are':'is'} on this board as an outside guest. Switching to ${VIS[vis].label} removes their access. Continue?`)) return;
+    }
+    const upd = {name, description:m.querySelector('#ep-desc').value.trim(),
+      workspace_id:m.querySelector('#ep-ws').value, visibility:vis,
+      status:m.querySelector('#ep-status').value, color:colour};
+    if(canGate) upd.approval_gate = {on: gateOn.checked,
+      status: m.querySelector('#ep-gate-status').value,
+      approvers: [...m.querySelectorAll('#ep-gate-appr input[data-gapp]:checked')].map(c=>c.dataset.gapp)};
+    const {error} = await db.from('projects').update(upd).eq('id',pid);
+    if(error) return toast(error.message, true);
+    closeModals(); toast('Board updated'); await refreshCore();
+    if(S.route.view==='project') renderProject(pid); else if(S.route.view==='ws') renderWorkspace(S.route.id, S.route.tab); else renderSidebar();
+  };
+}
+async function deleteProjectModal(pid){
+  const p = (S.projects||[]).find(x=>x.id===pid); if(!p) return;
+  if(!canDeleteBoard(pid)) return toast(`Only an owner of this board (${ownerNames(boardOwnerIds(pid))}) or an admin can delete it`, true);
+  const {count} = await db.from('tasks').select('id',{count:'exact',head:true}).eq('project_id',pid);
+  const n = count||0;
+  const m = modal(`<div class="modal-head"><h2>Delete board “${esc(p.name)}”?</h2><button class="x" onclick="closeModals()">✕</button></div>
+    <div class="modal-body">
+      <div class="danger-note"><b>This cannot be undone.</b> Every task on this board goes with it, along with its subtasks, comments and attachments.</div>
+      <div style="margin:14px 0 16px"><div style="font-size:30px;font-weight:800;line-height:1;color:${n?'var(--red)':'inherit'}">${n}</div>
+        <div style="font-size:12px;color:var(--ink3)">task${n===1?'':'s'} on this board</div></div>
+      ${n? `<p style="font-size:13px;color:var(--ink2);margin-bottom:14px">If you only want it out of the way, set the board's status to <b>archived</b> in Edit instead — nothing is lost and you can switch it back.</p>`:''}
+      <label>Type the board name to confirm</label>
+      <input id="dp-confirm" autocomplete="off" placeholder="${esc(p.name)}">
+    </div>
+    <div class="modal-foot"><button class="btn btn-ghost" onclick="closeModals()">Cancel</button>
+      ${n? `<button class="btn btn-ghost" id="dp-arch">Archive instead</button>`:''}
+      <button class="btn btn-danger" id="dp-go" disabled>Delete board</button></div>`);
+  const inp=m.querySelector('#dp-confirm'), go=m.querySelector('#dp-go');
+  inp.oninput = ()=>{ go.disabled = inp.value.trim().toLowerCase() !== p.name.trim().toLowerCase(); };
+  m.querySelector('#dp-arch')?.addEventListener('click', async ()=>{
+    const {error} = await db.from('projects').update({status:'archived'}).eq('id',pid);
+    if(error) return toast(error.message, true);
+    closeModals(); toast('Board archived'); await refreshCore();
+    if(S.route.view==='project') location.hash='#/ws/'+p.workspace_id; else renderWorkspace(p.workspace_id);
+  });
+  go.onclick = async ()=>{
+    go.disabled=true; go.textContent='Deleting…';
+    const {data, error} = await db.from('projects').delete().eq('id',pid).select('id');
+    if(error){ go.disabled=false; go.textContent='Delete board'; return toast(error.message, true); }
+    if(!data || !data.length){ go.disabled=false; go.textContent='Delete board'; return toast('Nothing was deleted — your role may not have permission', true); }
+    logActivity('project', pid, 'delete', {name:p.name, tasks:n});
+    closeModals(); toast('Board deleted'); await refreshCore();
+    if(S.route.view==='project') location.hash='#/ws/'+p.workspace_id;
+    else { renderSidebar(); if(S.route.view==='ws') renderWorkspace(S.route.id, S.route.tab); }
+  };
+  setTimeout(()=>inp.focus(), 30);
+}
+/* Roles that need to be granted a workspace explicitly. admin + management
+   already see every workspace, so they are shown as "all workspaces" and
+   are not checkboxes. Anyone here can belong to as many workspaces as you like. */
+const ASSIGNABLE_ROLES = ['internal','requester','partner','freelancer'];
+const ROLE_LABEL = {internal:'Internal staff', requester:'Requester (view + raise + comment)', partner:'Partner (external)', freelancer:'Freelancer (external)'};
+async function setWsOwner(wid, uid){
+  const w = wsById(wid); if(!w) return;
+  if(!(isAdmin() || ownsWs(wid))) return toast('Only an owner of this workspace or an admin can change its owners', true);
+  const owners = wsOwnerIds(wid), has = owners.includes(uid);
+  if(has && owners.length<=1){
+    if(!isAdmin()) return toast('A workspace needs at least one owner — add someone else first', true);
+    if(!confirm(`Remove the last owner of ${w.name}? Only admins will be able to manage its settings until someone is made owner again.`)) return;
+  }
+  if(has && uid===(S.me||{}).id && !isAdmin()
+     && !confirm(`Step down as an owner of ${w.name}? You will lose control of its settings.`)) return;
+  const {error} = has
+    ? await db.from('workspace_owners').delete().eq('workspace_id',wid).eq('user_id',uid)
+    : await db.from('workspace_owners').insert({workspace_id:wid, user_id:uid});
+  if(error) return toast(error.message, true);
+  await refreshCore(); closeModals();
+  toast(has? `${ownerName(uid)} is no longer an owner` : `${ownerName(uid)} is now an owner`);
+  teamMembersModal(wid);
+}
+async function teamMembersModal(wsId){
+  const w = wsById(wsId);
+  const canSetWsOwner = isAdmin() || ownsWs(wsId);
+  const wsOwnIds = wsOwnerIds(wsId);
+  const {data:members} = await db.from('workspace_members').select('*').eq('workspace_id',wsId);
+  const memberIds = new Set((members||[]).map(m=>m.user_id));
+  const pool = S.profiles.filter(p=>p.active && ASSIGNABLE_ROLES.includes(p.role));
+  const supers = S.profiles.filter(p=>p.active && (p.role==='admin'||p.role==='management'));
+  const wsCount = {}; // how many workspaces each person is already in — filled below
+  const {data:allM} = await db.from('workspace_members').select('user_id');
+  (allM||[]).forEach(r=>{ wsCount[r.user_id]=(wsCount[r.user_id]||0)+1; });
+  const groupBlock = role=>{
+    // Members first, then alphabetical — at CREA's headcount the people already
+    // on the workspace must be visible without scrolling past everyone else.
+    const list = pool.filter(p=>p.role===role)
+      .sort((a,b)=> (memberIds.has(b.id)) - (memberIds.has(a.id))
+                    || (a.full_name||'').localeCompare(b.full_name||''));
+    if(!list.length) return '';
+    const on = list.filter(p=>memberIds.has(p.id)).length;
+    return `<div data-group="1" style="margin-top:14px"><div style="font-size:11.5px;font-weight:700;letter-spacing:.03em;text-transform:uppercase;color:var(--ink3);margin-bottom:6px">${ROLE_LABEL[role]} <span style="color:var(--ink3);font-weight:600">· ${on} of ${list.length}</span></div>
+      ${list.map(p=>{
+        const others = (wsCount[p.id]||0) - (memberIds.has(p.id)?1:0);
+        return `<div class="chk" data-search="${esc(searchKey(p))}"><input type="checkbox" data-uid="${p.id}" ${memberIds.has(p.id)?'checked':''}>
+          ${avatar(p,true)} <span style="flex:1">${esc(p.full_name)} <span style="color:var(--ink3)">· ${esc(p.email)}</span>
+          ${others>0? `<span class="chip" style="background:var(--gray-soft);color:var(--ink3);margin-left:6px">+${others} other workspace${others>1?'s':''}</span>`:''}</span>
+          ${ownerHeartHTML(wsOwnIds.includes(p.id), canSetWsOwner, `setWsOwner('${wsId}','${p.id}')`, 'workspace')}</div>`;
+      }).join('')}</div>`;
+  };
+  const m = modal(`<div class="modal-head"><h2>Members of ${esc(w?w.name:'workspace')}</h2><button class="x" onclick="closeModals()">✕</button></div>
+    <div class="modal-body">
+      <div style="display:flex;gap:8px;align-items:center;margin-top:8px;font-size:12.5px;color:var(--ink2)">Owners ${avatarStack(wsOwnIds)} <span>${esc(ownerNames(wsOwnIds))}</span></div>
+      ${searchBoxHTML('tm-q','Search by name, team, role, or email address')}
+      ${teamAddHTML('tm-team')}
+      <div id="tm-count" style="font-size:12.5px;color:var(--ink2);margin:2px 0 2px"></div>
+      <p style="color:var(--ink2);font-size:13px;margin-top:6px">A filled heart marks an owner${canSetWsOwner? ' — click an outline heart to make someone an owner, or a filled one to remove them':''}. Tick anyone who should see this workspace. <b>A person can belong to as many workspaces as you like</b> — ticking them here does not remove them from any other one.</p>
+      ${supers.length? `<div style="margin-top:12px;padding:9px 12px;background:var(--gray-soft);border-radius:8px;font-size:12.5px;color:var(--ink2)">
+        <b>Always has access:</b> ${supers.slice(0,4).map(p=>esc(p.full_name)).join(', ')}${supers.length>4? ` and ${supers.length-4} more`:''} — admin and management see every workspace.</div>`:''}
+      ${ASSIGNABLE_ROLES.map(groupBlock).join('') || '<div class="empty">No assignable accounts yet. Create them in Admin → Users.</div>'}
+    </div>
+    <div class="modal-foot"><button class="btn btn-ghost" onclick="closeModals()">Close</button><button class="btn btn-primary" id="tm-save">Save</button></div>`);
+  wireMemberSearch(m, 'tm-q');
+  wireTeamAdd(m, 'tm-team');
+  const boxes = [...m.querySelectorAll('input[data-uid]')];
+  const countEl = m.querySelector('#tm-count');
+  const recount = ()=>{
+    const n = boxes.filter(b=>b.checked).length;
+    countEl.textContent = `${n} of ${boxes.length} ${boxes.length===1?'person':'people'} on this workspace`
+      + (n ? '' : ' — nobody yet');
+  };
+  boxes.forEach(b=> b.addEventListener('change', recount));
+  recount();
+  m.querySelector('#tm-save').onclick = async ()=>{
+    const want = new Set([...m.querySelectorAll('input[data-uid]:checked')].map(i=>i.dataset.uid));
+    const add=[...want].filter(u=>!memberIds.has(u)).map(user_id=>({workspace_id:wsId,user_id}));
+    const rm=[...memberIds].filter(u=>!want.has(u) && pool.some(p=>p.id===u));
+    if(add.length){ const {error} = await db.from('workspace_members').insert(add); if(error) return toast(error.message, true); }
+    if(rm.length){ const {error} = await db.from('workspace_members').delete().eq('workspace_id',wsId).in('user_id',rm); if(error) return toast(error.message, true); }
+    closeModals(); toast('Workspace members updated'); await refreshCore(); renderSidebar();
+    if(S.route.view==='admin') renderAdmin();
+  };
+}
+/* The other direction: pick the person, tick every workspace they should reach. */
+async function userWorkspacesModal(uid){
+  const p = prof(uid) || S.profiles.find(x=>x.id===uid); if(!p) return;
+  if(p.role==='admin'||p.role==='management'){
+    return modal(`<div class="modal-head"><h2>${esc(p.full_name)}</h2><button class="x" onclick="closeModals()">✕</button></div>
+      <div class="modal-body"><p style="font-size:13.5px;color:var(--ink2)"><b>${esc(p.full_name)}</b> is ${p.role==='admin'?'an admin':'management'} — they already see <b>every workspace</b>, current and future. There is nothing to assign.</p></div>
+      <div class="modal-foot"><button class="btn btn-primary" onclick="closeModals()">OK</button></div>`);
+  }
+  const {data:mine} = await db.from('workspace_members').select('workspace_id').eq('user_id',uid);
+  const have = new Set((mine||[]).map(r=>r.workspace_id));
+  const m = modal(`<div class="modal-head"><h2>Workspaces for ${esc(p.full_name)}</h2><button class="x" onclick="closeModals()">✕</button></div>
+    <div class="modal-body">
+      <p style="color:var(--ink2);font-size:13px;margin-top:6px">Tick every workspace <b>${esc(p.full_name)}</b> should be able to open. They can be in as many as you need.</p>
+      <div style="display:flex;gap:8px;margin:12px 0 4px">
+        <button class="btn btn-ghost btn-sm" id="uw-all">Select all</button>
+        <button class="btn btn-ghost btn-sm" id="uw-none">Clear all</button>
+      </div>
+      ${S.workspaces.length? S.workspaces.map(w=>`
+        <div class="chk"><input type="checkbox" data-wid="${w.id}" ${have.has(w.id)?'checked':''}>
+        <span class="ws-dot" style="display:inline-block;background:${w.color}"></span>
+        <span>${esc(w.name)} ${w.description? `<span style="color:var(--ink3)">· ${esc(w.description)}</span>`:''}</span></div>`).join('')
+      : '<div class="empty">No workspaces yet.</div>'}
+    </div>
+    <div class="modal-foot"><button class="btn btn-ghost" onclick="closeModals()">Cancel</button><button class="btn btn-primary" id="uw-save">Save</button></div>`);
+  const boxes = ()=> [...m.querySelectorAll('input[data-wid]')];
+  m.querySelector('#uw-all').onclick = ()=> boxes().forEach(b=>b.checked=true);
+  m.querySelector('#uw-none').onclick = ()=> boxes().forEach(b=>b.checked=false);
+  m.querySelector('#uw-save').onclick = async ()=>{
+    const want = new Set(boxes().filter(b=>b.checked).map(b=>b.dataset.wid));
+    const add = [...want].filter(w=>!have.has(w)).map(workspace_id=>({workspace_id, user_id:uid}));
+    const rm  = [...have].filter(w=>!want.has(w));
+    if(add.length){ const {error} = await db.from('workspace_members').insert(add); if(error) return toast(error.message, true); }
+    if(rm.length){ const {error} = await db.from('workspace_members').delete().eq('user_id',uid).in('workspace_id',rm); if(error) return toast(error.message, true); }
+    closeModals(); toast(`${p.full_name} is now in ${want.size} workspace${want.size===1?'':'s'}`);
+    await refreshCore(); renderSidebar(); if(S.route.view==='admin') renderAdmin();
+  };
+}
+function newProjectModal(wsId){
+  // Opened from inside a workspace: that workspace is the answer, not a question.
+  const fixedWs = wsId ? wsById(wsId) : null;
+  const m = modal(`<div class="modal-head"><h2>New board${fixedWs? ' in '+esc(fixedWs.name):''}</h2><button class="x" onclick="closeModals()">✕</button></div>
+    <div class="modal-body">
+      <label>Board name <span class="req">*</span></label><input id="pj-name" placeholder="e.g. Escalations — Q3">
+      <label>Description</label><textarea id="pj-desc" rows="2"></textarea>
+      <div id="pj-tpl-wrap" hidden><label>Start from</label>
+        <select id="pj-tpl"><option value="">Blank board</option></select></div>
+      ${fixedWs
+        ? `<label>Workspace</label><div class="ro-field"><span class="ws-dot" style="display:inline-block;background:${fixedWs.color}"></span> ${esc(fixedWs.name)}</div>
+           <input type="hidden" id="pj-ws" value="${fixedWs.id}">`
+        : `<label>Workspace</label><select id="pj-ws">${S.workspaces.map(w=>`<option value="${w.id}">${esc(w.name)}</option>`).join('')}</select>`}
+      <label style="margin-top:14px">Who can open this board</label>
+      ${visPickerHTML('pj-vis','collaborate')}
+      </div>
+    <div class="modal-foot"><button class="btn btn-ghost" onclick="closeModals()">Cancel</button><button class="btn btn-primary" id="pj-save">Create board</button></div>`);
+  wireVisPicker(m,'pj-vis');
+  // Saved templates power "Start from" — fetched after paint so the modal opens instantly.
+  let tpls = [];
+  if(isStaff()) db.from('board_templates').select('*').order('created_at',{ascending:false}).then(({data})=>{
+    tpls = data||[];
+    const sel = m.querySelector('#pj-tpl');
+    if(tpls.length && sel){
+      sel.insertAdjacentHTML('beforeend', tpls.map(t=>`<option value="${t.id}">${esc(t.name)}</option>`).join(''));
+      m.querySelector('#pj-tpl-wrap').hidden = false;
+    }
+  });
+  m.querySelector('#pj-save').onclick = async ()=>{
+    const name=m.querySelector('#pj-name').value.trim(); if(!name) return toast('Name is required', true);
+    const colors=['#00B894','#0984E3','#6C5CE7','#E17055','#E84393','#D63031','#FDCB6E','#00CEC9'];
+    const {data, error} = await db.from('projects').insert({
+      workspace_id:m.querySelector('#pj-ws').value, name, description:m.querySelector('#pj-desc').value.trim(),
+      visibility:m.querySelector('#pj-vis').dataset.sel||'collaborate', created_by:S.me.id,
+      color:colors[Math.floor(Math.random()*colors.length)]
+    }).select().single();
+    if(error) return toast(error.message, true);
+    const tpl = tpls.find(t=>t.id===(m.querySelector('#pj-tpl')?.value||''));
+    if(tpl) await applyTemplate(data.id, tpl.spec||{});
+    S.projects.push(data); closeModals(); toast('Board created');
+    logActivity('project', data.id, 'created', {name});
+    location.hash = '#/project/'+data.id;
+  };
+}
+
+/* ================= PROJECT (Board / List) ================= */
+let boardMode = 'table';
+/* Per-board filters. Keyed by board id so each board remembers its own. */
+const boardFilters = {};
+const bfGet = pid => (boardFilters[pid] || (boardFilters[pid] = {q:'', status:'', priority:'', assignee:'', group:''}));
+function bfActiveCount(pid){ const f=bfGet(pid); return ['q','status','priority','assignee','group'].filter(k=>f[k]).length; }
+function bfSet(pid, key, val){ bfGet(pid)[key] = val; renderBoardBody(pid); }
+function bfClear(pid){ boardFilters[pid] = {q:'', status:'', priority:'', assignee:'', group:''}; renderProject(pid); }
+function bfApply(pid, rows){
+  const f = bfGet(pid);
+  const q = f.q.trim().toLowerCase();
+  return rows.filter(t=>
+    (!q || (t.title||'').toLowerCase().includes(q) || (t.description||'').toLowerCase().includes(q))
+    && (!f.status   || t.status===f.status)
+    && (!f.priority || t.priority===f.priority)
+    && (!f.assignee || (f.assignee==='__none__' ? !t.assignee_id : t.assignee_id===f.assignee))
+    && (!f.group    || (f.group==='__none__' ? !t.group_id : t.group_id===f.group))
+  );
+}
+/* People pickers are always searchable — a name is faster to type than to find. */
+function bfPickPerson(btn, pid){
+  const opts = [{v:'__none__', l:'Unassigned'}]
+    .concat((S.profiles||[]).filter(p=>p.active).map(p=>({v:p.id, l:p.full_name})));
+  tvShowMenu(btn, opts, o=>`${o.v==='__none__'?'<span style="width:22px"></span>':avatar(prof(o.v),true)}<span>${esc(o.l)}</span>`,
+    v=>{ bfGet(pid).assignee = v || ''; renderProject(pid); }, true, true);
+}
+function filterBarHTML(pid){
+  const f = bfGet(pid), n = bfActiveCount(pid);
+  const people = (S.profiles||[]).filter(p=>p.active);
+  const sel = (key, label, opts) => `<select class="bf-sel ${f[key]?'on':''}" onchange="bfSet('${pid}','${key}',this.value)">
+      <option value="">${label}</option>
+      ${opts.map(o=>`<option value="${o.v}" ${f[key]===o.v?'selected':''}>${esc(o.l)}</option>`).join('')}</select>`;
+  return `<div class="bfbar">
+    <input class="bf-q ${f.q?'on':''}" placeholder="Search tasks…" value="${esc(f.q)}" oninput="bfSet('${pid}','q',this.value)">
+    ${sel('status','Status', STATUSES.map(s=>({v:s.k,l:s.label})))}
+    ${sel('priority','Priority', PRIORITIES.map(p=>({v:p.k,l:p.label})))}
+    <button class="bf-sel ${f.assignee?'on':''}" onclick="bfPickPerson(this,'${pid}')">${f.assignee? esc(f.assignee==='__none__'?'Unassigned':(prof(f.assignee)?.full_name||'Person')) : 'Person'} ▾</button>
+    ${(S._groups||[]).length? sel('group','Group', (S._groups||[]).map(g=>({v:g.id,l:g.name})).concat([{v:'__none__',l:'No group'}])) : ''}
+    ${n? `<button class="bf-clear" onclick="bfClear('${pid}')">Clear ${n} filter${n>1?'s':''}</button>`:''}
+    <span class="bf-count" id="bf-count"></span>
+    ${isStaff()? `<button class="btn btn-ghost btn-sm" onclick="importExcel('${pid}')">Import Excel</button>
+    <button class="btn btn-ghost btn-sm" onclick="exportBoardCSV('${pid}')">Export Excel</button>
+    <button class="btn btn-ghost btn-sm" onclick="boardActivityModal('${pid}')">Activity</button>`:''}
+  </div>`;
+}
+async function renderProject(id){
+  const p = projById(id);
+  if(!p){ // maybe not in cache (partner) — try fetch, but never loop on it
+    const {data} = await db.from('projects').select('*').eq('id',id).single();
+    if(!data || data.id!==id){ location.hash='#/home'; return; }
+    S.projects.push(data); return renderProject(id);
+  }
+  const w = wsById(p.workspace_id);
+  const gateChip = p.approval_gate?.on? `<span class="chip" style="background:var(--gray-soft);color:var(--ink3)" title="Tasks need an approved sign-off before they can be marked ${esc((STATUSES.find(s=>s.k===p.approval_gate.status)||{}).label||'Done')}">Sign-off required</span>` : '';
+  setTopbar(`<span onclick="location.hash='#/ws/${p.workspace_id}'" style="cursor:pointer">${w? esc(w.name):''}</span> <span>/</span> ${esc(p.name)} ${visChip(p.visibility)}${gateChip}`,
+    `<div class="tabs"><button class="tab ${boardMode==='table'?'active':''}" onclick="boardMode='table';renderProject('${id}')">Table</button>
+     <button class="tab ${boardMode==='board'?'active':''}" onclick="boardMode='board';renderProject('${id}')">Board</button>
+     <button class="tab ${boardMode==='report'?'active':''}" onclick="boardMode='report';renderProject('${id}')">Report</button>
+     <button class="tab ${boardMode==='workload'?'active':''}" onclick="boardMode='workload';renderProject('${id}')">Workload</button></div>
+     ${isStaff()? `<button class="btn btn-ghost btn-sm" onclick="projectMembersModal('${id}')">Partner access</button>`:''}
+     ${canManageBoard(id)? `<button class="btn btn-ghost btn-sm" onclick="editProjectModal('${id}')">Edit board</button>`:''}
+     ${canManageBoard(id)? `<button class="btn btn-ghost btn-sm" style="color:var(--red)" onclick="deleteProjectModal('${id}')">Delete board</button>`:''}
+     <button class="btn btn-primary btn-sm" onclick="newTaskModal('${id}')">＋ New task</button>`);
+  const C=$('#content'); C.innerHTML='<div class="empty">Loading…</div>';
+  const [{data:tasks, error},{data:sc},{data:fields},{data:groups}] = await Promise.all([
+    db.from('tasks').select('*').eq('project_id',id).order('position'),
+    db.from('subtasks').select('task_id,status,tasks!inner(project_id)').eq('tasks.project_id', id),
+    db.from('project_fields').select('*').eq('project_id',id).order('position').order('created_at'),
+    db.from('project_groups').select('*').eq('project_id',id).order('position').order('created_at'),
+  ]);
+  if(error){ C.innerHTML=`<div class="card empty">${esc(error.message)}</div>`; return; }
+  // Dependencies for the whole board in one go — powers the ⛓ marker per row.
+  const tids = (tasks||[]).map(t=>t.id);
+  if(tids.length){ const {data:deps} = await db.from('task_deps').select('*').in('task_id',tids); S._deps = deps||[]; }
+  else S._deps = [];
+  S._tasksAll = tasks||[];
+  S._tasks = tvShowArch ? S._tasksAll : S._tasksAll.filter(t=>!t.archived_at);
+  S._fields = fields||[]; S._groups = groups||[];
+  await loadLinkedData(S._tasksAll, S._fields);   // link/mirror columns need the linked rows
+  S._subs = {};
+  (sc||[]).forEach(s=>{ const o=S._subs[s.task_id]||(S._subs[s.task_id]={done:0,total:0}); o.total++; if(s.status==='done') o.done++; });
+  if(boardMode==='report'){
+    C.innerHTML = '<div id="board-body"></div>';
+    renderBoardReport(id);
+    return;
+  }
+  widgetProjScope = null;
+  C.innerHTML = filterBarHTML(id) + '<div id="board-body"></div>';
+  renderBoardBody(id);
+}
+/* Re-renders only the content below the filter bar, so typing in the search
+   box never steals focus from itself. */
+function renderBoardBody(id){
+  const host = $('#board-body') || $('#content'); if(!host) return;
+  const rows = bfApply(id, S._tasks||[]);
+  S._lastRowSet = rows;               // what the view is actually showing — exports read this
+  const cnt = $('#bf-count');
+  if(cnt) cnt.textContent = bfActiveCount(id)? `${rows.length} of ${(S._tasks||[]).length} tasks` : '';
+  // keep the select/search states in sync without rebuilding the bar
+  if(boardMode==='table'){ renderProjectTableView(id, rows, host); return; }
+  if(boardMode==='workload'){ renderWorkload(id, rows, host); return; }
+  host.innerHTML = `<div class="board">${STATUSES.map(s=>{
+    const list = rows.filter(t=>t.status===s.k);
+    return `<div class="col" data-status="${s.k}">
+      <div class="col-head"><span class="dot" style="background:${s.color}"></span>${s.label}<span class="count">${list.length}</span></div>
+      <div class="col-body" data-status="${s.k}">${list.map(taskCard).join('')}</div>
+      ${canCreate()? `<button class="add-card" onclick="newTaskModal('${id}','${s.k}')">＋ Add task</button>`:''}
+    </div>`;}).join('')}</div>`;
+  wireDnD(id);
+}
+/* ---- Workload view (M-13): assignments + capacity by employee ---- */
+let WORKLOAD_CAP = 8;   // "open tasks" a person can comfortably hold before flagged Heavy
+function renderWorkload(id, rows, host){
+  const OPEN = new Set(['todo','in_progress','review','blocked']);
+  // bucket the filtered rows by assignee (plus an Unassigned bucket)
+  const buckets = new Map();
+  const bucket = key => { let b=buckets.get(key); if(!b){ b={key, counts:{}, open:0, total:0}; buckets.set(key,b); } return b; };
+  (rows||[]).forEach(t=>{
+    const b = bucket(t.assignee_id||'__none__');
+    b.counts[t.status] = (b.counts[t.status]||0)+1;
+    b.total++; if(OPEN.has(t.status)) b.open++;
+  });
+  let list = [...buckets.values()];
+  // real people first (by open desc), Unassigned always last
+  list.sort((a,b)=> (a.key==='__none__') - (b.key==='__none__') || b.open-a.open || b.total-a.total);
+  const maxOpen = Math.max(WORKLOAD_CAP, ...list.map(b=>b.open), 1);
+  const totalOpen = list.reduce((s,b)=>s+b.open,0), people = list.filter(b=>b.key!=='__none__').length;
+  const seg = b => STATUSES.map(s=> b.counts[s.k]? `<span class="wl-chip" style="background:${s.color}1C;color:${s.color}"><span class="cdot" style="background:${s.color}"></span>${s.label} ${b.counts[s.k]}</span>`:'').join('');
+  const rowHTML = b=>{
+    const none = b.key==='__none__';
+    const p = none? null : prof(b.key);
+    const heavy = b.open > WORKLOAD_CAP;
+    const pct = Math.round(b.open/maxOpen*100);
+    const barColor = heavy? 'var(--red)' : b.open>=WORKLOAD_CAP*0.75? 'var(--amber)' : 'var(--accent)';
+    return `<div class="wl-row">
+      <div class="wl-who">${none? `<span class="wl-av wl-none">?</span><span class="wl-name" style="color:var(--ink3)">Unassigned</span>` : `${avatar(p,true)}<span class="wl-name">${esc(p?p.full_name:'—')}</span>`}</div>
+      <div class="wl-mid">
+        <div class="wl-bar"><div class="wl-fill" style="width:${pct}%;background:${barColor}"></div></div>
+        <div class="wl-segs">${seg(b)||'<span class="tv-empty">No tasks</span>'}</div>
+      </div>
+      <div class="wl-load"><b style="color:${heavy?'var(--red)':'var(--ink)'}">${b.open}</b> open${heavy?' <span class="wl-flag">Heavy</span>':''}<div class="wl-sub">${b.total} total</div></div>
+    </div>`;
+  };
+  host.innerHTML = `<div class="card wl-wrap">
+    <div class="wl-head">
+      <div>${people} ${people===1?'person':'people'} · ${totalOpen} open task${totalOpen===1?'':'s'} on this board</div>
+      <label class="wl-cap">Comfortable load
+        <input type="number" min="1" max="99" value="${WORKLOAD_CAP}" onchange="WORKLOAD_CAP=Math.max(1,+this.value||8);renderBoardBody('${id}')"> open/person</label>
+    </div>
+    ${list.length? list.map(rowHTML).join('') : '<div class="empty">No tasks match the current filters</div>'}
+  </div>`;
+}
+function taskCard(t){
+  const done = t.status==='done';
+  const chk = t._chk;
+  return `<div class="tcard" draggable="true" data-id="${t.id}" onclick="openTask('${t.id}')">
+    <div class="t">${esc(t.title)}</div>
+    <div class="meta">${prioChip(t.priority)}${dueBadge(t.due_date, done)}
+      ${(S._subs||{})[t.id]?.total? `<span class="subchip" style="font-size:11px;font-weight:700;color:var(--ink3);background:var(--gray-soft);border-radius:6px;padding:1px 6px">${S._subs[t.id].done}/${S._subs[t.id].total}</span>`:''}
+      ${t.tags?.length? t.tags.slice(0,2).map(g=>`<span class="chip" style="background:var(--purple-soft);color:var(--purple)">${esc(g)}</span>`).join(''):''}
+      <span style="margin-left:auto">${avatar(prof(t.assignee_id), true)}</span></div></div>`;
+}
+function wireDnD(projectId){
+  let dragId=null;
+  document.querySelectorAll('.tcard').forEach(c=>{
+    c.addEventListener('dragstart', e=>{ dragId=c.dataset.id; c.classList.add('dragging'); });
+    c.addEventListener('dragend', ()=> c.classList.remove('dragging'));
+  });
+  document.querySelectorAll('.col-body').forEach(col=>{
+    col.addEventListener('dragover', e=>{ e.preventDefault(); col.classList.add('dragover'); });
+    col.addEventListener('dragleave', ()=> col.classList.remove('dragover'));
+    col.addEventListener('drop', async e=>{
+      e.preventDefault(); col.classList.remove('dragover');
+      const status = col.dataset.status; if(!dragId) return;
+      const t = S._tasks.find(x=>x.id===dragId); if(!t || t.status===status) return;
+      const old = t.status; t.status=status;
+      renderProjectFromCache(projectId);
+      const {error} = await db.from('tasks').update({status}).eq('id',dragId);
+      if(error){ t.status=old; renderProjectFromCache(projectId); toast(error.message, true); }
+
+    });
+  });
+}
+function renderProjectFromCache(id){
+  const C=$('#content');
+  C.innerHTML = `<div class="board">${STATUSES.map(s=>{
+    const list = S._tasks.filter(t=>t.status===s.k);
+    return `<div class="col" data-status="${s.k}">
+      <div class="col-head"><span class="dot" style="background:${s.color}"></span>${s.label}<span class="count">${list.length}</span></div>
+      <div class="col-body" data-status="${s.k}">${list.map(taskCard).join('')}</div>
+      <button class="add-card" onclick="newTaskModal('${id}','${s.k}')">＋ Add task</button>
+    </div>`;}).join('')}</div>`;
+  wireDnD(id);
+}
+/* ================= TABLE VIEW (custom columns) ================= */
+function tvPeople(){
+  return S.profiles.filter(p=> p.active!==false && !(p.email||'').startsWith('forms+'));
+}
+/* Option registries for click-to-edit dropdown cells (rendering a <select> with all
+   options in every cell made large projects extremely slow — cells are now plain text
+   until clicked). */
+let TVO = {};
+function tvBuildOpts(flds){
+  TVO = {
+    status: STATUSES.map(s=>({v:s.k, l:s.label})),
+    priority: PRIORITIES.map(p=>({v:p.k, l:p.label})),
+    people: tvPeople().map(p=>({v:p.id, l:p.full_name})),
+    brand: (S.brandsList||[]).filter(b=>b.active!==false).map(b=>({v:b.name, l:b.name})),
+    platform: PLATFORMS.map(p=>({v:p.k, l:p.label})),
+  };
+  (flds||[]).forEach(f=>{ if(f.ftype==='select') TVO['f_'+f.id]=(f.options||[]).map(o=>({v:o, l:o})); });
+}
+function tvFmtDate(v){
+  if(!v) return '';
+  // Parse as local midnight so a plain yyyy-mm-dd never slips a day on a UTC+7 clock.
+  const d = new Date(v+'T00:00:00'); if(isNaN(d)) return v;
+  return d.toLocaleDateString('en-GB', DATE_FMT);
+}
+function tvChip(label, color){
+  return `<span class="tv-chip" style="background:${color}1C;color:${color}"><span class="cdot" style="background:${color}"></span>${esc(label)}</span>`;
+}
+function tvDisplay(kind, val, t){
+  if(val===undefined||val===null||val===''){
+    if(kind==='status'||kind==='priority') return `<span class="tv-fill tv-fill-empty">—</span>`;
+    return `<span class="tv-empty">—</span>`;
+  }
+  if(kind==='status'){ const s=STATUSES.find(x=>x.k===val); return s? `<span class="tv-fill" style="background:${s.color}">${esc(s.label)}</span>` : esc(val); }
+  if(kind==='priority'){ const p=PRIORITIES.find(x=>x.k===val); return p? `<span class="tv-fill" style="background:${p.color}">${esc(p.label)}</span>` : esc(val); }
+  if(kind==='people'){ const p=prof(val); return p? `${avatar(p,true)}<span>${esc(p.full_name)}</span>` : `<span class="tv-empty">—</span>`; }
+  if(kind==='due') return dueBadge(val, t?.status==='done') || esc(tvFmtDate(val));
+  if(kind==='date') return esc(tvFmtDate(val));
+  if(kind==='number') return `<span class="tv-num">${esc(val)}</span>`;
+  if(kind==='text' && /^https?:\/\//.test(val)){
+    let host=''; try{ host=new URL(val).hostname.replace('www.','').split('.')[0]; }catch(e){ host='link'; }
+    return `<a class="tv-link" href="${esc(val)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">Open ${esc(host)}</a>`;
+  }
+  if(kind==='platform'){ const p=PLATFORMS.find(x=>x.k===val); const c=p?p.color:'#8E93A8'; return `<span class="tv-chip" style="background:${c}1C;color:${c}"><span class="cdot" style="background:${c}"></span>${esc(val)}</span>`; }
+  if(kind==='file'){ if(!val||!val.path) return `<span class="tv-empty">—</span>`;
+    return `<a class="tv-link tv-filechip" href="${esc(attUrl(val.path))}" target="_blank" rel="noopener" title="${esc(val.name||'file')}" onclick="event.stopPropagation()">📎 ${esc((val.name||'file').length>18?(val.name.slice(0,17)+'…'):val.name)}</a>`; }
+  if(kind==='brand'||kind.startsWith('f_')) return `<span class="tv-chip" style="background:var(--gray-soft);color:var(--ink)">${esc(val)}</span>`;
+  return esc(val);
+}
+function tvPickHTML(kind, tid, field, isCustom, val, t){
+  const fill = (kind==='status'||kind==='priority')? ' fillcell':'';
+  if(!canEdit()) return `<div class="tv-pickv${fill} ro">${tvDisplay(kind, val, t)}</div>`;
+  return `<div class="tv-pickv${fill}" data-kind="${kind}" data-tid="${tid}" data-field="${esc(field)}" data-cust="${isCustom?1:0}" onclick="tvEdit(this,event)">${tvDisplay(kind, val, t)}</div>`;
+}
+/* ---- dropdown picker (chip cells open a menu, like monday) ---- */
+function tvCloseMenu(){ document.getElementById('tvmenu')?.remove(); document.removeEventListener('mousedown', tvMenuOutside); }
+function tvMenuOutside(e){ if(!document.getElementById('tvmenu')?.contains(e.target)) tvCloseMenu(); }
+function tvEdit(el, ev){
+  const {kind, tid, field, cust} = el.dataset;
+  const t = S._tasks.find(x=>x.id===tid); if(!t) return;
+  const cur = cust==='1' ? (t.custom||{})[field] : t[field];
+  const save = async (val)=>{
+    if(cust!=='1' && (field==='status'||field==='priority') && (val===null||val==='')) return;
+    if(cust==='1') await tvCustom(tid, field, val===null? '' : val);
+    else await tvCore(tid, field, val);
+    el.innerHTML = tvDisplay(kind, cust==='1'? (t.custom||{})[field] : t[field], t);
+  };
+  // file field: click opens a picker, uploads to storage, stores {name,path} in custom
+  if(kind==='file'){
+    const cur2 = (t.custom||{})[field];
+    const pick = ()=>{
+      const inp=document.createElement('input'); inp.type='file';
+      inp.onchange=async ()=>{
+        const f=inp.files[0]; if(!f) return;
+        if(f.size > MAX_UPLOAD) return toast(`${f.name} is ${fileSize(f.size)} — the limit is 25 MB`, true);
+        const path='taskfield/'+tid+'/'+field+'/'+Date.now()+'_'+(f.name||'file').replace(/[^\w.\-]+/g,'_');
+        const {error}=await db.storage.from('attachments').upload(path, f, {contentType:f.type||undefined});
+        if(error) return toast("Couldn't upload: "+error.message, true);
+        if(cur2&&cur2.path) db.storage.from('attachments').remove([cur2.path]);
+        await tvCustom(tid, field, {name:f.name||'file', path});
+        el.innerHTML=tvDisplay('file', (t.custom||{})[field], t);
+      };
+      inp.click();
+    };
+    if(cur2&&cur2.path){
+      tvShowMenu(el, [{v:'replace',l:'Replace file'},{v:'clear',l:'Remove file'}], o=>esc(o.l), async v=>{
+        if(v==='clear'){ if(cur2.path) db.storage.from('attachments').remove([cur2.path]); await tvCustom(tid, field, ''); el.innerHTML=tvDisplay('file','',t); }
+        else pick();
+      }, false, false);
+    } else pick();
+    return;
+  }
+  // inline editors for free-form types
+  if(kind==='text'||kind==='number'||kind==='date'||kind==='due'){
+    if(el.querySelector('input')) return;
+    const inp=document.createElement('input');
+    inp.type = kind==='number'?'number':(kind==='date'||kind==='due')?'date':'text';
+    inp.value = cur??'';
+    el.textContent=''; el.appendChild(inp); inp.focus();
+    let cancelled=false;
+    inp.onkeydown=e=>{ if(e.key==='Enter') inp.blur(); if(e.key==='Escape'){ cancelled=true; inp.blur(); } };
+    inp.onblur=async ()=>{
+      if(cancelled){ el.innerHTML=tvDisplay(kind, cur, t); return; }
+      const val=inp.value.trim();
+      if(val===(cur??'')) { el.innerHTML=tvDisplay(kind, cur, t); return; }
+      await save(val===''? null : val);
+    };
+    return;
+  }
+  // popover menu for choice types — status/priority get minimal dot pills
+  const opts = TVO[kind]||[];
+  const renderOpt = o=>
+    kind==='status'? tvDotOpt(o, STATUSES, cur) :
+    kind==='priority'? tvDotOpt(o, PRIORITIES, cur) :
+    kind==='platform'? tvDotOpt(o, PLATFORMS, cur) :
+    kind==='people'? `${avatar(prof(o.v),true)}<span>${esc(o.l)}</span>` : esc(o.l);
+  const canClear = !(cust!=='1' && (field==='status'||field==='priority'));
+  // people pickers are always searchable; other lists once they get long
+  tvShowMenu(el, opts, renderOpt, save, kind==='people' || opts.length>5, canClear);
+}
+/* One option row for the status/priority popover: 10px colored dot + label,
+   with a tick on the current value. Saving is untouched — same onPick as before. */
+function tvDotOpt(o, defs, cur){
+  const d = defs.find(x=>x.k===o.v);
+  return `<span class="opt-dot" style="background:${d?.color||'#8E93A8'}"></span><span>${esc(o.l)}</span>${o.v===cur? '<span class="opt-cur">✓</span>':''}`;
+}
+function tvShowMenu(anchor, opts, renderOpt, onPick, withSearch, includeClear){
+  tvCloseMenu();
+  const m = document.createElement('div'); m.id='tvmenu';
+  m.innerHTML = `${withSearch? `<div class="search"><input placeholder="Search…"></div>`:''}<div class="opts">
+    ${includeClear? `<div class="opt clear" data-v="">Clear</div>`:''}
+    ${opts.map(o=>`<div class="opt" data-v="${esc(o.v)}">${renderOpt(o)}</div>`).join('')}
+  </div>`;
+  document.body.appendChild(m);
+  const r = anchor.getBoundingClientRect();
+  const mw = m.offsetWidth, mh = m.offsetHeight;
+  let x = Math.min(r.left, window.innerWidth-mw-12);
+  let y = (r.bottom+mh+12 > window.innerHeight && r.top-mh-6 > 0)? r.top-mh-6 : r.bottom+4;
+  m.style.left=Math.max(8,x)+'px'; m.style.top=Math.max(8,y)+'px';
+  m.querySelectorAll('.opt').forEach(o=>o.onmousedown=async e=>{ e.preventDefault(); tvCloseMenu(); await onPick(o.dataset.v||null); });
+  if(withSearch){
+    const si=m.querySelector('.search input'); si.focus();
+    si.oninput=()=>{ const q=si.value.toLowerCase(); m.querySelectorAll('.opt:not(.clear)').forEach(o=>{ o.style.display = o.textContent.toLowerCase().includes(q)?'flex':'none'; }); };
+  }
+  setTimeout(()=>document.addEventListener('mousedown', tvMenuOutside),0);
+}
+/* ---- formula columns ----------------------------------------------------
+   A small, safe expression language — no eval(). Supports numbers, "text",
+   {Field} references (core + custom, by name), + - * / & comparisons, and
+   the usual sheet functions. */
+function fxEval(expr, t, depth=0){
+  if(!expr || !expr.trim()) throw new Error('The formula is empty');
+  const flds = S._fields||[];
+  const res = name=>{
+    const n = name.trim().toLowerCase();
+    const core = {
+      'name': t.title??'', 'title': t.title??'',
+      'status': (STATUSES.find(x=>x.k===t.status)||{}).label||t.status||'',
+      'priority': (PRIORITIES.find(x=>x.k===t.priority)||{}).label||t.priority||'',
+      'assignee': (prof(t.assignee_id)||{}).full_name||'',
+      'due date': t.due_date||'', 'due': t.due_date||'',
+      'group': ((S._groups||[]).find(g=>g.id===t.group_id)||{}).name||'',
+      'created': (t.created_at||'').slice(0,10),
+    };
+    if(n in core) return core[n];
+    const fld = flds.find(x=>x.label.toLowerCase()===n);
+    if(!fld) throw new Error('Unknown field {'+name+'}');
+    if(fld.ftype==='formula'){
+      if(depth>=3) throw new Error('Formulas reference each other in a loop');
+      return fxEval((fld.options&&fld.options.expr)||'', t, depth+1);
+    }
+    let v = (t.custom||{})[fld.id];
+    if(fld.ftype==='person') return (prof(v)||{}).full_name||'';
+    return v==null? '' : v;
+  };
+  const toks=[]; let i=0; const src=expr;
+  while(i<src.length){
+    const c=src[i];
+    if(/\s/.test(c)){i++;continue;}
+    if(c==='{'){ const j=src.indexOf('}',i); if(j<0) throw new Error('A { is missing its }'); toks.push({t:'field',v:src.slice(i+1,j)}); i=j+1; continue; }
+    if(c==='"'||c==="'"){ const q=c; let j=i+1,buf=''; while(j<src.length&&src[j]!==q){buf+=src[j++];} if(j>=src.length) throw new Error('A quote is not closed'); toks.push({t:'str',v:buf}); i=j+1; continue; }
+    if(/[0-9.]/.test(c)){ let j=i; while(j<src.length&&/[0-9.]/.test(src[j]))j++; toks.push({t:'num',v:parseFloat(src.slice(i,j))}); i=j; continue; }
+    if(/[A-Za-z_]/.test(c)){ let j=i; while(j<src.length&&/[A-Za-z_0-9]/.test(src[j]))j++; toks.push({t:'id',v:src.slice(i,j).toUpperCase()}); i=j; continue; }
+    if(c==='<'&&src[i+1]==='>'){toks.push({t:'op',v:'<>'});i+=2;continue;}
+    if((c==='<'||c==='>')&&src[i+1]==='='){toks.push({t:'op',v:c+'='});i+=2;continue;}
+    if('+-*/&(),=<>'.includes(c)){toks.push({t:'op',v:c});i++;continue;}
+    throw new Error('Unexpected character "'+c+'"');
+  }
+  let p=0;
+  const peek=()=>toks[p], eat=v=>{const k=toks[p]; if(!k||(v&&k.v!==v)) throw new Error('Expected '+(v||'more')); p++; return k;};
+  const num=x=>{ const n=typeof x==='number'?x:parseFloat(x); if(isNaN(n)) throw new Error('"'+x+'" is not a number'); return n; };
+  const truthy=x=> x===true || x==='true' || (typeof x==='number'&&x!==0) || (typeof x==='string'&&x!==''&&x.toLowerCase()!=='false');
+  function E(){ let a=A(); while(peek()&&peek().t==='op'&&['=','<>','<','>','<=','>='].includes(peek().v)){ const op=eat().v, b=A();
+    if(op==='=') a=String(a??'').toLowerCase()===String(b??'').toLowerCase();
+    else if(op==='<>') a=String(a??'').toLowerCase()!==String(b??'').toLowerCase();
+    else a= op==='<'? num(a)<num(b) : op==='>'? num(a)>num(b) : op==='<='? num(a)<=num(b) : num(a)>=num(b); }
+    return a; }
+  function A(){ let a=M(); while(peek()&&peek().t==='op'&&['+','-','&'].includes(peek().v)){ const op=eat().v, b=M();
+    if(op==='&') a=String(a??'')+String(b??'');
+    else if(op==='+'){ const x=parseFloat(a), y=parseFloat(b); a=(!isNaN(x)&&!isNaN(y))? x+y : String(a??'')+String(b??''); }
+    else a=num(a)-num(b); }
+    return a; }
+  function M(){ let a=U(); while(peek()&&peek().t==='op'&&['*','/'].includes(peek().v)){ const op=eat().v, b=U(); a= op==='*'? num(a)*num(b) : num(a)/num(b); } return a; }
+  function U(){ if(peek()&&peek().t==='op'&&peek().v==='-'){ eat(); return -num(U()); } return P(); }
+  function P(){
+    const k=peek(); if(!k) throw new Error('The formula ends too early');
+    if(k.t==='num'){eat();return k.v;}
+    if(k.t==='str'){eat();return k.v;}
+    if(k.t==='field'){eat();return res(k.v);}
+    if(k.t==='op'&&k.v==='('){eat('('); const v=E(); eat(')'); return v;}
+    if(k.t==='id'){ const name=eat().v;
+      if(name==='TRUE') return true; if(name==='FALSE') return false;
+      if(name==='TODAY' && !(peek()&&peek().v==='(')) return new Date().toISOString().slice(0,10);
+      eat('('); const args=[];
+      if(!(peek()&&peek().v===')')){ args.push(E()); while(peek()&&peek().v===','){eat(','); args.push(E());} }
+      eat(')');
+      return fxCall(name,args,num,truthy);
+    }
+    throw new Error('Unexpected "'+(k.v??'?')+'"');
+  }
+  const out=E();
+  if(p<toks.length) throw new Error('Unexpected "'+toks[p].v+'" near the end');
+  return out;
+}
+function fxCall(name,a,num,truthy){
+  const D=s=>{ const d=new Date(s); if(isNaN(d)) throw new Error('"'+s+'" is not a date'); return d; };
+  switch(name){
+    case 'CONCATENATE': return a.map(x=>String(x??'')).join('');
+    case 'UPPER': return String(a[0]??'').toUpperCase();
+    case 'LOWER': return String(a[0]??'').toLowerCase();
+    case 'TRIM':  return String(a[0]??'').trim();
+    case 'LEN':   return String(a[0]??'').length;
+    case 'LEFT':  return String(a[0]??'').slice(0, num(a[1]));
+    case 'RIGHT': return String(a[0]??'').slice(-num(a[1]));
+    case 'REPLACE': return String(a[0]??'').split(String(a[1]??'')).join(String(a[2]??''));
+    case 'IF':  return truthy(a[0])? a[1] : (a.length>2? a[2] : '');
+    case 'AND': return a.every(truthy);
+    case 'OR':  return a.some(truthy);
+    case 'NOT': return !truthy(a[0]);
+    case 'ROUND': { const d=a.length>1? num(a[1]):0; return Math.round(num(a[0])*Math.pow(10,d))/Math.pow(10,d); }
+    case 'ABS': return Math.abs(num(a[0]));
+    case 'MIN': return Math.min(...a.map(num));
+    case 'MAX': return Math.max(...a.map(num));
+    case 'SUM': return a.reduce((x,y)=>x+num(y),0);
+    case 'AVERAGE': return a.length? a.reduce((x,y)=>x+num(y),0)/a.length : 0;
+    case 'DAYS': return Math.round((D(a[0])-D(a[1]))/86400000);
+    case 'TODAY': return new Date().toISOString().slice(0,10);
+    default: throw new Error(name+' is not a known function');
+  }
+}
+function fxFormat(v){
+  if(typeof v==='number') return String(Math.round(v*100)/100);
+  if(v===true) return 'Yes'; if(v===false) return 'No';
+  return String(v??'');
+}
+function fxDisplay(f, t){
+  try{ return `<span class="tv-fxv">${esc(fxFormat(fxEval((f.options&&f.options.expr)||'', t)))}</span>`; }
+  catch(e){ return `<span class="tv-fxerr" title="${esc(e.message)}">⚠</span>`; }
+}
+/* ---- link & mirror columns --------------------------------------------
+   link:   options {project_id} — the cell value is a task uuid on that board.
+   mirror: options {via: <link field id here>, show: <core key or target field id>}
+           — read-only, computed from the linked task. */
+async function loadLinkedData(tasks, fields){
+  S._linkedTasks = {}; S._linkedFields = {};
+  const linkFields = (fields||[]).filter(f=>f.ftype==='link');
+  if(!linkFields.length) return;                    // no link columns → no queries
+  const ids = new Set();
+  (tasks||[]).forEach(t=> linkFields.forEach(f=>{ const v=(t.custom||{})[f.id]; if(v) ids.add(v); }));
+  const targets = [...new Set(linkFields.map(f=>(f.options||{}).project_id).filter(Boolean))];
+  const [lt, lf] = await Promise.all([
+    ids.size? db.from('tasks').select('id,title,status,priority,assignee_id,due_date,group_id,project_id,custom').in('id',[...ids]) : Promise.resolve({data:[]}),
+    targets.length? db.from('project_fields').select('id,label,ftype,options').in('project_id',targets) : Promise.resolve({data:[]}),
+  ]);
+  (lt.data||[]).forEach(x=> S._linkedTasks[x.id]=x);
+  (lf.data||[]).forEach(x=> S._linkedFields[x.id]=x);
+}
+const tvLinkIcon = ()=> `<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>`;
+function tvLinkCell(t, f){
+  const v = (t.custom||{})[f.id];
+  const lt = v? (S._linkedTasks||{})[v] : null;   // broken link / missing cache → dash
+  const title = lt? String(lt.title||'') : '';
+  const chip = lt? `<span class="tv-linkchip" title="${esc(title)}" onclick="event.stopPropagation();location.hash='#/task/${lt.id}'">${tvLinkIcon()}<span class="lt">${esc(title.length>24? title.slice(0,24)+'…' : title)}</span></span>`
+    : `<span class="tv-empty">—</span>`;
+  if(!canEdit()) return `<div class="tv-pickv ro">${chip}</div>`;
+  return `<div class="tv-pickv" onclick="tvLinkPick(this,'${t.id}','${f.id}')">${chip}</div>`;
+}
+/* Target-board task lists for the link picker, cached per board for the session. */
+const _linkPickCache = {};
+async function tvLinkPick(el, tid, fid){
+  const f = (S._fields||[]).find(x=>x.id===fid); if(!f) return;
+  const target = (f.options||{}).project_id;
+  if(!target) return toast('This link column has no target board yet — edit the column', true);
+  let opts = _linkPickCache[target];
+  if(!opts){
+    const {data, error} = await db.from('tasks').select('id,title').eq('project_id',target).is('archived_at',null).order('position');
+    if(error) return toast(error.message, true);
+    opts = _linkPickCache[target] = (data||[]).map(x=>({v:x.id, l:x.title||'(untitled)'}));
+  }
+  tvShowMenu(el, opts, o=>`${tvLinkIcon()}<span>${esc(o.l)}</span>`, async v=>{
+    await tvCustom(tid, fid, v===null? '' : v);   // same save path as every other custom cell
+    if(v && !(S._linkedTasks||{})[v]){            // picker rows carry id+title only — mirrors need the full row
+      const {data:full} = await db.from('tasks').select('id,title,status,priority,assignee_id,due_date,group_id,project_id,custom').eq('id',v).single();
+      if(full){ (S._linkedTasks||(S._linkedTasks={}))[full.id]=full; }
+    }
+    const y=scrollY; renderBoardBody(tvPid); scrollTo(0,y);
+  }, opts.length>5, true);
+}
+function mirrorResolve(t, f){
+  const via = (f.options||{}).via;
+  const lv = via? (t.custom||{})[via] : null;
+  return lv? ((S._linkedTasks||{})[lv]||null) : null;
+}
+/* Plain-text value of a mirror cell — shared by the table view and the Excel export. */
+function mirrorText(t, f){
+  const lt = mirrorResolve(t, f), show = (f.options||{}).show;
+  if(!lt || !show) return '';
+  if(show==='status')   return (STATUSES.find(s=>s.k===lt.status)||{}).label||lt.status||'';
+  if(show==='priority') return (PRIORITIES.find(p=>p.k===lt.priority)||{}).label||lt.priority||'';
+  if(show==='assignee') return (prof(lt.assignee_id)||{}).full_name||'';
+  if(show==='due_date') return lt.due_date||'';
+  if(show==='group')    return '';                 // remote group names aren't loaded — shown as a dash
+  const rf = (S._linkedFields||{})[show];
+  if(rf && rf.ftype==='formula') return '';        // remote formulas aren't evaluated here
+  const rv = (lt.custom||{})[show];
+  return rv==null? '' : String(rv);
+}
+/* A mirror is editable when the remote value has a sensible editor — edits save
+   straight to the LINKED task, so both boards stay in step. */
+function mirrorEditable(f, lt){
+  if(!lt) return false;
+  const show = (f.options||{}).show;
+  if(['status','priority','assignee','due_date'].includes(show)) return true;
+  const rf = (S._linkedFields||{})[show];
+  return !!rf && ['select','text','number','date','checkbox','brand','platform'].includes(rf.ftype);
+}
+function tvMirrorCell(t, f){
+  const lt = mirrorResolve(t, f), show = (f.options||{}).show;
+  let inner = `<span class="tv-empty">—</span>`;
+  if(lt && show){
+    if(show==='status')        inner = statusChip(lt.status);
+    else if(show==='priority') inner = prioChip(lt.priority);
+    else if(show==='assignee'){ const p=prof(lt.assignee_id); inner = p? `${avatar(p,true)}<span>${esc(p.full_name)}</span>` : inner; }
+    else if(show==='due_date') inner = lt.due_date? esc(fmtDate(lt.due_date)) : inner;
+    else { const s = mirrorText(t, f); inner = s? esc(s) : inner; }
+  }
+  if(canEdit() && mirrorEditable(f, lt))
+    return `<div class="tv-pickv tv-mirror" title="Mirrored — editing here updates the linked task" onclick="tvMirrorEdit(this,'${t.id}','${f.id}')">${inner}</div>`;
+  return `<div class="tv-pickv ro tv-mirror" title="Mirrored from the linked task">${inner}</div>`;
+}
+async function tvMirrorEdit(el, tid, fid){
+  const f = (S._fields||[]).find(x=>x.id===fid); if(!f) return;
+  const t = (S._tasks||[]).find(x=>x.id===tid); if(!t) return;
+  const lt = mirrorResolve(t, f); if(!lt) return toast('Link this row to a task first', true);
+  const show = (f.options||{}).show;
+  const save = async patch=>{
+    const {error} = await db.from('tasks').update(patch).eq('id', lt.id);
+    if(error) return toast(error.message, true);
+    Object.assign(lt, patch);
+    const y=scrollY; renderBoardBody(tvPid); scrollTo(0,y);
+    toast('Updated on the linked board');
+  };
+  if(show==='status')
+    return tvShowMenu(el, STATUSES.map(s=>({v:s.k,l:s.label})), o=>tvDotOpt(o, STATUSES, lt.status), v=>v&&save({status:v}));
+  if(show==='priority')
+    return tvShowMenu(el, PRIORITIES.map(p=>({v:p.k,l:p.label})), o=>tvDotOpt(o, PRIORITIES, lt.priority), v=>v&&save({priority:v}));
+  if(show==='assignee')
+    return tvShowMenu(el, S.profiles.filter(p=>p.active).map(p=>({v:p.id,l:p.full_name})),
+      o=>`${avatar(prof(o.v),true)}<span>${esc(o.l)}</span>${o.v===lt.assignee_id?'<span class="opt-cur">✓</span>':''}`,
+      v=>save({assignee_id:v||null}), true, true);
+  if(show==='due_date')
+    return miniInputModal(f.label, 'date', lt.due_date||'', v=>save({due_date:v||null}), 'Editing here updates the linked task on the other board.');
+  const rf = (S._linkedFields||{})[show]; if(!rf) return;
+  const saveRemoteCustom = v=>{
+    const custom = Object.assign({}, lt.custom||{});
+    if(v===''||v==null){ delete custom[show]; } else { custom[show]=v; }
+    return save({custom});
+  };
+  if(rf.ftype==='select')
+    return tvShowMenu(el, (rf.options||[]).map(o=>({v:o,l:o})),
+      o=>`<span>${esc(o.l)}</span>${o.v===(lt.custom||{})[show]?'<span class="opt-cur">✓</span>':''}`,
+      v=>saveRemoteCustom(v), (rf.options||[]).length>5, true);
+  if(rf.ftype==='platform')
+    return tvShowMenu(el, PLATFORMS.map(p=>({v:p.k,l:p.label})),
+      o=>tvDotOpt(o, PLATFORMS, (lt.custom||{})[show]),
+      v=>saveRemoteCustom(v), true, true);
+  if(rf.ftype==='checkbox')
+    return saveRemoteCustom(!( /^(true|yes|1)$/i.test(String((lt.custom||{})[show]||'')) ));
+  miniInputModal(rf.label, rf.ftype==='number'?'number':rf.ftype==='date'?'date':'text',
+    (lt.custom||{})[show]||'', v=>saveRemoteCustom(v), 'Editing here updates the linked task on the other board.');
+}
+/* One-field editor used for mirrored dates / text / numbers.
+   Optional `hint` renders a "!" the user can click to read the explanation. */
+function miniInputModal(title, type, value, cb, hint){
+  const info = hint ? `<button class="mi-info" title="Read more" onclick="var h=this.parentNode.parentNode.querySelector('.mi-hint');h.hidden=!h.hidden;">!</button>` : '';
+  const hintRow = hint ? `<div class="mi-hint" hidden>${esc(hint)}</div>` : '';
+  const m = modal(`<div class="modal-head"><h2 style="font-size:15px;display:flex;align-items:center;gap:6px">${esc(title)}${info}</h2><button class="x" onclick="closeModals()">✕</button></div>
+    <div class="modal-body">${hintRow}<input id="mi-val" type="${type}" value="${esc(value)}"></div>
+    <div class="modal-foot"><button class="btn btn-ghost" onclick="closeModals()">Cancel</button>
+      <button class="btn btn-primary" id="mi-save">Save</button></div>`);
+  const inp = m.querySelector('#mi-val'); inp.focus();
+  const go = ()=>{ const v=inp.value.trim(); closeModals(); cb(v); };
+  m.querySelector('#mi-save').onclick = go;
+  inp.onkeydown = e=>{ if(e.key==='Enter') go(); };
+}
+function tvCell(t, f){
+  if(f.ftype==='formula') return fxDisplay(f, t);
+  if(f.ftype==='link')    return tvLinkCell(t, f);
+  if(f.ftype==='mirror')  return tvMirrorCell(t, f);
+  const v = (t.custom||{})[f.id];
+  if(f.ftype==='checkbox') return `<input type="checkbox" ${v?'checked':''} ${canEdit()?`onchange="tvCustom('${t.id}','${f.id}', this.checked)"`:'disabled'}>`;
+  if(f.ftype==='number')   return tvPickHTML('number', t.id, f.id, true, v);
+  if(f.ftype==='date')     return tvPickHTML('date', t.id, f.id, true, v);
+  if(f.ftype==='select')   return tvPickHTML('f_'+f.id, t.id, f.id, true, v);
+  if(f.ftype==='person')   return tvPickHTML('people', t.id, f.id, true, v);
+  if(f.ftype==='brand')    return tvPickHTML('brand', t.id, f.id, true, v);
+  if(f.ftype==='platform') return tvPickHTML('platform', t.id, f.id, true, v);
+  if(f.ftype==='file')     return tvPickHTML('file', t.id, f.id, true, v, t);
+  return tvPickHTML('text', t.id, f.id, true, v);
+}
+/* Export the rows the table is showing right now (filters applied), in display order. */
+function exportBoardCSV(pid){
+  const p = projById(pid);
+  const flds = S._fields||[], groups = S._groups||[];
+  let rows = S._lastRowSet || bfApply(pid, S._tasks||[]);
+  const byPos = (a,b)=> (a.position||0)-(b.position||0);
+  if(groups.length){
+    const gids = new Set(groups.map(g=>g.id));
+    rows = groups.flatMap(g=> rows.filter(t=>t.group_id===g.id).sort(byPos))
+      .concat(rows.filter(t=>!t.group_id || !gids.has(t.group_id)).sort(byPos));
+  } else rows = [...rows].sort(byPos);
+  const cell = (t,f)=>{
+    if(f.ftype==='formula'){ try{ return fxFormat(fxEval((f.options&&f.options.expr)||'', t)); }catch(e){ return ''; } }
+    if(f.ftype==='link'){ const lv=(t.custom||{})[f.id]; const lt=lv? (S._linkedTasks||{})[lv]:null; return lt? (lt.title||'') : ''; }
+    if(f.ftype==='mirror') return mirrorText(t, f);
+    const v = (t.custom||{})[f.id];
+    if(f.ftype==='checkbox') return v? 'Yes':'No';
+    if(f.ftype==='file') return (v&&v.name)? v.name : '';
+    return v==null? '' : v;
+  };
+  const out = [['Task','Group','Status','Priority','Assignee','Due date', ...flds.map(f=>f.label), 'Created']];
+  rows.forEach(t=> out.push([
+    t.title||'',
+    (groups.find(g=>g.id===t.group_id)||{}).name||'',
+    (STATUSES.find(s=>s.k===t.status)||{}).label||t.status||'',
+    (PRIORITIES.find(x=>x.k===t.priority)||{}).label||t.priority||'',
+    (prof(t.assignee_id)||{}).full_name||'',
+    t.due_date||'',
+    ...flds.map(f=>cell(t,f)),
+    (t.created_at||'').slice(0,10),
+  ]));
+  downloadXLSX(xlsxFilename(p? p.name : 'Board'), out);
+}
+/* ---- Import Excel: first sheet, header row with a "Task" column, columns matched by name ---- */
+function importExcel(pid){
+  if(typeof XLSX === 'undefined') return toast('The Excel engine is still loading — try again in a second', true);
+  const inp = document.createElement('input');
+  inp.type = 'file'; inp.accept = '.xlsx,.xls,.csv';
+  inp.onchange = async ()=>{
+    const f = inp.files[0]; if(!f) return;
+    try{
+      const wb = XLSX.read(await f.arrayBuffer(), {cellDates:true});
+      const aoa = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], {header:1, raw:true, defval:''});
+      const res = mapImportRows(aoa, pid);
+      if(!res.tasks.length) return toast('Nothing to import — the first sheet needs a header row with a "Task" column and at least one row under it', true);
+      importPreviewModal(pid, res);
+    }catch(e){ toast('Could not read that file: '+e.message, true); }
+  };
+  inp.click();
+}
+/* Pure mapping: array-of-arrays -> task rows + warnings. Kept separate so it is testable. */
+function mapImportRows(aoa, pid){
+  const warnings = []; const tasks = []; let skipped = 0;
+  const hi = (aoa||[]).findIndex(r=> (r||[]).some(c=> String(c).trim().toLowerCase()==='task'));
+  if(hi < 0) return {tasks, warnings:['No "Task" column found in the header row'], skipped};
+  const head = aoa[hi].map(c=> String(c).trim());
+  const low  = head.map(h=> h.toLowerCase());
+  const col  = name => low.indexOf(name);
+  const flds = S._fields||[], groups = S._groups||[];
+  const fieldByLabel = {}; flds.forEach(f=>{ fieldByLabel[f.label.trim().toLowerCase()] = f; });
+  const known = new Set(['task','group','status','priority','assignee','due date','created']);
+  const unknown = [];
+  head.forEach((h,i)=>{ if(h && !known.has(low[i]) && !fieldByLabel[low[i]]) unknown.push(h); });
+  if(unknown.length) warnings.push(`Ignored column${unknown.length>1?'s':''}: ${unknown.join(', ')}`);
+  if(head.some((h,i)=> fieldByLabel[low[i]] && fieldByLabel[low[i]].ftype==='formula'))
+    warnings.push('Formula columns are computed automatically and were skipped');
+  if(head.some((h,i)=> fieldByLabel[low[i]] && ['link','mirror','file'].includes(fieldByLabel[low[i]].ftype)))
+    warnings.push('Link, Mirror and File columns can\'t be imported and were skipped');
+  const statusOf = v=>{ const s=String(v).trim().toLowerCase(); if(!s) return 'todo';
+    const m = STATUSES.find(x=> x.k===s || x.label.toLowerCase()===s); return m? m.k : 'todo'; };
+  const prioOf = v=>{ const s=String(v).trim().toLowerCase(); if(!s) return 'normal';
+    const m = PRIORITIES.find(x=> x.k===s || x.label.toLowerCase()===s); return m? m.k : 'normal'; };
+  const personOf = v=>{ const s=String(v).trim().toLowerCase(); if(!s) return null;
+    const m = (S.profiles||[]).find(p=> p.active && (p.full_name||'').trim().toLowerCase()===s); return m? m.id : null; };
+  const groupOf = v=>{ const s=String(v).trim().toLowerCase(); if(!s) return null;
+    const m = groups.find(g=> (g.name||'').trim().toLowerCase()===s); return m? m.id : null; };
+  const dateOf = v=>{
+    if(v instanceof Date && !isNaN(v)) return v.toISOString().slice(0,10);
+    if(typeof v === 'number' && v > 20000) return new Date(Math.round((v-25569)*86400000)).toISOString().slice(0,10);
+    const s = String(v).trim(); if(!s) return null;
+    const d = new Date(s); return isNaN(d)? null : d.toISOString().slice(0,10);
+  };
+  let misses = 0;
+  for(let i=hi+1; i<aoa.length; i++){
+    const r = aoa[i]||[];
+    const title = String(r[col('task')]??'').trim();
+    if(!title){ skipped++; continue; }
+    const t = {project_id:pid, title, status:'todo', priority:'normal', assignee_id:null, group_id:null, due_date:null, custom:{}, created_by:S.me.id};
+    if(col('status')>=0)   t.status = statusOf(r[col('status')]);
+    if(col('priority')>=0) t.priority = prioOf(r[col('priority')]);
+    if(col('assignee')>=0){ t.assignee_id = personOf(r[col('assignee')]);
+      if(!t.assignee_id && String(r[col('assignee')]).trim()) misses++; }
+    if(col('group')>=0)    t.group_id = groupOf(r[col('group')]);
+    if(col('due date')>=0) t.due_date = dateOf(r[col('due date')]);
+    head.forEach((h,ci)=>{
+      const f = fieldByLabel[low[ci]]; if(!f || ['formula','link','mirror','file'].includes(f.ftype)) return;
+      const v = r[ci]; if(v===''||v==null) return;
+      t.custom[f.id] = f.ftype==='checkbox'? /^(yes|true|1|y|✓)$/i.test(String(v).trim())
+        : f.ftype==='date'? (dateOf(v)||'') : String(v instanceof Date? v.toISOString().slice(0,10) : v);
+    });
+    tasks.push(t);
+  }
+  if(misses) warnings.push(`${misses} assignee name${misses>1?'s':''} didn't match anyone — those rows import unassigned`);
+  return {tasks, warnings, skipped};
+}
+function importPreviewModal(pid, res){
+  S._pendingImport = {pid, tasks:res.tasks};
+  const p = projById(pid);
+  modal(`<div class="modal-head"><h2>Import into ${esc(p? p.name:'this board')}</h2><button class="x" onclick="closeModals()">✕</button></div>
+    <div class="modal-body">
+      <p style="font-size:14px"><b>${res.tasks.length}</b> task${res.tasks.length>1?'s':''} ready to import${res.skipped? ` · ${res.skipped} empty row${res.skipped>1?'s':''} skipped`:''}.</p>
+      <div style="background:var(--gray-soft);border-radius:10px;padding:10px 14px;margin-top:10px;font-size:13px;color:var(--ink2)">
+        ${res.tasks.slice(0,6).map(t=>`<div>· ${esc(t.title)}</div>`).join('')}
+        ${res.tasks.length>6? `<div style="color:var(--ink3)">…and ${res.tasks.length-6} more</div>`:''}
+      </div>
+      ${res.warnings.length? `<div style="margin-top:12px;font-size:12.5px;color:var(--amber)">${res.warnings.map(w=>`<div>⚠ ${esc(w)}</div>`).join('')}</div>`:''}
+    </div>
+    <div class="modal-foot"><button class="btn btn-ghost" onclick="closeModals()">Cancel</button>
+      <button class="btn btn-primary" id="imp-go" onclick="doImportExcel()">Import ${res.tasks.length} task${res.tasks.length>1?'s':''}</button></div>`);
+}
+async function doImportExcel(){
+  const im = S._pendingImport; if(!im || !im.tasks.length) return;
+  const btn = document.getElementById('imp-go'); if(btn){ btn.disabled = true; btn.textContent = 'Importing…'; }
+  const base = Math.max(0, ...(S._tasks||[]).map(t=>t.position||0));
+  const payload = im.tasks.map((t,i)=> ({...t, position: base + i + 1}));
+  const {error} = await db.from('tasks').insert(payload);
+  if(error){ if(btn){ btn.disabled=false; btn.textContent='Import'; } return toast(error.message, true); }
+  toast(`${payload.length} task${payload.length>1?'s':''} imported`);
+  S._pendingImport = null;
+  closeModals(); renderProject(im.pid);
+}
+/* The board's own activity log — every task created, changed or removed here,
+   with Restore on removed tasks (the row itself comes back; comments and files don't). */
+async function boardActivityModal(pid){
+  const p = projById(pid);
+  const {data:rows} = await db.from('activity_log').select('*').eq('project_id', pid)
+    .order('created_at',{ascending:false}).limit(120);
+  const live = new Set((S._tasksAll||S._tasks||[]).map(t=>t.id));
+  modal(`<div class="modal-head"><h2>Board activity${p? ` — ${esc(p.name)}`:''}</h2><button class="x" onclick="closeModals()">✕</button></div>
+    <div class="modal-body">
+      ${(rows||[]).length? `<div class="hist">${rows.map(a=>{
+        const who = prof(a.actor_id);
+        const title = (a.detail||{}).title || '';
+        const canRestore = a.action==='deleted' && (a.detail||{}).snapshot && !live.has(a.entity_id) && isStaff();
+        return `<div class="hist-row">${avatar(who,true)}
+          <div class="hist-txt"><b>${esc(who?.full_name||'Someone')}</b> ${histLine(a)}${title? ` · <b>${esc(title)}</b>`:''}
+            <span class="hist-when" title="${fmtDateTime(a.created_at)}">${timeAgo(a.created_at)}</span>
+            ${canRestore? `<button class="hist-undo" onclick="restoreTask(${a.id}, '${pid}')">Restore</button>`:''}</div>
+        </div>`;}).join('')}</div>`
+      : '<div class="empty">Nothing recorded on this board yet.</div>'}
+    </div>
+    <div class="modal-foot"><button class="btn btn-ghost" onclick="closeModals()">Close</button></div>`, true);
+}
+async function restoreTask(logId, pid){
+  const {error} = await db.rpc('restore_deleted_task', {log_id: logId});
+  if(error) return toast(error.message, true);
+  toast('Task restored — back on the board');
+  closeModals();
+  if(S.route.view==='project' && S.route.id===pid) renderProject(pid);
+  else location.hash = '#/project/'+pid;
+}
+function tvHeadHTML(id, flds, showAddCol, gid){
+  return `<tr>
+    ${canEdit()?`<th class="tv-check"><input type="checkbox" title="Select all" onchange="tvSelGroup(this,'${gid}')"></th>`:''}<th>Task</th><th>Status</th><th>Assignee</th><th>Due date</th><th>Priority</th>
+    ${flds.map(f=>`<th class="${canManageBoard(id)?'col-edit':''}" ${canManageBoard(id)?`onclick="editColumnModal('${f.id}','${id}')" title="Edit column"`:''}>${esc(f.label)}</th>`).join('')}
+    ${isStaff()? (showAddCol&&canManageBoard(id)? `<th><span class="tv-addcol" onclick="addColumnModal('${id}')">＋ Column</span></th>`:'<th></th>'):''}
+  </tr>`;
+}
+/* Open dependency = this task waits on another that isn't done yet. */
+function taskHasOpenDeps(tid){
+  return (S._deps||[]).some(d=>{
+    if(d.task_id!==tid) return false;
+    const dt = (S._tasksAll||S._tasks||[]).find(x=>x.id===d.depends_on);
+    return !dt || dt.status!=='done';
+  });
+}
+const depIconHTML = ()=> `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--ink3);vertical-align:-1px;margin-right:4px"><title>Waiting on another task</title><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>`;
+function tvRowHTML(t, flds, gc){
+  const sc = (S._subs||{})[t.id];
+  const arch = !!t.archived_at;
+  const dep = taskHasOpenDeps(t.id)? depIconHTML() : '';
+  return `<tr class="tv-row${tvSel.has(t.id)?' rowsel':''}${arch?' tv-arch':''}" data-tid="${t.id}" ${gc?`style="--gcol:${gc}"`:''}>
+    ${canEdit()?`<td class="tv-check"><input type="checkbox" ${tvSel.has(t.id)?'checked':''} onchange="tvSelToggle('${t.id}',this.checked)"></td>`:''}
+    <td class="tv-name"><span class="tv-dots" title="Task options" onclick="event.stopPropagation();rowMenu(this,'${t.id}')">⋯</span><div class="tv-open" draggable="${canEdit()&&!arch}" ondragstart="tvDragStart(event,'${t.id}')" ondragend="tvDragEnd(event)" onclick="openTask('${t.id}')">${dep}${esc(t.title)}${sc&&sc.total? `<span class="subchip">${sc.done}/${sc.total}</span>`:''}</div>${arch&&canEdit()?`<span class="tv-restore" onclick="event.stopPropagation();tvUnarchive('${t.id}')">Restore</span>`:''}</td>
+    <td>${tvPickHTML('status', t.id, 'status', false, t.status, t)}</td>
+    <td>${tvPickHTML('people', t.id, 'assignee_id', false, t.assignee_id, t)}</td>
+    <td>${tvPickHTML('due', t.id, 'due_date', false, t.due_date, t)}</td>
+    <td>${tvPickHTML('priority', t.id, 'priority', false, t.priority, t)}</td>
+    ${flds.map(f=>`<td>${tvCell(t,f)}</td>`).join('')}
+    ${isStaff()? '<td></td>':''}
+  </tr>`;
+}
+function renderProjectTableView(id, rowSet, host){
+  const C = host || $('#board-body') || $('#content');
+  tvPid = id;
+  const SRC = rowSet || S._tasks || [];
+  const flds = S._fields||[], groups = S._groups||[];
+  tvBuildOpts(flds);
+  const cols = 5+(canEdit()?1:0)+flds.length+(isStaff()?1:0);
+  const byPos = (a,b)=> (a.position||0)-(b.position||0);
+  const tableFor = (rows, gid, first, gc)=> `<div class="tv-wrap" data-gid="${gid||''}" ondragover="tvDragOver(event)" ondragleave="tvDragLeave(event)" ondrop="tvDrop(event,'${id}')">
+    <table class="tv"><thead>${tvHeadHTML(id, flds, first, gid||(groups.length?'':'__all__'))}</thead><tbody>
+      ${rows.length? rows.map(t=>tvRowHTML(t,flds,gc)).join('') : `<tr><td colspan="${cols}"><div style="padding:14px;color:var(--ink3);font-size:13px">Drop tasks here, or add one below</div></td></tr>`}
+    </tbody></table>
+    ${canCreate()?`<div class="tv-quickadd"><input placeholder="＋ Add task" onkeydown="tvQuickAdd(event,'${id}',${gid?`'${gid}'`:'null'})"></div>`:''}
+  </div>`;
+  const nArch = (S._tasksAll||[]).filter(t=>t.archived_at).length;
+  const archBar = (nArch||tvShowArch)? `<div class="tv-archbar" onclick="tvToggleArch()">${tvShowArch?'▾':'▸'} ${nArch} archived task${nArch===1?'':'s'} — ${tvShowArch?'hide':'show'}</div>` : '';
+  if(!groups.length){
+    const rows = [...SRC].sort(byPos);
+    C.innerHTML = tableFor(rows, null, true)
+      + (canManageBoard(id)? `<div class="tv-addgroup" onclick="addGroupModal('${id}')" style="margin-top:14px">＋ Add group</div>`:'') + archBar;
+    return;
+  }
+  const gids = new Set(groups.map(g=>g.id));
+  const ungrouped = SRC.filter(t=>!t.group_id || !gids.has(t.group_id)).sort(byPos);
+  C.innerHTML = groups.map((g,i)=>{
+    const rows = SRC.filter(t=>t.group_id===g.id).sort(byPos);
+    const closed = tvCollapsed.has(g.id);
+    return `<div class="tv-group ${closed?'collapsed':''}" id="tvg-${g.id}">
+      <div class="tv-group-head"><span class="caret" onclick="tvToggleGroup('${g.id}')">${closed?'▸':'▾'}</span><span class="bar" style="background:${g.color}"></span>
+        <h3 style="color:${g.color}" onclick="tvToggleGroup('${g.id}')">${esc(g.name)}</h3><span class="cnt">${rows.length} task${rows.length===1?'':'s'}</span>
+        ${canManageBoard(id)? `<span class="g-edit" onclick="editGroupModal('${g.id}','${id}')">Edit</span>`:''}
+      </div>${tableFor(rows, g.id, i===0, g.color)}</div>`;
+  }).join('')
+  + (ungrouped.length? `<div class="tv-group">
+      <div class="tv-group-head"><span class="bar" style="background:#C6C9D8"></span><h3 style="color:var(--ink3)">No group</h3><span class="cnt">${ungrouped.length}</span></div>
+      ${tableFor(ungrouped, null, false)}</div>`:'')
+  + (canManageBoard(id)? `<div class="tv-addgroup" onclick="addGroupModal('${id}')">＋ Add group</div>`:'') + archBar;
+}
+const tvCollapsed = new Set();
+let tvPid = null;
+const tvSel = new Set();
+function tvSelToggle(id, on){
+  if(on) tvSel.add(id); else tvSel.delete(id);
+  document.querySelector(`tr[data-tid="${id}"]`)?.classList.toggle('rowsel', on);
+  tvBulkBar();
+}
+function tvSelGroup(el, gid){
+  const inGroups = new Set((S._groups||[]).map(g=>g.id));
+  const rows = gid==='__all__' ? (S._tasks||[])
+    : gid==='' ? (S._tasks||[]).filter(t=>!t.group_id || !inGroups.has(t.group_id))
+    : (S._tasks||[]).filter(t=>t.group_id===gid);
+  rows.forEach(t=>{ if(el.checked) tvSel.add(t.id); else tvSel.delete(t.id); });
+  const wrap = el.closest('.tv-wrap');
+  if(wrap) wrap.querySelectorAll('tbody .tv-check input').forEach(cb=>{ cb.checked=el.checked; cb.closest('tr')?.classList.toggle('rowsel', el.checked); });
+  tvBulkBar();
+}
+function tvSelClear(){ tvSel.clear(); tvBulkBar(); const y=scrollY; renderBoardBody(tvPid); scrollTo(0,y); }
+function tvBulkBar(){
+  document.getElementById('tvbulk')?.remove();
+  if(!tvSel.size) return;
+  const b=document.createElement('div'); b.id='tvbulk';
+  b.innerHTML=`<b>${tvSel.size} selected</b>
+    <button onclick="tvBulkPick(this,'status')">Status</button>
+    <button onclick="tvBulkPick(this,'group')">Group</button>
+    <button onclick="tvBulkPick(this,'assignee')">Assignee</button>
+    ${isStaff()? `<button onclick="tvBulkArchive()">Archive</button>`:''}
+    ${isAdmin()? `<button class="danger" onclick="tvBulkDelete()">Delete</button>`:''}
+    <button onclick="tvSelClear()">Clear</button>`;
+  document.body.appendChild(b);
+}
+function tvBulkPick(btn, which){
+  if(which==='status') tvShowMenu(btn, TVO.status, o=>`<span class="tv-fill mini" style="background:${STATUSES.find(s=>s.k===o.v)?.color}">${esc(o.l)}</span>`, v=>{ if(v) tvBulkApply('status',v); }, TVO.status.length>5, false);
+  else if(which==='assignee') tvShowMenu(btn, TVO.people, o=>`${avatar(prof(o.v),true)}<span>${esc(o.l)}</span>`, v=>tvBulkApply('assignee_id',v), true, true);
+  else if(which==='group') tvShowMenu(btn, (S._groups||[]).map(g=>({v:g.id,l:g.name})), o=>esc(o.l), v=>tvBulkApply('group_id',v), (S._groups||[]).length>5, true);
+}
+async function tvBulkApply(field, value){
+  const ids=[...tvSel]; if(!ids.length) return;
+  const {error}=await db.from('tasks').update({[field]:value}).in('id',ids);
+  if(error) return toast(error.message, true);
+  S._tasks.forEach(t=>{ if(tvSel.has(t.id)) t[field]=value; });
+  toast(ids.length+' task'+(ids.length>1?'s':'')+' updated');
+  const y=scrollY; renderBoardBody(tvPid); scrollTo(0,y);
+}
+/* Archive = reversible. This is the default for removing rows. */
+let tvShowArch = false;
+function tvApplyArch(){ S._tasks = tvShowArch ? (S._tasksAll||[]) : (S._tasksAll||[]).filter(t=>!t.archived_at); }
+function tvToggleArch(){ tvShowArch=!tvShowArch; tvApplyArch(); const y=scrollY; renderBoardBody(tvPid); scrollTo(0,y); }
+async function tvBulkArchive(){
+  const ids=[...tvSel]; if(!ids.length) return;
+  const at=new Date().toISOString();
+  const {error}=await db.from('tasks').update({archived_at:at}).in('id',ids);
+  if(error) return toast(error.message, true);
+  (S._tasksAll||[]).forEach(t=>{ if(tvSel.has(t.id)) t.archived_at=at; });
+  tvSel.clear(); tvBulkBar(); tvApplyArch();
+  toast(ids.length+' task'+(ids.length>1?'s':'')+' archived — "Show archived" to restore');
+  const y=scrollY; renderBoardBody(tvPid); scrollTo(0,y);
+}
+async function tvUnarchive(tid){
+  const {error}=await db.from('tasks').update({archived_at:null}).eq('id',tid);
+  if(error) return toast(error.message, true);
+  const t=(S._tasksAll||[]).find(x=>x.id===tid); if(t) t.archived_at=null;
+  tvApplyArch(); toast('Restored');
+  const y=scrollY; renderBoardBody(tvPid); scrollTo(0,y);
+}
+/* Permanent delete — admin only, typed confirmation, shows what is going. */
+function tvBulkDelete(){
+  const ids=[...tvSel]; if(!ids.length) return;
+  if(!isAdmin()) return toast('Only an admin can permanently delete tasks', true);
+  const rows = (S._tasks||[]).filter(t=>tvSel.has(t.id));
+  const preview = rows.slice(0,8).map(t=>`<li>${esc(t.title||'(untitled)')}</li>`).join('')
+    + (rows.length>8? `<li style="color:var(--ink3)">…and ${rows.length-8} more</li>`:'');
+  const m = modal(`<div class="modal-head"><h2>Delete ${ids.length} task${ids.length>1?'s':''} permanently?</h2><button class="x" onclick="closeModals()">✕</button></div>
+    <div class="modal-body">
+      <div class="danger-note">
+        <b>This cannot be undone.</b> Subtasks, comments and attachments on these tasks go with them.
+        Use <b>Archive</b> instead if you just want them out of the board.
+      </div>
+      <ul style="margin:0 0 14px 18px;font-size:13px;color:var(--ink2);max-height:170px;overflow:auto">${preview}</ul>
+      <label>Type <b>${ids.length}</b> to confirm</label>
+      <input id="bd-confirm" inputmode="numeric" autocomplete="off" placeholder="${ids.length}">
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-ghost" onclick="closeModals()">Cancel</button>
+      <button class="btn btn-ghost" id="bd-archive">Archive instead</button>
+      <button class="btn btn-danger" id="bd-go" disabled>Delete permanently</button>
+    </div>`);
+  const inp=m.querySelector('#bd-confirm'), go=m.querySelector('#bd-go');
+  inp.oninput = ()=>{ go.disabled = inp.value.trim() !== String(ids.length); };
+  m.querySelector('#bd-archive').onclick = ()=>{ closeModals(); tvBulkArchive(); };
+  go.onclick = async ()=>{
+    go.disabled=true; go.textContent='Deleting…';
+    const {error}=await db.from('tasks').delete().in('id',ids);
+    if(error){ go.disabled=false; go.textContent='Delete permanently'; return toast(error.message, true); }
+    S._tasksAll = (S._tasksAll||[]).filter(t=>!tvSel.has(t.id));
+    tvSel.clear(); tvBulkBar(); tvApplyArch(); closeModals(); toast(ids.length+' task'+(ids.length>1?'s':'')+' deleted');
+    const y=scrollY; renderBoardBody(tvPid); scrollTo(0,y);
+  };
+  setTimeout(()=>inp.focus(), 30);
+}
+/* ---- per-row task menu (monday-style ⋯) ---- */
+function rowMenu(anchor, tid){
+  const t = (S._tasksAll||[]).find(x=>x.id===tid); if(!t) return;
+  const items = [
+    {label:'Open task', fn:()=>openTask(tid)},
+    {label:'Copy task link', fn:()=>copyTaskLink(tid)},
+  ];
+  if(canEdit() && !t.archived_at){
+    items.push('-');
+    items.push({label:'Move to top of group', fn:()=>taskMoveTop(tid)});
+    if((S._groups||[]).length) items.push({label:'Move to group…', fn:()=>taskMoveGroup(anchor, tid)});
+    items.push({label:'Move to another board…', fn:()=>taskMoveBoard(anchor, tid)});
+    items.push({label:'Duplicate', fn:()=>taskDuplicate(tid)});
+    items.push({label:'New task below', fn:()=>newTaskModal(t.project_id, t.status, t.group_id)});
+    items.push('-');
+    items.push({label:'Archive', fn:()=>taskArchiveOne(tid)});
+    if(isAdmin()) items.push({label:'Delete', danger:true, fn:()=>rowDelete(tid)});
+  }
+  ctxMenu(anchor, items);
+}
+function copyTaskLink(tid){
+  const url = location.origin + location.pathname + '#/task/' + tid;
+  const done = ()=>toast('Task link copied');
+  if(navigator.clipboard?.writeText) navigator.clipboard.writeText(url).then(done, ()=>prompt('Copy this link:', url));
+  else prompt('Copy this link:', url);
+}
+async function taskMoveTop(tid){
+  const t=(S._tasksAll||[]).find(x=>x.id===tid); if(!t) return;
+  const peers=(S._tasksAll||[]).filter(x=>x.group_id===t.group_id && x.id!==tid);
+  const pos = Math.min(0, ...peers.map(x=>x.position||0)) - 1;
+  const {error}=await db.from('tasks').update({position:pos}).eq('id',tid);
+  if(error) return toast(error.message, true);
+  t.position=pos; renderBoardBody(t.project_id);
+}
+function taskMoveGroup(anchor, tid){
+  const t=(S._tasksAll||[]).find(x=>x.id===tid); if(!t) return;
+  tvShowMenu(anchor, (S._groups||[]).filter(g=>g.id!==t.group_id).map(g=>({v:g.id,l:g.name})), o=>esc(o.l),
+    async v=>{ if(!v) return;
+      const {error}=await db.from('tasks').update({group_id:v}).eq('id',tid);
+      if(error) return toast(error.message, true);
+      t.group_id=v; renderBoardBody(t.project_id); toast('Moved to '+esc((S._groups.find(g=>g.id===v)||{}).name||'group'));
+    }, (S._groups||[]).length>5, false);
+}
+function taskMoveBoard(anchor, tid){
+  const t=(S._tasksAll||[]).find(x=>x.id===tid); if(!t) return;
+  const boards = S.projects.filter(p=>p.id!==t.project_id && p.status==='active');
+  if(!boards.length) return toast('No other board to move to', true);
+  tvShowMenu(anchor, boards.map(p=>({v:p.id,l:p.name})), o=>esc(o.l),
+    async v=>{ if(!v) return;
+      const {error}=await db.from('tasks').update({project_id:v, group_id:null}).eq('id',tid);
+      if(error) return toast(error.message, true);
+      S._tasksAll = S._tasksAll.filter(x=>x.id!==tid); tvApplyArch();
+      renderBoardBody(t.project_id);
+      toast('Moved to '+esc((projById(v)||{}).name||'board'));
+    }, boards.length>5, false);
+}
+async function taskDuplicate(tid){
+  const t=(S._tasksAll||[]).find(x=>x.id===tid); if(!t) return;
+  const {data, error}=await db.from('tasks').insert({
+    project_id:t.project_id, group_id:t.group_id, title:t.title+' (copy)',
+    description:t.description, status:t.status, priority:t.priority,
+    assignee_id:t.assignee_id, due_date:t.due_date, tags:t.tags,
+    custom:t.custom||{}, created_by:S.me.id, position:(t.position||0)+0.5,
+  }).select().single();
+  if(error) return toast(error.message, true);
+  S._tasksAll.push(data); tvApplyArch(); renderBoardBody(t.project_id);
+  toast('Task duplicated');
+}
+async function taskArchiveOne(tid){
+  const t=(S._tasksAll||[]).find(x=>x.id===tid); if(!t) return;
+  const at=new Date().toISOString();
+  const {error}=await db.from('tasks').update({archived_at:at}).eq('id',tid);
+  if(error) return toast(error.message, true);
+  t.archived_at=at; tvApplyArch(); renderBoardBody(t.project_id);
+  toastUndo('Task archived', ()=>tvUnarchive(tid));
+}
+function rowDelete(tid){
+  tvSel.clear(); tvSel.add(tid); tvBulkDelete();
+}
+function tvQuickAdd(e, pid, gid){
+  if(e.key!=='Enter') return;
+  const inp=e.target, title=inp.value.trim(); if(!title) return;
+  inp.disabled=true;
+  const maxPos=Math.max(0,...(S._tasks||[]).map(t=>t.position||0));
+  db.from('tasks').insert({project_id:pid, title, group_id:gid, status:'todo', priority:'normal', created_by:S.me.id, position:maxPos+1}).select().single().then(({data,error})=>{
+    if(error){ toast(error.message, true); inp.disabled=false; return; }
+    S._tasks.push(data);
+    const y=scrollY; renderBoardBody(pid); scrollTo(0,y);
+  });
+}
+window.addEventListener('hashchange', ()=>{ tvSel.clear(); document.getElementById('tvbulk')?.remove(); document.getElementById('tvmenu')?.remove(); });
+function tvToggleGroup(gid){
+  const box = document.getElementById('tvg-'+gid); if(!box) return;
+  if(tvCollapsed.has(gid)) tvCollapsed.delete(gid); else tvCollapsed.add(gid);
+  box.classList.toggle('collapsed', tvCollapsed.has(gid));
+  const caret = box.querySelector('.caret'); if(caret) caret.textContent = tvCollapsed.has(gid)?'▸':'▾';
+}
+let tvDragId=null;
+function tvDragStart(e, tid){ tvDragId=tid; e.currentTarget.closest('tr')?.classList.add('dragging'); e.dataTransfer.effectAllowed='move'; }
+function tvDragEnd(e){ e.currentTarget.closest('tr')?.classList.remove('dragging'); }
+function tvDragOver(e){ e.preventDefault(); e.currentTarget.classList.add('dragover'); }
+function tvDragLeave(e){ e.currentTarget.classList.remove('dragover'); }
+async function tvDrop(e, pid){
+  e.preventDefault(); const wrap=e.currentTarget; wrap.classList.remove('dragover');
+  const gid = wrap.dataset.gid||null; if(!tvDragId) return;
+  const t=S._tasks.find(x=>x.id===tvDragId); tvDragId=null;
+  if(!t || (t.group_id||null)===gid) return;
+  const old=t.group_id||null; t.group_id=gid;
+  renderBoardBody(pid);
+  const {error}=await db.from('tasks').update({group_id:gid}).eq('id',t.id);
+  if(error){ t.group_id=old; renderBoardBody(pid); toast(error.message, true); }
+}
+function addGroupModal(pid){ groupModal(pid, null); }
+function editGroupModal(gid, pid){ const g=(S._groups||[]).find(x=>x.id===gid); if(g) groupModal(pid, g); }
+function groupModal(pid, g){
+  const palette=['#0F766E','#2273C9','#B97A08','#D6455B','#6C5CE7','#12915E','#E17055','#8E93A8'];
+  const cur = g? g.color : palette[(S._groups||[]).length % palette.length];
+  const m = modal(`<div class="modal-head"><h2>${g?'Edit group':'New group'}</h2><button class="x" onclick="closeModals()">✕</button></div>
+    <div class="modal-body">
+      <label>Group name <span class="req">*</span></label><input id="gr-name" value="${g? esc(g.name):''}" placeholder="e.g. In progress">
+      <label>Color</label>
+      <div id="gr-colors" style="display:flex;gap:8px;margin-top:4px">${palette.map(c=>
+        `<span data-c="${c}" onclick="[...this.parentNode.children].forEach(x=>x.style.outline='none');this.style.outline='2px solid var(--ink)';this.parentNode.dataset.sel=this.dataset.c"
+          style="width:22px;height:22px;border-radius:50%;background:${c};cursor:pointer;outline:${c===cur?'2px solid var(--ink)':'none'};outline-offset:2px"></span>`).join('')}</div>
+    </div>
+    <div class="modal-foot">
+      ${g? `<button class="btn btn-ghost" id="gr-del" style="color:var(--red)">Delete group</button>`:''}
+      <button class="btn btn-ghost" onclick="closeModals()">Cancel</button>
+      <button class="btn btn-primary" id="gr-save">${g?'Save':'Add group'}</button>
+    </div>`);
+  m.querySelector('#gr-colors').dataset.sel = cur;
+  if(g){
+    m.querySelector('#gr-del').onclick = async ()=>{
+      const {error}=await db.from('project_groups').delete().eq('id',g.id);
+      if(error) return toast(error.message, true);
+      closeModals(); toast('Group deleted (tasks kept)'); renderProject(pid);
+    };
+  }
+  m.querySelector('#gr-save').onclick = async ()=>{
+    const name=m.querySelector('#gr-name').value.trim(); if(!name) return toast('Group name is required', true);
+    const color=m.querySelector('#gr-colors').dataset.sel;
+    let error;
+    if(g){ ({error} = await db.from('project_groups').update({name, color}).eq('id',g.id)); }
+    else { ({error} = await db.from('project_groups').insert({project_id:pid, name, color, position:(S._groups||[]).length})); }
+    if(error) return toast(error.message, true);
+    closeModals(); toast(g?'Group updated':'Group added'); renderProject(pid);
+  };
+}
+async function tvCore(tid, field, val){
+  const t=S._tasks.find(x=>x.id===tid); if(!t) return;
+  const old=t[field]; t[field]=val;
+  const {error}=await db.from('tasks').update({[field]:val}).eq('id',tid);
+  if(error){ t[field]=old; toast(error.message, true); }
+
+}
+async function tvCustom(tid, fid, val){
+  const t=S._tasks.find(x=>x.id===tid); if(!t) return;
+  t.custom = Object.assign({}, t.custom||{});
+  if(val===''||val===null){ delete t.custom[fid]; } else { t.custom[fid]=val; }
+  const {error}=await db.from('tasks').update({custom:t.custom}).eq('id',tid);
+  if(error) toast(error.message, true);
+}
+function addColumnModal(pid){ columnModal(pid, null); }
+function editColumnModal(fid, pid){ const f=(S._fields||[]).find(x=>x.id===fid); if(f) columnModal(pid, f); }
+function columnModal(pid, f){
+  const types=[['text','Text'],['number','Number'],['date','Date'],['select','Dropdown'],['checkbox','Checkbox'],['person','Person'],['brand','Brand'],['platform','Platform'],['file','File'],['formula','Formula'],['link','Link to board'],['mirror','Mirror']];
+  const linkFields = (S._fields||[]).filter(x=>x.ftype==='link' && (!f || x.id!==f.id));
+  const m = modal(`<div class="modal-head"><h2>${f?'Edit column':'New column'}</h2><button class="x" onclick="closeModals()">✕</button></div>
+    <div class="modal-body">
+      <label>Column name <span class="req">*</span></label><input id="cf-label" value="${f? esc(f.label):''}" placeholder="e.g. Store Location">
+      <label>Type</label><select id="cf-type" ${f?'disabled':''}>${types.map(([k,l])=>`<option value="${k}" ${f&&f.ftype===k?'selected':''}>${l}</option>`).join('')}</select>
+      <div id="cf-opts-wrap" style="display:${(f? f.ftype:'text')==='select'?'block':'none'}">
+        <label>Dropdown options (one per line)</label>
+        <textarea id="cf-opts" rows="4" placeholder="Option A&#10;Option B">${f && Array.isArray(f.options)? esc(f.options.join('\n')):''}</textarea>
+      </div>
+      <div id="cf-fx-wrap" style="display:${(f? f.ftype:'text')==='formula'?'block':'none'}">
+        <label>Formula</label>
+        <textarea id="cf-fx" rows="3" spellcheck="false" style="font-family:ui-monospace,Menlo,monospace;font-size:13px" placeholder='IF({Status} = "Done", "✓", DAYS({Due date}, TODAY()) & " days left")'>${f && f.options && f.options.expr? esc(f.options.expr):''}</textarea>
+        <div style="font-size:11.5px;color:var(--ink3);margin:7px 0 4px">Click to insert a field:</div>
+        <div id="cf-fx-fields" style="display:flex;flex-wrap:wrap;gap:5px"></div>
+        <div style="font-size:11.5px;color:var(--ink3);margin:9px 0 4px">Functions: <span style="font-family:ui-monospace,Menlo,monospace">CONCATENATE UPPER LOWER LEFT RIGHT LEN REPLACE IF AND OR NOT ROUND ABS MIN MAX SUM AVERAGE DAYS TODAY</span> · text joins with <b>&amp;</b>, numbers use <b>+ − × ÷</b></div>
+        <div id="cf-fx-prev" style="margin-top:9px;padding:8px 11px;border:1px solid var(--line);border-radius:8px;background:var(--gray-soft);font-size:12.5px;color:var(--ink2)">Preview appears as you type</div>
+      </div>
+      <div id="cf-link-wrap" style="display:${(f? f.ftype:'text')==='link'?'block':'none'}">
+        <label>Board to link to</label>
+        <select id="cf-link-board"><option value="">Choose a board…</option>
+          ${(S.projects||[]).filter(p=>p.id!==pid).map(p=>`<option value="${p.id}" ${f&&f.options&&f.options.project_id===p.id?'selected':''}>${esc(p.name)}</option>`).join('')}</select>
+        <p style="color:var(--ink3);font-size:12px;margin-top:6px">Each row can point at one task on that board.</p>
+      </div>
+      <div id="cf-mirror-wrap" style="display:${(f? f.ftype:'text')==='mirror'?'block':'none'}">
+        ${linkFields.length? `<label>Via link column</label>
+        <select id="cf-mirror-via">${linkFields.map(x=>`<option value="${x.id}" ${f&&f.options&&f.options.via===x.id?'selected':''}>${esc(x.label)}</option>`).join('')}</select>
+        <label>Show</label>
+        <select id="cf-mirror-show">${[['status','Status'],['priority','Priority'],['assignee','Assignee'],['due_date','Due date']].map(([v,l])=>`<option value="${v}" ${f&&f.options&&f.options.show===v?'selected':''}>${l}</option>`).join('')}</select>`
+        : `<p style="color:var(--ink3);font-size:12.5px;margin-top:8px">Add a <b>Link to board</b> column first — a mirror shows a value from the task each row links to.</p>`}
+      </div>
+      ${f? `<p style="color:var(--ink3);font-size:12.5px;margin-top:10px">Type cannot be changed after creation. Deleting a column keeps task data but hides it.</p>`:''}
+    </div>
+    <div class="modal-foot">
+      ${f? `<button class="btn btn-ghost" id="cf-del" style="color:var(--red)">Delete column</button>`:''}
+      <button class="btn btn-ghost" onclick="closeModals()">Cancel</button>
+      <button class="btn btn-primary" id="cf-save">${f?'Save':'Add column'}</button>
+    </div>`);
+  const syncType = v=>{
+    m.querySelector('#cf-opts-wrap').style.display = v==='select'?'block':'none';
+    m.querySelector('#cf-fx-wrap').style.display   = v==='formula'?'block':'none';
+    m.querySelector('#cf-link-wrap').style.display = v==='link'?'block':'none';
+    m.querySelector('#cf-mirror-wrap').style.display = v==='mirror'?'block':'none';
+  };
+  m.querySelector('#cf-type').onchange = e=> syncType(e.target.value);
+  // mirror wiring: when the link column changes, offer the target board's own fields too
+  const viaSel = m.querySelector('#cf-mirror-via'), showSel = m.querySelector('#cf-mirror-show');
+  let mirrorInit = true;   // on open, keep the saved "show" (it may be a target-board field id)
+  async function loadMirrorShow(){
+    if(!viaSel || !showSel || !viaSel.value) return;
+    const lf = (S._fields||[]).find(x=>x.id===viaSel.value);
+    const tb = lf && lf.options && lf.options.project_id;
+    const keep = (mirrorInit && f && f.options && f.options.show) || showSel.value || 'status';
+    mirrorInit = false;
+    const core = [['status','Status'],['priority','Priority'],['assignee','Assignee'],['due_date','Due date']];
+    let extra = [];
+    if(tb){
+      const {data:tf} = await db.from('project_fields').select('id,label,ftype').eq('project_id',tb);
+      extra = (tf||[]).filter(x=>!['formula','link','mirror'].includes(x.ftype)).map(x=>[x.id, x.label]);
+    }
+    showSel.innerHTML = core.concat(extra).map(([v,l])=>`<option value="${esc(v)}" ${v===keep?'selected':''}>${esc(l)}</option>`).join('');
+  }
+  if(viaSel){ viaSel.onchange = loadMirrorShow; loadMirrorShow(); }
+  // formula builder wiring: field chips + live preview against a real row
+  const fxIn = m.querySelector('#cf-fx'), fxPrev = m.querySelector('#cf-fx-prev');
+  const chipNames = ['Name','Status','Assignee','Due date','Priority','Group']
+    .concat((S._fields||[]).filter(x=>(!f || x.id!==f.id) && !['link','mirror'].includes(x.ftype)).map(x=>x.label));
+  m.querySelector('#cf-fx-fields').innerHTML = chipNames.map(n=>`<button type="button" class="fx-chip">{${esc(n)}}</button>`).join('');
+  m.querySelectorAll('.fx-chip').forEach(ch=> ch.onclick = ()=>{
+    const pos = fxIn.selectionStart ?? fxIn.value.length;
+    fxIn.value = fxIn.value.slice(0,pos) + ch.textContent + fxIn.value.slice(fxIn.selectionEnd ?? pos);
+    fxIn.focus(); fxIn.selectionStart = fxIn.selectionEnd = pos + ch.textContent.length;
+    fxPreview();
+  });
+  const sampleTask = ()=> (S._tasks||[]).find(t=>!t.archived_at) || (S._tasks||[])[0] || {title:'Sample task', status:'todo', priority:'normal', custom:{}, created_at:new Date().toISOString()};
+  function fxPreview(){
+    const src = fxIn.value.trim();
+    if(!src){ fxPrev.innerHTML = 'Preview appears as you type'; return; }
+    try{ fxPrev.innerHTML = 'Preview: <b>'+esc(fxFormat(fxEval(src, sampleTask())))+'</b>'; fxPrev.style.color='var(--ink)'; }
+    catch(e){ fxPrev.innerHTML = '⚠ '+esc(e.message); fxPrev.style.color='var(--amber)'; }
+  }
+  fxIn.oninput = fxPreview;
+  if(f && f.ftype==='formula') fxPreview();
+  if(f){
+    m.querySelector('#cf-del').onclick = async ()=>{
+      const {error}=await db.from('project_fields').delete().eq('id',f.id);
+      if(error) return toast(error.message, true);
+      closeModals(); toast('Column deleted'); renderProject(pid);
+    };
+  }
+  m.querySelector('#cf-save').onclick = async ()=>{
+    const label=m.querySelector('#cf-label').value.trim(); if(!label) return toast('Column name is required', true);
+    const ftype=m.querySelector('#cf-type').value;
+    let options = ftype==='select'? m.querySelector('#cf-opts').value.split('\n').map(s=>s.trim()).filter(Boolean) : [];
+    if(ftype==='select' && !options.length) return toast('Add at least one dropdown option', true);
+    if(ftype==='formula'){
+      const expr = m.querySelector('#cf-fx').value.trim();
+      if(!expr) return toast('Write a formula first', true);
+      try{ fxEval(expr, {title:'x', status:'todo', priority:'normal', custom:{}, created_at:new Date().toISOString()}); }
+      catch(e){ if(/Unknown field|not a known function|missing|not closed|Unexpected|too early|loop/i.test(e.message)) return toast('Formula problem: '+e.message, true); }
+      options = {expr};
+    }
+    if(ftype==='link'){
+      const target = m.querySelector('#cf-link-board').value;
+      if(!target) return toast('Pick the board this column links to', true);
+      options = {project_id: target};
+    }
+    if(ftype==='mirror'){
+      const via = m.querySelector('#cf-mirror-via')?.value;
+      const show = m.querySelector('#cf-mirror-show')?.value;
+      if(!via) return toast('A mirror needs a "Link to board" column on this board first', true);
+      if(!show) return toast('Pick what the mirror should show', true);
+      options = {via, show};
+    }
+    let error;
+    if(f){ ({error} = await db.from('project_fields').update({label, options}).eq('id',f.id)); }
+    else { ({error} = await db.from('project_fields').insert({project_id:pid, label, ftype, options, position:(S._fields||[]).length, created_by:S.me.id})); }
+    if(error) return toast(error.message, true);
+    closeModals(); toast(f?'Column updated':'Column added'); renderProject(pid);
+  };
+}
+/* A board can have several owners. The crown toggles one person in or out. */
+async function setBoardOwner(pid, uid){
+  const p = projById(pid); if(!p) return;
+  if(!(isAdmin() || ownsBoard(pid))) return toast('Only an owner of this board or an admin can change its owners', true);
+  const owners = boardOwnerIds(pid), has = owners.includes(uid);
+  if(has && owners.length<=1){
+    if(!isAdmin()) return toast('A board needs at least one owner — add someone else first', true);
+    if(!confirm(`Remove the last owner of ${p.name}? Only admins will be able to manage its settings until someone is made owner again.`)) return;
+  }
+  if(has && uid===(S.me||{}).id && !isAdmin()
+     && !confirm(`Step down as an owner of ${p.name}? You will lose control of its settings.`)) return;
+  const {error} = has
+    ? await db.from('project_owners').delete().eq('project_id',pid).eq('user_id',uid)
+    : await db.from('project_owners').insert({project_id:pid, user_id:uid});
+  if(error) return toast(error.message, true);
+  await refreshCore(); closeModals();
+  toast(has? `${ownerName(uid)} is no longer an owner` : `${ownerName(uid)} is now an owner`);
+  projectMembersModal(pid);
+}
+async function projectMembersModal(pid){
+  const {data:members} = await db.from('project_members').select('*').eq('project_id',pid);
+  const memberIds = new Set((members||[]).map(m=>m.user_id));
+  const externals = S.profiles.filter(p=>['partner','freelancer'].includes(p.role));
+  const board = (S.projects||[]).find(x=>x.id===pid) || {};
+  // Everyone who can already open this board: owner, admin/management, the
+  // workspace's members, plus any partner explicitly added to it.
+  const {data:wsm} = await db.from('workspace_members').select('user_id').eq('workspace_id', board.workspace_id);
+  const canSetOwner = isAdmin() || ownsBoard(pid);
+  const ownerIds = boardOwnerIds(pid);
+  const ids = [...new Set([...ownerIds, ...(wsm||[]).map(r=>r.user_id), ...memberIds,
+    ...S.profiles.filter(p=>p.active && ['admin','management'].includes(p.role)).map(p=>p.id)].filter(Boolean))];
+  const people = ids.map(id=>prof(id)).filter(p=>p && p.active && !(p.email||'').startsWith('forms+'))
+    .sort((a,b)=> (ownerIds.includes(b.id)) - (ownerIds.includes(a.id))
+                  || (a.full_name||'').localeCompare(b.full_name||''));
+  const peopleHTML = `
+      ${searchBoxHTML('pm-q','Search by name, team, role, or email address')}
+      ${canGuest? teamAddHTML('pm-team') : ''}
+      <label style="margin-top:4px">People on this board</label>
+      <div style="display:flex;gap:26px;align-items:center;margin:6px 0 10px;font-size:12.5px;color:var(--ink2)">
+        <span style="display:flex;align-items:center;gap:8px">Members ${avatarStack(people.filter(p=>!ownerIds.includes(p.id)).map(p=>p.id))}</span>
+        <span style="display:flex;align-items:center;gap:8px">Owners ${avatarStack(ownerIds)}</span>
+      </div>
+      <div style="margin-top:4px">${people.map(p=>`
+        <div class="person-row" data-search="${esc(searchKey(p))}">
+          ${avatar(p,true)}
+          <span class="pr-name">${esc(p.full_name||p.email)}
+            ${p.job_title? `<span class="pr-sub">${esc(p.job_title)}</span>`:''}</span>
+          ${ownerHeartHTML(ownerIds.includes(p.id), canSetOwner, `setBoardOwner('${pid}','${p.id}')`, 'board')}
+        </div>`).join('')}</div>
+      <div style="font-size:12px;color:var(--ink3);margin:6px 0 14px">
+        A filled heart marks an owner${canSetOwner? ' — click an outline heart to make someone an owner, or a filled one to remove them':''}.
+        Owners and admins manage this board's settings; everyone here works on its tasks.
+      </div>`;
+  const vis = board.visibility || 'collaborate';
+  const canGuest = vis === 'shareable';
+  const m = modal(`<div class="modal-head"><h2>Board members (partner access)</h2><button class="x" onclick="closeModals()">✕</button></div>
+    <div class="modal-body">
+      ${peopleHTML}
+      <p style="color:var(--ink2);font-size:13px;margin-top:8px">Internal staff already see every board in their workspaces. Add partners or freelancers here to give them access to <b>this board only</b>.</p>
+      ${canGuest? '' : `<div style="margin-top:12px;padding:10px 12px;background:var(--gray-soft);border-radius:8px;font-size:12.5px;color:var(--ink2)">
+        This board is <b>${VIS[vis].label}</b>, so outside guests can't be added. Switch it to <b>Shareable</b> first.
+        ${canEdit()? `<button class="btn btn-ghost btn-sm" style="margin-left:8px" id="pm-tovis">Make Shareable</button>`:''}</div>`}
+      ${externals.length? externals
+        .sort((a,b)=> (memberIds.has(b.id)) - (memberIds.has(a.id)) || (a.full_name||'').localeCompare(b.full_name||''))
+        .map(p=>`
+        <div class="chk" data-search="${esc(searchKey(p))}" ${canGuest?'':'style="opacity:.45"'}><input type="checkbox" data-uid="${p.id}" ${memberIds.has(p.id)?'checked':''} ${canGuest?'':'disabled'}>
+        ${avatar(p,true)} <span>${esc(p.full_name)} <span style="color:var(--ink3)">· ${esc(p.email)}</span></span></div>`).join('')
+      : '<div class="empty">No partner or freelancer accounts yet. Create them in Admin → Users.</div>'}
+    </div>
+    <div class="modal-foot"><button class="btn btn-ghost" onclick="closeModals()">Close</button><button class="btn btn-primary" id="pm-save" ${canGuest?'':'disabled'}>Save</button></div>`);
+  wireMemberSearch(m, 'pm-q');
+  wireTeamAdd(m, 'pm-team');
+  m.querySelector('#pm-tovis')?.addEventListener('click', async ()=>{
+    const {error} = await db.from('projects').update({visibility:'shareable'}).eq('id',pid);
+    if(error) return toast(error.message, true);
+    board.visibility='shareable'; await refreshCore();
+    closeModals(); toast('Board is now Shareable'); projectMembersModal(pid);
+  });
+  m.querySelector('#pm-save').onclick = async ()=>{
+    const want = new Set([...m.querySelectorAll('input[data-uid]:checked')].map(i=>i.dataset.uid));
+    const add=[...want].filter(u=>!memberIds.has(u)).map(user_id=>({project_id:pid,user_id}));
+    const rm=[...memberIds].filter(u=>!want.has(u));
+    if(add.length){ const {error} = await db.from('project_members').insert(add); if(error) return toast(error.message, true); }
+    if(rm.length){ const {error} = await db.from('project_members').delete().eq('project_id',pid).in('user_id',rm); if(error) return toast(error.message, true); }
+    closeModals(); toast('Members updated');
+  };
+}
+</script>

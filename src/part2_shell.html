@@ -1,0 +1,884 @@
+<div id="login-screen">
+  <div class="login-card">
+    <div class="logo-mark">C</div>
+    <h1 id="li-title">WorkOS</h1>
+    <p id="li-sub">Sign in to your workspace</p>
+    <div id="su-fields" class="hidden">
+      <label>Company name</label>
+      <input id="su-company" placeholder="Your company">
+      <label>Your name</label>
+      <input id="su-name" placeholder="Full name">
+    </div>
+    <label>Email</label>
+    <input id="li-email" type="email" placeholder="you@company.com" autocomplete="username">
+    <label>Password</label>
+    <input id="li-pass" type="password" placeholder="••••••••" autocomplete="current-password">
+    <div class="login-err" id="li-err"></div>
+    <button class="btn btn-primary" id="li-btn" style="width:100%;justify-content:center;margin-top:18px;padding:11px">Sign in</button>
+    <p style="margin-top:16px;font-size:12.5px;color:var(--ink3);text-align:center">
+      <span id="li-toggle-wrap">New company? <a href="#" id="li-toggle">Start a free 14-day trial</a></span>
+    </p>
+  </div>
+</div>
+
+<div id="app" class="hidden">
+  <div id="sidebar">
+    <div class="logo"><div class="logo-mark">W</div><div><b>WorkOS</b><span id="logo-co">Operations</span></div></div>
+    <div id="nav-main"></div>
+    <div class="nav-section" id="ws-section-title" style="display:flex;align-items:center;justify-content:space-between">Workspaces</div>
+    <div id="nav-ws"></div>
+    <div id="sidebar-user"></div>
+  </div>
+  <div id="main">
+    <div id="topbar">
+      <div class="crumb" id="crumb">Home</div>
+      <div class="topbar-right" id="topbar-actions"></div>
+      <div id="bell-wrap"><button id="bell" title="Notifications" aria-label="Notifications" onclick="toggleNotifPanel(event)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M18 8.4A6 6 0 1 0 6 8.4c0 4.55-1.6 5.86-2.05 6.26a.62.62 0 0 0 .42 1.09h15.26a.62.62 0 0 0 .42-1.09C19.6 14.26 18 12.95 18 8.4Z"/>
+          <path d="M13.73 19.6a2 2 0 0 1-3.46 0"/>
+        </svg><span id="bell-count" class="hidden"></span></button></div>
+    </div>
+    <div id="ten-banner" class="hidden" style="padding:8px 24px;font-size:12.5px;font-weight:600;background:var(--amber-soft);color:var(--amber);border-bottom:1px solid var(--line)"></div>
+    <div id="content"></div>
+  </div>
+</div>
+<div id="toasts"></div>
+<div id="modal-root"></div>
+
+<script>
+/* ================= CONFIG ================= */
+const SUPABASE_URL = "__SUPABASE_URL__";
+const SUPABASE_ANON = "__SUPABASE_ANON__";
+const ADMIN_API = SUPABASE_URL + "/functions/v1/admin-api";
+const db = supabase.createClient(SUPABASE_URL, SUPABASE_ANON);
+
+const STATUSES = [
+  {k:'todo', label:'To Do', color:'#8E93A8'},
+  {k:'in_progress', label:'In Progress', color:'#2273C9'},
+  {k:'review', label:'Review', color:'#B97A08'},
+  {k:'blocked', label:'Blocked', color:'#D6455B'},
+  {k:'done', label:'Done', color:'#12915E'},
+];
+const PRIORITIES = [
+  {k:'urgent', label:'Urgent', color:'var(--red)', soft:'var(--red-soft)'},
+  {k:'high', label:'High', color:'var(--amber)', soft:'var(--amber-soft)'},
+  {k:'normal', label:'Normal', color:'var(--blue)', soft:'var(--blue-soft)'},
+  {k:'low', label:'Low', color:'var(--ink3)', soft:'var(--gray-soft)'},
+];
+const PLATFORMS = [
+  {k:'TikTok Shop', label:'TikTok Shop', color:'#111827'},
+  {k:'Shopee',      label:'Shopee',      color:'#EE4D2D'},
+  {k:'Lazada',      label:'Lazada',      color:'#0F146D'},
+  {k:'Shopify',     label:'Shopify',     color:'#5E8E3E'},
+  {k:'Amazon',      label:'Amazon',      color:'#E28C13'},
+  {k:'LINE',        label:'LINE',        color:'#06C755'},
+  {k:'Facebook',    label:'Facebook',    color:'#1877F2'},
+  {k:'Instagram',   label:'Instagram',   color:'#C13584'},
+  {k:'Website',     label:'Website',     color:'#2273C9'},
+  {k:'Other',       label:'Other',       color:'#8E93A8'},
+];
+const REQ_STATUSES = [
+  {k:'submitted', label:'Submitted', color:'var(--blue)', soft:'var(--blue-soft)'},
+  {k:'in_review', label:'In Review', color:'var(--amber)', soft:'var(--amber-soft)'},
+  {k:'approved', label:'Approved', color:'var(--green)', soft:'var(--green-soft)'},
+  {k:'rejected', label:'Rejected', color:'var(--red)', soft:'var(--red-soft)'},
+  {k:'in_progress', label:'In Progress', color:'var(--purple)', soft:'var(--purple-soft)'},
+  {k:'pending_info', label:'Pending Information', color:'var(--amber)', soft:'var(--amber-soft)'},
+  {k:'done', label:'Done', color:'var(--green)', soft:'var(--green-soft)'},
+  {k:'cancelled', label:'Cancelled', color:'var(--ink3)', soft:'var(--gray-soft)'},
+];
+
+/* ================= STATE ================= */
+const S = {
+  session:null, me:null,
+  profiles:[], workspaces:[], projects:[], requestTypes:[],
+  route:{view:'home'},
+};
+const isStaff = ()=> S.me && ['admin','internal','management'].includes(S.me.role);
+const isAdmin = ()=> S.me && S.me.role==='admin';
+const isMgmt  = ()=> S.me && S.me.role==='management';
+const isExternal = ()=> S.me && ['partner','freelancer'].includes(S.me.role);
+/* requester = read-only + can raise tickets/tasks and comment */
+const isRequester = ()=> S.me && S.me.role==='requester';
+const canEdit = ()=> isStaff() && !isRequester();
+const canCreate = ()=> isStaff() || isRequester();
+/* ---- Ownership: board and workspace SETTINGS are owner-or-admin.
+   Task create/edit is unchanged — that still runs off canEdit(). These mirror
+   can_manage_board() / can_manage_ws() in the database, which is what actually
+   enforces it; these only keep the UI from offering a button that would fail. */
+const boardOwnerIds = pid => (S.boardOwners||[]).filter(o=>o.project_id===pid).map(o=>o.user_id);
+const wsOwnerIds    = wid => (S.wsOwners||[]).filter(o=>o.workspace_id===wid).map(o=>o.user_id);
+const ownsBoard = pid => !!(S.me && boardOwnerIds(pid).includes(S.me.id));
+const ownsWs    = wid => !!(S.me && wsOwnerIds(wid).includes(S.me.id));
+/* A workspace owner runs everything inside their workspace, boards included.
+   Deleting the workspace itself is admin-only — it destroys every board and
+   task in it. Mirrors can_manage_board() / can_manage_ws() in the database. */
+const canManageBoard = pid => {
+  if(isAdmin()) return true;
+  if(!canEdit()) return false;
+  const p = (S.projects||[]).find(x=>x.id===pid);
+  return ownsBoard(pid) || !!(p && ownsWs(p.workspace_id));
+};
+const canManageWs    = wid => isAdmin() || (canEdit() && ownsWs(wid));
+const canDeleteWs    = () => isAdmin();
+/* Search-and-add: one filter used by both member dialogs. Rows carry
+   data-search; role headings carry data-group and fold away when empty. */
+const searchBoxHTML = (id, ph) => `<input id="${id}" class="member-search" placeholder="${esc(ph)}" autocomplete="off">`
+  + `<div id="${id}-none" class="empty" hidden style="padding:12px 0">Nobody matches that. New accounts are created in Admin → Users.</div>`;
+/* Teams are a named group of people, nothing more — they bulk-tick members in
+   the pickers. No policy depends on them, so being in a team grants nothing. */
+const teamById      = id  => (S.teams||[]).find(t=>t.id===id);
+const teamMemberIds = tid => (S.teamMembers||[]).filter(r=>r.team_id===tid).map(r=>r.user_id);
+const teamsForUser  = uid => (S.teamMembers||[]).filter(r=>r.user_id===uid)
+                              .map(r=>teamById(r.team_id)).filter(Boolean);
+/* Team names ride along in the search key, so "search by name, team, or email"
+   is one box rather than three. */
+const searchKey = p => `${p.full_name||''} ${p.email||''} ${p.job_title||''} ${p.role||''} `
+  .concat(teamsForUser(p.id).map(t=>t.name).join(' '))
+  .toLowerCase().replace(/"/g,'');
+const TEAM_COLORS = ['#0F766E','#3E5C95','#8C5A3B','#5A6B4F','#6E56B8','#A8770E','#7D3C55','#C2434F'];
+const teamChip = t => `<span class="chip" style="background:var(--gray-soft);color:var(--ink2)">`
+  + `<span class="ws-dot" style="display:inline-block;background:${t.color||'#5C6470'}"></span> ${esc(t.name)}</span>`;
+/* Shared by both member dialogs: pick a team, tick everyone in it. */
+function teamAddHTML(id){
+  if(!(S.teams||[]).length) return '';
+  return `<div style="display:flex;align-items:center;gap:8px;margin:10px 0 2px">
+    <span style="font-size:12.5px;color:var(--ink2);white-space:nowrap">Add a whole team</span>
+    <select id="${id}" style="flex:1"><option value="">Choose a team…</option>
+      ${S.teams.map(t=>`<option value="${t.id}">${esc(t.name)} · ${teamMemberIds(t.id).length}</option>`).join('')}</select>
+  </div>`;
+}
+function wireTeamAdd(root, id){
+  const sel = root.querySelector('#'+id); if(!sel) return;
+  sel.onchange = ()=>{
+    const t = teamById(sel.value); sel.value='';
+    if(!t) return;
+    const want = new Set(teamMemberIds(t.id));
+    let ticked=0, missing=0;
+    want.forEach(uid=>{
+      const box = root.querySelector(`input[data-uid="${uid}"]`);
+      if(!box || box.disabled){ missing++; return; }
+      if(!box.checked){ box.checked = true; ticked++; box.dispatchEvent(new Event('change',{bubbles:true})); }
+    });
+    toast(ticked
+      ? `Ticked ${ticked} from ${t.name}${missing? ` · ${missing} can't be added here`:''} — Save to apply`
+      : `Everyone in ${t.name} was already ticked${missing? ` or can't be added here`:''}`);
+  };
+}
+function wireMemberSearch(root, id){
+  const inp = root.querySelector('#'+id); if(!inp) return;
+  const rows   = [...root.querySelectorAll('[data-search]')];
+  const groups = [...root.querySelectorAll('[data-group]')];
+  const none   = root.querySelector('#'+id+'-none');
+  const apply = ()=>{
+    const q = inp.value.trim().toLowerCase();
+    let shown = 0;
+    rows.forEach(r=>{ const hit = !q || r.dataset.search.includes(q); r.hidden = !hit; if(hit) shown++; });
+    groups.forEach(g=> g.hidden = ![...g.querySelectorAll('[data-search]')].some(r=>!r.hidden));
+    if(none) none.hidden = shown > 0;
+  };
+  inp.addEventListener('input', apply);
+  setTimeout(()=>inp.focus(), 40);
+}
+/* A heart marks the owner: outline = not an owner, filled = owner.
+   Clicking toggles — outline fills to make someone an owner, filled empties to
+   remove them. Both states stay clickable so the toggle reads both ways. */
+const HEART_PATH = 'M12 20.6l-1.34-1.2C5.9 15.09 3 12.47 3 9.25 3 6.65 5.02 4.6 7.6 4.6c1.46 0 2.86.68 3.77 1.76l.63.75.63-.75A4.94 4.94 0 0 1 16.4 4.6C18.98 4.6 21 6.65 21 9.25c0 3.22-2.9 5.84-7.66 10.16L12 20.6z';
+const HEART_FILL = `<svg viewBox="0 0 24 24" fill="currentColor"><path d="${HEART_PATH}"/></svg>`;
+const HEART_LINE = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="${HEART_PATH}"/></svg>`;
+function ownerHeartHTML(isOwner, canSet, onclick, whose){
+  const title = isOwner
+    ? (canSet ? `${whose} owner — click to remove` : `${whose} owner`)
+    : (canSet ? `Make ${whose} owner` : `Not an owner`);
+  return `<span class="heart ${isOwner?'on':''} ${canSet?'can':''}" title="${esc(title)}"`
+       + `${canSet?` onclick="${onclick}"`:''}>${isOwner?HEART_FILL:HEART_LINE}</span>`;
+}
+const ownerName  = id  => { const u=(S.profiles||[]).find(x=>x.id===id); return u? (u.full_name||u.email) : 'Unassigned'; };
+const ownerNames = ids => ids.length? ids.map(ownerName).join(', ') : 'nobody yet';
+/* Stacked avatars, monday's "People on this board" summary. */
+function avatarStack(ids, cap=3){
+  const shown = ids.slice(0,cap), extra = ids.length - shown.length;
+  return `<span style="display:inline-flex;align-items:center">`
+    + shown.map(id=>`<span style="margin-left:-6px">${avatar(prof(id),true)}</span>`).join('')
+    + (extra>0? `<span class="chip" style="margin-left:4px;background:var(--gray-soft);color:var(--ink2)">+${extra}</span>`:'')
+    + (ids.length? '' : `<span style="color:var(--ink3);font-size:12.5px">none</span>`) + `</span>`;
+}
+/* Ownership is a list now and is edited by the crowns in Board members /
+   Members of <workspace>, not by a picker in the edit dialog. */
+
+/* ================= HELPERS ================= */
+const $ = s=>document.querySelector(s);
+const el = (h)=>{const t=document.createElement('template');t.innerHTML=h.trim();return t.content.firstChild;};
+const esc = s=> (s??'').toString().replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+function toast(msg, err=false){
+  const t=el(`<div class="toast ${err?'err':''}">${esc(msg)}</div>`);
+  $('#toasts').appendChild(t); setTimeout(()=>t.remove(), 3800);
+}
+/* A toast with a way back — used when something reversible just happened. */
+function toastUndo(msg, fn){
+  const t=el(`<div class="toast">${esc(msg)}<button class="toast-undo">Undo</button></div>`);
+  t.querySelector('.toast-undo').onclick = ()=>{ t.remove(); fn(); };
+  $('#toasts').appendChild(t); setTimeout(()=>t.remove(), 7000);
+}
+function initials(name){ return (name||'?').trim().split(/\s+/).slice(0,2).map(w=>w[0]).join('').toUpperCase(); }
+function avatar(p, sm=false){
+  if(!p) return `<span class="avatar ${sm?'sm':''}" style="background:#C6C9D8" title="Unassigned">–</span>`;
+  return `<span class="avatar ${sm?'sm':''}" style="background:${p.avatar_color}" title="${esc(p.full_name)}">${initials(p.full_name)}</span>`;
+}
+const prof = id => S.profiles.find(p=>p.id===id);
+const wsById = id => S.workspaces.find(w=>w.id===id);
+const projById = id => S.projects.find(p=>p.id===id);
+/* Dates always carry the year — "3 Sept" is ambiguous on a board that spans a
+   year end, and campaigns here routinely do. Format is "31 Aug 2026". */
+const DATE_FMT = {day:'numeric', month:'short', year:'numeric'};
+function fmtDate(d){ if(!d) return ''; const dt=new Date(d); return isNaN(dt)? '' : dt.toLocaleDateString('en-GB', DATE_FMT); }
+function fmtDateTime(d){ if(!d) return ''; const dt=new Date(d); return isNaN(dt)? '' : dt.toLocaleString('en-GB',{...DATE_FMT, hour:'2-digit', minute:'2-digit'}); }
+function timeAgo(d){
+  if(!d) return '';
+  const s = Math.max(0, (Date.now() - new Date(d).getTime())/1000);
+  if(s < 60) return 'just now';
+  const m = Math.floor(s/60);   if(m < 60) return m+'m ago';
+  const h = Math.floor(m/60);   if(h < 24) return h+'h ago';
+  const dd = Math.floor(h/24);  if(dd < 7) return dd+'d ago';
+  return fmtDateTime(d);
+}
+function daysDiff(d){ const a=new Date(d); a.setHours(0,0,0,0); const b=new Date(); b.setHours(0,0,0,0); return Math.round((a-b)/86400000); }
+/* ---- CSV (RFC 4180) ---- */
+function csvCell(v){
+  const s = v==null? '' : String(v);
+  return /[",\n\r]|^\s|\s$/.test(s) ? '"'+s.replace(/"/g,'""')+'"' : s;
+}
+function downloadCSV(filename, rows){
+  // BOM so Excel opens Thai text as UTF-8
+  const csv = '\uFEFF' + rows.map(r=>r.map(csvCell).join(',')).join('\r\n');
+  const blob = new Blob([csv], {type:'text/csv;charset=utf-8'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a'); a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click(); a.remove();
+  URL.revokeObjectURL(url);
+}
+function csvFilename(name){
+  return String(name||'export').replace(/[\\/:*?"<>|]+/g,'-').trim()
+    + ' - ' + new Date().toISOString().slice(0,10) + '.csv';
+}
+/* Real .xlsx via SheetJS; falls back to CSV if the library hasn't loaded. */
+function downloadXLSX(filename, rows){
+  if(typeof XLSX === 'undefined') return downloadCSV(filename.replace(/\.xlsx$/i,'.csv'), rows);
+  const ws = XLSX.utils.aoa_to_sheet(rows);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Export');
+  XLSX.writeFile(wb, filename);
+}
+function xlsxFilename(name){
+  return String(name||'export').replace(/[\\/:*?"<>|]+/g,'-').trim()
+    + ' - ' + new Date().toISOString().slice(0,10) + '.xlsx';
+}
+function dueBadge(d, doneAlready){
+  if(!d) return '';
+  const n = daysDiff(d);
+  const over = n<0 && !doneAlready;
+  const txt = n===0 ? 'Today' : n===1 ? 'Tomorrow' : n===-1 ? 'Yesterday' : fmtDate(d);
+  return `<span class="due ${over?'over':''}">${txt}</span>`;
+}
+function slaBadge(sla, status, pausedAt){
+  if(!sla) return '';
+  if(['done','approved','rejected','cancelled'].includes(status)) return '';
+  if(pausedAt) return `<span class="sla-pill" style="background:var(--gray-soft);color:var(--ink2)">SLA paused</span>`;
+  const ms = new Date(sla) - Date.now();
+  const h = Math.round(ms/3600000);
+  if(ms<0) return `<span class="sla-pill" style="background:var(--red-soft);color:var(--red)">SLA breached ${Math.abs(h)}h ago</span>`;
+  if(h<=8) return `<span class="sla-pill" style="background:var(--amber-soft);color:var(--amber)">SLA in ${h}h</span>`;
+  return `<span class="sla-pill" style="background:var(--gray-soft);color:var(--ink2)">SLA ${fmtDateTime(sla)}</span>`;
+}
+function statusChip(k){
+  const s = STATUSES.find(x=>x.k===k)||STATUSES[0];
+  return `<span class="chip" style="background:${s.color}1A;color:${s.color}"><span style="width:7px;height:7px;border-radius:50%;background:${s.color}"></span>${s.label}</span>`;
+}
+function prioChip(k){
+  const p = PRIORITIES.find(x=>x.k===k)||PRIORITIES[2];
+  return `<span class="chip" style="background:${p.soft};color:${p.color}">${p.label}</span>`;
+}
+function reqStatusChip(k){
+  const s = REQ_STATUSES.find(x=>x.k===k)||REQ_STATUSES[0];
+  return `<span class="chip" style="background:${s.soft};color:${s.color}">${s.label}</span>`;
+}
+function modal(html, wide=false){
+  const back = el(`<div class="modal-back"><div class="modal ${wide?'wide':''}">${html}</div></div>`);
+  back.addEventListener('mousedown', e=>{ if(e.target===back) back.remove(); });
+  $('#modal-root').appendChild(back);
+  return back;
+}
+function closeModals(){ $('#modal-root').innerHTML=''; }
+/* Generic little popover menu, anchored to an element. items:[{label,danger,fn}|'-'] */
+let _ctxItems = [];
+function ctxMenu(anchor, items){
+  document.getElementById('tvmenu')?.remove();
+  document.querySelectorAll('.ws-menu.on').forEach(x=>x.classList.remove('on'));
+  _ctxItems = items.filter(i=>i!=='-');
+  const m = document.createElement('div'); m.id='tvmenu';
+  m.innerHTML = `<div class="opts">${items.map(i=> i==='-'
+    ? '<div style="height:1px;background:var(--line);margin:5px 6px"></div>'
+    : `<div class="opt" ${i.danger?'style="color:var(--red)"':''} data-i="${_ctxItems.indexOf(i)}">${esc(i.label)}</div>`).join('')}</div>`;
+  document.body.appendChild(m);
+  const r = anchor.getBoundingClientRect(), mb = m.getBoundingClientRect();
+  m.style.left = Math.min(r.left, innerWidth - mb.width - 10) + 'px';
+  m.style.top  = (r.bottom + mb.height > innerHeight ? Math.max(8, r.top - mb.height - 4) : r.bottom + 4) + 'px';
+  anchor.classList.add('on');
+  m.querySelectorAll('.opt').forEach(o=> o.onclick = e=>{
+    e.stopPropagation();
+    const fn = _ctxItems[+o.dataset.i]?.fn;
+    m.remove(); anchor.classList.remove('on');
+    if(fn) fn();
+  });
+  const off = e=>{ if(!m.contains(e.target)){ m.remove(); anchor.classList.remove('on'); document.removeEventListener('mousedown', off); } };
+  setTimeout(()=>document.addEventListener('mousedown', off), 0);
+}
+async function logActivity(entity_type, entity_id, action, detail={}){
+  try{ await db.from('activity_log').insert({actor_id:S.me.id, entity_type, entity_id, action, detail}); }catch(e){}
+}
+
+/* ================= AUTH ================= */
+let signupMode = false;
+function setAuthMode(su){
+  signupMode = su;
+  $('#su-fields').classList.toggle('hidden', !su);
+  $('#li-title').textContent = su? 'Start your trial' : 'WorkOS';
+  $('#li-sub').textContent = su? '14 days free · no card required' : 'Sign in to your workspace';
+  $('#li-btn').textContent = su? 'Create company' : 'Sign in';
+  $('#li-toggle-wrap').innerHTML = su? 'Already have an account? <a href="#" id="li-toggle">Sign in</a>'
+                                     : 'New company? <a href="#" id="li-toggle">Start a free 14-day trial</a>';
+  $('#li-toggle').addEventListener('click', e=>{ e.preventDefault(); setAuthMode(!signupMode); });
+}
+async function signIn(){
+  const email=$('#li-email').value.trim(), pass=$('#li-pass').value;
+  const errBox=$('#li-err'); errBox.style.display='none';
+  if(!email||!pass) return;
+  const btn=$('#li-btn'); btn.disabled=true;
+  try{
+    if(signupMode){
+      const company_name=$('#su-company').value.trim(), full_name=$('#su-name').value.trim();
+      if(!company_name||!full_name) throw new Error('Company name and your name are required');
+      if(pass.length<8) throw new Error('Password must be at least 8 characters');
+      btn.textContent='Creating your workspace…';
+      const res = await fetch(ADMIN_API+'/signup', {method:'POST',
+        headers:{'Content-Type':'application/json','apikey':SUPABASE_ANON,'Authorization':'Bearer '+SUPABASE_ANON},
+        body:JSON.stringify({company_name, full_name, email, password:pass})});
+      const out = await res.json();
+      if(!res.ok) throw new Error(out.error||'Signup failed');
+    }
+    btn.textContent='Signing in…';
+    const {error} = await db.auth.signInWithPassword({email, password:pass});
+    if(error) throw new Error(error.message==='Invalid login credentials' ? 'Wrong email or password.' : error.message);
+  }catch(e){ errBox.textContent=e.message; errBox.style.display='block'; }
+  btn.disabled=false; btn.textContent = signupMode? 'Create company':'Sign in';
+}
+$('#li-toggle').addEventListener('click', e=>{ e.preventDefault(); setAuthMode(!signupMode); });
+$('#li-btn').addEventListener('click', signIn);
+$('#li-pass').addEventListener('keydown', e=>{ if(e.key==='Enter') signIn(); });
+$('#li-email').addEventListener('keydown', e=>{ if(e.key==='Enter') signIn(); });
+
+db.auth.onAuthStateChange(async (event, session)=>{
+  S.session = session;
+  if(session && !S.me){ await boot(); }
+  if(!session){ S.me=null; $('#app').classList.add('hidden'); $('#login-screen').classList.remove('hidden'); }
+});
+
+let _booting=false;
+async function boot(){
+  if(_booting || S.me) return; _booting=true;
+  try{ await _boot(); } finally{ _booting=false; }
+}
+async function _boot(){
+  const {data:me, error} = await db.from('profiles').select('*').eq('id', S.session.user.id).single();
+  if(error || !me){ toast('Could not load your profile', true); return; }
+  if(!me.active || !me.company_id){ await db.auth.signOut(); toast('Your account is awaiting activation by an admin.', true); return; }
+  S.me = me;
+  await refreshCore();
+  if(S.company && ['suspended','cancelled'].includes(S.company.status) && !me.platform_admin){
+    await db.auth.signOut();
+    toast('This company subscription is inactive. Contact support to reactivate.', true);
+    return;
+  }
+  $('#login-screen').classList.add('hidden');
+  $('#app').classList.remove('hidden');
+  const b = $('#ten-banner');
+  if(S.company && S.company.status==='trial' && S.company.trial_ends_at){
+    const left = Math.max(0, Math.ceil((new Date(S.company.trial_ends_at)-Date.now())/86400000));
+    b.textContent = 'Free trial — ' + left + ' day' + (left===1?'':'s') + ' left';
+    b.classList.remove('hidden');
+  } else if(S.company && S.company.status==='past_due'){
+    b.textContent = 'Payment past due — please settle the subscription to avoid interruption';
+    b.classList.remove('hidden');
+  } else b.classList.add('hidden');
+  renderSidebar();
+  startNotifPolling();
+  navigate(location.hash || '#/home');
+}
+async function refreshCore(){
+  const [pr, ws, pj, rt, br, co, bo, wo, tm, tmm] = await Promise.all([
+    db.from('profiles').select('*').order('full_name'),
+    db.from('workspaces').select('*').order('position'),
+    db.from('projects').select('*').order('created_at'),
+    db.from('request_types').select('*').eq('active', true).order('position'),
+    db.from('brands').select('*').order('name'),
+    db.from('companies').select('*').order('created_at'),
+    db.from('project_owners').select('*'),
+    db.from('workspace_owners').select('*'),
+    db.from('teams').select('*').order('name'),
+    db.from('team_members').select('*'),
+  ]);
+  S.boardOwners = bo.data||[]; S.wsOwners = wo.data||[];
+  S.teams = tm.data||[]; S.teamMembers = tmm.data||[];
+  S.profiles = pr.data||[]; S.workspaces = ws.data||[]; S.projects = pj.data||[]; S.requestTypes = rt.data||[];
+  S.brandsList = br.data||[];
+  S.allCompanies = co.data||[];
+  S.company = S.allCompanies.find(c=>c.id===S.me?.company_id) || null;
+}
+const MAX_UPLOAD = 25 * 1024 * 1024;   // 25 MB per file
+const isImageName = n => /\.(png|jpe?g|gif|webp|avif|bmp|svg)$/i.test(n||'');
+function fileSize(b){
+  if(b==null) return '';
+  if(b < 1024) return b+' B';
+  if(b < 1048576) return (b/1024).toFixed(0)+' KB';
+  return (b/1048576).toFixed(1)+' MB';
+}
+function attUrl(path){ return db.storage.from('attachments').getPublicUrl(path).data.publicUrl; }
+
+/* Uploads a list of File objects and returns the attachment rows that stuck. */
+async function uploadFiles(entity_type, entity_id, files){
+  const list = [...(files||[])];
+  const made = [];
+  for(const f of list){
+    if(f.size > MAX_UPLOAD){ toast(`${f.name} is ${fileSize(f.size)} — the limit is 25 MB`, true); continue; }
+    const path = entity_type + '/' + entity_id + '/' + Date.now() + '_' + Math.random().toString(36).slice(2,7)
+      + '_' + (f.name||'file').replace(/[^\w.\-]+/g,'_');
+    const {error} = await db.storage.from('attachments').upload(path, f, {contentType:f.type||undefined});
+    if(error){ toast(`Couldn't upload ${f.name}: ${error.message}`, true); continue; }
+    const {data, error:dbErr} = await db.from('attachments')
+      .insert({entity_type, entity_id, file_name:f.name||'file', storage_path:path, size_bytes:f.size, uploaded_by:S.me.id})
+      .select().single();
+    if(dbErr){ toast(`Saved the file but couldn't attach it: ${dbErr.message}`, true); continue; }
+    made.push(data);
+  }
+  return made;
+}
+/* Back-compat for any caller still passing an <input type=file>. */
+async function uploadAttachments(entity_type, entity_id, fileInput){
+  const made = await uploadFiles(entity_type, entity_id, fileInput?.files);
+  if(fileInput) fileInput.value = '';
+  return made.length;
+}
+function attLink(a, opts={}){
+  const url = attUrl(a.storage_path);
+  const rm = opts.canRemove
+    ? `<button class="att-x" title="Remove" onclick="event.preventDefault();event.stopPropagation();removeAttachment('${a.id}','${a.storage_path.replace(/'/g,"\\'")}')">✕</button>` : '';
+  if(isImageName(a.file_name)){
+    return `<span class="att att-img" data-aid="${a.id}">
+      <a href="${url}" target="_blank" rel="noopener" title="${esc(a.file_name)}"><img src="${url}" alt="${esc(a.file_name)}" loading="lazy"></a>${rm}</span>`;
+  }
+  return `<span class="att att-file" data-aid="${a.id}">
+    <a href="${url}" target="_blank" rel="noopener" title="${esc(a.file_name)}">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6"/></svg>
+      <span class="att-n">${esc(a.file_name)}</span><span class="att-s">${fileSize(a.size_bytes)}</span></a>${rm}</span>`;
+}
+function attListHTML(rows, canRemove){
+  if(!rows || !rows.length) return '<span class="att-none">No files attached</span>';
+  return `<div class="att-list">${rows.map(a=>attLink(a,{canRemove})).join('')}</div>`;
+}
+async function removeAttachment(id, path){
+  const box = document.querySelector(`[data-aid="${id}"]`);
+  const {error} = await db.from('attachments').delete().eq('id', id);
+  if(error) return toast(error.message, true);
+  db.storage.from('attachments').remove([path]);
+  box?.remove();
+  const list = document.querySelector('.att-list');
+  if(list && !list.children.length) list.outerHTML = '<span class="att-none">No files attached</span>';
+  toast('File removed');
+}
+/* A drop zone that uploads the moment a file arrives — no second button to press. */
+function attachZoneHTML(id){
+  return `<div class="att-drop" id="${id}">
+    <input type="file" multiple hidden>
+    <span class="att-cta">Drop files here, or <b>browse</b></span>
+    <span class="att-busy hidden">Uploading…</span>
+  </div>`;
+}
+function wireAttachZone(root, zoneId, entity_type, entity_id, listEl, onDone){
+  const z = root.querySelector('#'+zoneId); if(!z) return;
+  const input = z.querySelector('input[type=file]');
+  const busy = z.querySelector('.att-busy'), cta = z.querySelector('.att-cta');
+  const go = async (files)=>{
+    if(!files || !files.length) return;
+    busy.classList.remove('hidden'); cta.classList.add('hidden'); z.classList.add('busy');
+    const made = await uploadFiles(entity_type, entity_id, files);
+    busy.classList.add('hidden'); cta.classList.remove('hidden'); z.classList.remove('busy');
+    input.value = '';
+    if(!made.length) return;
+    if(listEl){
+      if(listEl.querySelector('.att-none')) listEl.innerHTML = '<div class="att-list"></div>';
+      const list = listEl.querySelector('.att-list') || listEl;
+      list.insertAdjacentHTML('beforeend', made.map(a=>attLink(a,{canRemove:true})).join(''));
+    }
+    toast(made.length===1? `${made[0].file_name} attached` : `${made.length} files attached`);
+    onDone?.(made);
+  };
+  z.onclick = ()=> input.click();
+  input.onchange = ()=> go(input.files);
+  z.ondragover = e=>{ e.preventDefault(); z.classList.add('over'); };
+  z.ondragleave = ()=> z.classList.remove('over');
+  z.ondrop = e=>{ e.preventDefault(); z.classList.remove('over'); go(e.dataTransfer.files); };
+}
+
+/* ================= ROUTER ================= */
+window.addEventListener('hashchange', ()=>{ if(S.me) navigate(location.hash); });
+function navigate(hash){
+  if(location.hash !== hash) { location.hash = hash; return; }
+  closeModals();
+  const parts = hash.replace(/^#\//,'').split('/');
+  const view = parts[0]||'home';
+  S.route = {view, id:parts[1], tab:parts[2]};
+  renderSidebar();
+  const C = $('#content'); C.scrollTop=0;
+  const map = {home:renderHome, ws:renderWorkspace, project:renderProject, task:openTaskRoute, requests:renderRequests, approvals:renderApprovals, dashboard:renderDashboard, admin:renderAdmin, platform:renderPlatform};
+  (map[view]||renderHome)(parts[1], parts[2]);
+}
+
+/* ================= SIDEBAR ================= */
+function renderSidebar(){
+  const v = S.route.view, id=S.route.id;
+  const items = [
+    {h:'#/home', label:'My Work', show:true},
+    {h:'#/requests', label:'Requests', show:true},
+    {h:'#/approvals', label:'Approvals', show:true, badge:'appr'},
+    {h:'#/dashboard', label:'Dashboard', show:isStaff()||isRequester()},
+    {h:'#/admin', label:'Admin', show:isAdmin()},
+    {h:'#/platform', label:'Platform', show:!!(S.me&&S.me.platform_admin)},
+  ];
+  $('#nav-main').innerHTML = '<div class="nav-section">Menu</div>' + items.filter(i=>i.show).map(i=>
+    `<div class="nav-item ${('#/'+v)===i.h?'active':''}" onclick="location.hash='${i.h}'">${i.label}<span class="count hidden" id="badge-${i.badge||''}"></span></div>`).join('');
+  updateApprovalBadge();
+
+  // teams: RLS already scopes what each user can see (internal = their teams only)
+  let wss = S.workspaces;
+  if(isExternal()){
+    const myWs = new Set(S.projects.map(p=>p.workspace_id));
+    wss = wss.filter(w=>myWs.has(w.id));
+  }
+  const tt = $('#ws-section-title');
+  tt.style.display = (wss.length || isStaff())? 'flex' : 'none';
+  tt.innerHTML = 'Workspaces' + (isAdmin()? '<button onclick="newWorkspaceModal()" title="New workspace" style="color:var(--ink3);font-size:15px;line-height:1;padding:0 2px;border-radius:5px">+</button>':'');
+  $('#nav-ws').innerHTML = wss.map(w=>
+    `<div class="ws-item ${v==='ws'&&id===w.id?'active':''}" onclick="location.hash='#/ws/${w.id}'">
+      <span class="ws-dot" style="background:${w.color}"></span><span class="ws-name">${esc(w.name)}</span>
+      ${canEdit()? `<span class="ws-menu" title="Workspace options" onclick="event.stopPropagation();wsMenu(this,'${w.id}')">⋯</span>`:''}
+    </div>`).join('') || (isAdmin()? '<div style="padding:4px 22px;font-size:12px;color:var(--ink3)">No workspaces yet — press +</div>':'');
+
+  const lc = $('#logo-co'); if(lc && S.company) lc.textContent = S.company.name;
+  const icoKey = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="7.5" cy="15.5" r="4.5"/><path d="m21 2-9.6 9.6"/><path d="m15.5 7.5 3 3L22 7l-3-3"/></svg>';
+  const icoOut = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>';
+  $('#sidebar-user').innerHTML = `${avatar(S.me)}
+    <div class="who"><b>${esc(S.me.full_name)}</b><span>${S.me.role}</span></div>
+    <button title="Change password" onclick="changePasswordModal()">${icoKey}</button>
+    <button title="Sign out" onclick="db.auth.signOut()">${icoOut}</button>`;
+}
+async function updateApprovalBadge(){
+  const {count} = await db.from('approvals').select('id',{count:'exact',head:true}).eq('approver_id',S.me.id).eq('status','pending');
+  const b = $('#badge-appr'); if(!b) return;
+  if(count>0){ b.textContent=count; b.classList.remove('hidden'); b.classList.add('hot'); } else b.classList.add('hidden');
+}
+function changePasswordModal(){
+  const m = modal(`<div class="modal-head"><h2>Change password</h2><button class="x" onclick="closeModals()">✕</button></div>
+    <div class="modal-body"><label>New password</label><input id="np" type="password" placeholder="At least 8 characters"></div>
+    <div class="modal-foot"><button class="btn btn-ghost" onclick="closeModals()">Cancel</button><button class="btn btn-primary" id="np-save">Save</button></div>`);
+  m.querySelector('#np-save').onclick = async ()=>{
+    const p = m.querySelector('#np').value;
+    if(p.length<8) return toast('Password must be at least 8 characters', true);
+    const {error} = await db.auth.updateUser({password:p});
+    if(error) return toast(error.message, true);
+    closeModals(); toast('Password updated');
+  };
+}
+function setTopbar(crumb, actionsHtml=''){
+  $('#crumb').innerHTML = crumb;
+  $('#topbar-actions').innerHTML = actionsHtml;
+}
+
+/* ================= @MENTIONS ================= */
+/* People you can tag: active colleagues, minus yourself. */
+function mentionables(){
+  return (S.profiles||[]).filter(p=>p.active && p.id!==S.me.id);
+}
+/* Attach @-autocomplete to a text input. Chosen people are remembered on the
+   element so a name typed by hand can't accidentally ping the wrong person. */
+function wireMentions(input){
+  if(!input || input._mentionsWired) return;
+  input._mentionsWired = true;
+  input._picked = new Map();           // full_name -> id
+  let menu = null, anchorPos = -1;
+  const close = ()=>{ menu?.remove(); menu=null; anchorPos=-1; };
+  const pick = (p)=>{
+    const v = input.value, before = v.slice(0, anchorPos), after = v.slice(input.selectionStart);
+    input.value = before + '@' + p.full_name + ' ' + after;
+    input._picked.set(p.full_name, p.id);
+    const caret = (before + '@' + p.full_name + ' ').length;
+    input.focus(); input.setSelectionRange(caret, caret);
+    close();
+  };
+  const render = (q)=>{
+    const list = mentionables().filter(p=>p.full_name.toLowerCase().includes(q) || (p.email||'').toLowerCase().includes(q)).slice(0,6);
+    if(!list.length) return close();
+    if(!menu){ menu = document.createElement('div'); menu.className='mention-menu'; document.body.appendChild(menu); }
+    menu.innerHTML = list.map((p,i)=>`<div class="mopt${i===0?' on':''}" data-id="${p.id}">${avatar(p,true)}<span><b>${esc(p.full_name)}</b></span></div>`).join('');
+    menu.querySelectorAll('.mopt').forEach(o=> o.onmousedown = e=>{ e.preventDefault(); pick(list.find(p=>p.id===o.dataset.id)); });
+    const r = input.getBoundingClientRect(), h = menu.getBoundingClientRect().height;
+    menu.style.left = r.left+'px';
+    menu.style.top = (r.top - h - 6 > 8 ? r.top - h - 6 : r.bottom + 6) + 'px';
+    menu.style.width = Math.max(240, Math.min(r.width, 340)) + 'px';
+  };
+  input.addEventListener('input', ()=>{
+    const upto = input.value.slice(0, input.selectionStart);
+    const mth = upto.match(/(?:^|\s)@([^@]{0,30})$/);
+    if(!mth) return close();
+    anchorPos = input.selectionStart - mth[1].length - 1;
+    render(mth[1].toLowerCase());
+  });
+  input.addEventListener('keydown', e=>{
+    if(!menu) return;
+    const opts = [...menu.querySelectorAll('.mopt')];
+    let i = opts.findIndex(o=>o.classList.contains('on'));
+    if(e.key==='ArrowDown'||e.key==='ArrowUp'){
+      e.preventDefault();
+      opts[i]?.classList.remove('on');
+      i = e.key==='ArrowDown' ? (i+1)%opts.length : (i-1+opts.length)%opts.length;
+      opts[i].classList.add('on');
+    } else if(e.key==='Enter'||e.key==='Tab'){
+      e.preventDefault();
+      const id = opts[i<0?0:i]?.dataset.id;
+      pick(mentionables().find(p=>p.id===id));
+    } else if(e.key==='Escape'){ close(); }
+  });
+  input.addEventListener('blur', ()=> setTimeout(close, 120));
+}
+/* Which of the picked people are still named in the final text. */
+function extractMentions(input){
+  const text = input.value, ids = [];
+  (input._picked||new Map()).forEach((id,name)=>{ if(text.includes('@'+name) && !ids.includes(id)) ids.push(id); });
+  return ids;
+}
+function renderMentionText(body, mentions){
+  const names = (mentions||[]).map(id=>prof(id)?.full_name).filter(Boolean);
+  let out = esc(body);
+  names.forEach(n=>{ out = out.split(esc('@'+n)).join(`<span class="mention">@${esc(n)}</span>`); });
+  return out;
+}
+/* ---- files staged on a comment before it is sent ---- */
+function commentComposerHTML(prefix){
+  return `<div class="cmp">
+    <div class="cmp-row">
+      <textarea id="${prefix}-comment" rows="3" placeholder="Write a comment… type @ to tag someone (Shift+Enter for a new line)"></textarea>
+      <button class="cmp-clip" id="${prefix}-clip" title="Attach a file or image" aria-label="Attach a file">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
+      </button>
+      <input type="file" id="${prefix}-files" multiple hidden>
+      <button class="btn btn-primary btn-sm" id="${prefix}-comment-add">Send</button>
+    </div>
+    <div class="cmp-staged hidden" id="${prefix}-staged"></div>
+  </div>`;
+}
+/* Holds the File objects picked/pasted/dropped for a comment not yet sent. */
+function wireComposer(root, prefix){
+  const input = root.querySelector('#'+prefix+'-comment');
+  const clip  = root.querySelector('#'+prefix+'-clip');
+  const picker= root.querySelector('#'+prefix+'-files');
+  const tray  = root.querySelector('#'+prefix+'-staged');
+  input._staged = [];
+  const draw = ()=>{
+    tray.classList.toggle('hidden', !input._staged.length);
+    tray.innerHTML = input._staged.map((f,i)=>`<span class="stg">${
+      isImageName(f.name)? `<img src="${URL.createObjectURL(f)}" alt="">` : '<span class="stg-ic">▢</span>'
+    }<span class="stg-n">${esc(f.name)}</span><span class="stg-s">${fileSize(f.size)}</span>
+      <button class="stg-x" data-i="${i}" title="Remove">✕</button></span>`).join('');
+    tray.querySelectorAll('.stg-x').forEach(b=> b.onclick = ()=>{ input._staged.splice(+b.dataset.i,1); draw(); });
+  };
+  const add = files=>{ [...(files||[])].forEach(f=>input._staged.push(f)); draw(); };
+  clip.onclick = ()=> picker.click();
+  picker.onchange = ()=>{ add(picker.files); picker.value=''; };
+  // paste a screenshot straight into the box
+  input.addEventListener('paste', e=>{
+    const files = [...(e.clipboardData?.files||[])];
+    if(files.length){ e.preventDefault(); add(files); }
+  });
+  const zone = root.querySelector('.cmp');
+  zone.ondragover = e=>{ e.preventDefault(); zone.classList.add('over'); };
+  zone.ondragleave = ()=> zone.classList.remove('over');
+  zone.ondrop = e=>{ e.preventDefault(); zone.classList.remove('over'); add(e.dataTransfer.files); };
+  input._redrawStaged = draw;
+  return input;
+}
+/* Post a comment and ping everyone tagged in it. */
+async function postComment(entityType, entityId, entityTitle, input, box){
+  const staged = input._staged || [];
+  const body = input.value.trim();
+  if(!body && !staged.length) return null;
+  const mentions = extractMentions(input);
+  const {data, error} = await db.from('comments')
+    .insert({entity_type:entityType, entity_id:entityId, author_id:S.me.id, body, mentions})
+    .select().single();
+  if(error){ toast(error.message, true); return null; }
+  if(staged.length){
+    const made = await uploadFiles('comment', data.id, staged);
+    // If the files were the whole point and none of them landed, don't leave an
+    // empty comment sitting in the thread — take it back out.
+    if(!made.length && !body){
+      await db.from('comments').delete().eq('id', data.id);
+      return null;
+    }
+    data.atts = made;
+    input._staged = []; input._redrawStaged?.();
+  }
+  if(mentions.length){
+    const rows = mentions.map(uid=>({
+      user_id:uid, actor_id:S.me.id, kind:'mention',
+      entity_type:entityType, entity_id:entityId,
+      title:entityTitle, body: (body || `sent ${staged.length} file${staged.length>1?'s':''}`).slice(0,180),
+    }));
+    const {error:nErr} = await db.from('notifications').insert(rows);
+    if(nErr) toast('Comment saved, but the notification failed: '+nErr.message, true);
+    else toast(mentions.length===1 ? `${prof(mentions[0])?.full_name||'They'} was notified` : `${mentions.length} people notified`);
+  }
+  if(box){
+    if(box.firstElementChild && !box.firstElementChild.classList.contains('comment')) box.innerHTML='';
+    box.insertAdjacentHTML('beforeend', commentRow(data));
+    box.lastElementChild?.scrollIntoView?.({block:'nearest'});
+  }
+  input.value=''; input._picked?.clear();
+  return data;
+}
+
+/* ================= NOTIFICATIONS ================= */
+let notifPoll = null;
+async function refreshNotifs(){
+  if(!S.me) return;
+  const {data} = await db.from('notifications').select('*').order('created_at',{ascending:false}).limit(30);
+  S._notifs = data||[];
+  const unread = S._notifs.filter(n=>!n.read_at).length;
+  const b = $('#bell-count'); if(!b) return;
+  // the bell stays a quiet dot at any count; the number is in the panel header
+  b.classList.toggle('hidden', unread===0);
+  b.title = unread ? `${unread} unread` : '';
+  $('#bell')?.classList.toggle('has-unread', unread>0);
+  const panel = $('#notif-panel'); if(panel) panel.innerHTML = notifPanelHTML();
+}
+function startNotifPolling(){
+  clearInterval(notifPoll);
+  refreshNotifs();
+  notifPoll = setInterval(refreshNotifs, 60000);
+}
+function notifPanelHTML(){
+  const list = S._notifs||[];
+  const unread = list.filter(n=>!n.read_at).length;
+  return `<div class="np-head"><span>Notifications${unread? ` · ${unread}`:''}</span>${unread? `<button onclick="markAllNotifsRead()">Mark all read</button>`:''}</div>
+    <div class="np-body">${list.length? list.map(n=>{
+      const who = prof(n.actor_id);
+      return `<div class="np-item ${n.read_at?'':'unread'}" onclick="openNotif('${n.id}')">
+        ${avatar(who,true)}
+        <div class="np-txt"><div>${notifLine(n, who)}</div>
+          <div class="np-body-txt">${esc(n.body||'')}</div>
+          <div class="np-when">${timeAgo(n.created_at)}</div></div>
+      </div>`;
+    }).join('') : '<div class="np-empty">Nothing yet.</div>'}</div>`;
+}
+function notifLine(n, who){
+  const name = `<b>${esc(who?.full_name||'Someone')}</b>`;
+  const t = n.title? `<b>${esc(n.title)}</b>` : 'something';
+  switch(n.kind){
+    case 'assigned':    return `${name} assigned you ${t}`;
+    case 'review':      return `${t} is ready for review`;
+    case 'request':     return `New ticket: ${t}`;
+    case 'sla_warning': return `${t} is close to its SLA`;
+    case 'sla_breach':  return `${t} has breached its SLA`;
+    case 'overdue':     return `${t} is overdue`;
+    case 'automation':  return n.body? `${t} — ${esc(n.body)}` : `An automation flagged ${t}`;
+    case 'approval':    return `${name} asked you to sign off on ${t}`;
+    case 'approval_decided': {
+      // body = 'approved' or 'rejected — note'
+      const ok = (n.body||'').startsWith('approved');
+      const note = (n.body||'').includes(' — ')? n.body.slice(n.body.indexOf(' — ')+3) : '';
+      return `${name} ${ok?'approved':'declined'} your sign-off — ${t}${note? ` <span style="color:var(--ink3)">· ${esc(note)}</span>`:''}`;
+    }
+    default:            return `${name} mentioned you${n.title? ` in ${t}`:''}`;
+  }
+}
+function toggleNotifPanel(e){
+  e?.stopPropagation();
+  const open = $('#notif-panel');
+  if(open){ open.remove(); return; }
+  const p = document.createElement('div'); p.id='notif-panel';
+  p.innerHTML = notifPanelHTML();
+  $('#bell-wrap').appendChild(p);
+  p.addEventListener('click', ev=>ev.stopPropagation());
+  const off = ()=>{ $('#notif-panel')?.remove(); document.removeEventListener('click', off); };
+  setTimeout(()=>document.addEventListener('click', off), 0);
+  refreshNotifs();
+}
+async function markAllNotifsRead(){
+  const ids = (S._notifs||[]).filter(n=>!n.read_at).map(n=>n.id);
+  if(!ids.length) return;
+  await db.from('notifications').update({read_at:new Date().toISOString()}).in('id',ids);
+  await refreshNotifs();
+}
+async function openNotif(id){
+  const n = (S._notifs||[]).find(x=>x.id===id); if(!n) return;
+  if(!n.read_at){ await db.from('notifications').update({read_at:new Date().toISOString()}).eq('id',id); }
+  $('#notif-panel')?.remove();
+  await refreshNotifs();
+  if(n.entity_type==='task') openTask(n.entity_id);
+  else if(n.entity_type==='request') openRequest(n.entity_id);
+}
+
+/* ================= PUBLIC FORM (no login) ================= */
+function pfTitleLabel(def){ return def.title_label || (/creative|campaign|artwork/i.test(def.name||'')? 'Campaign Name' : 'Subject'); }
+async function renderPublicForm(token){
+  $('#login-screen').classList.add('hidden');
+  $('#app').classList.add('hidden');
+  const mount = el('<div style="position:fixed;inset:0;overflow-y:auto;background:radial-gradient(1200px 700px at 18% -10%,#14403A 0%,#101114 58%);padding:5vh 16px;z-index:150"><div id="pf-card" style="max-width:560px;margin:0 auto;background:#fff;border-radius:18px;padding:34px 34px 28px;box-shadow:0 30px 80px rgba(0,0,0,.45)"><div style="color:#9DA1A7">Loading form…</div></div></div>');
+  document.body.appendChild(mount);
+  const card = mount.querySelector('#pf-card');
+  try{
+    const res = await fetch(ADMIN_API + '/form-def?token=' + encodeURIComponent(token), {headers:{'apikey':SUPABASE_ANON,'Authorization':'Bearer '+SUPABASE_ANON}});
+    const def = await res.json();
+    if(!res.ok) throw new Error(def.error||'Form not found');
+    S.brandsList = (def.brands||[]).map(n=>({name:n, active:true}));
+    card.innerHTML = `
+      <div style="font-size:11px;font-weight:700;letter-spacing:1.4px;text-transform:uppercase;color:var(--ink3)">${esc(def.company)}</div>
+      <h1 style="font-family:'Fraunces',Georgia,serif;font-size:24px;font-weight:600;margin:6px 0 4px">${esc(def.name)}</h1>
+      <p style="color:var(--ink2);font-size:13.5px">${esc(def.description||'')}</p>
+      <label>Your name <span class="req">*</span></label><input id="pf-name">
+      <label>Your email <span class="req">*</span></label><input id="pf-email" type="email">
+      <label>${esc(pfTitleLabel(def))}${pfTitleLabel(def)!=='Subject'?' <span class="req">*</span>':''}</label><input id="pf-title" placeholder="${esc(def.title_hint||(pfTitleLabel(def)!=='Subject'?'BRAND x PLATFORM - CAMPAIGN NAME - PERIOD':'Short summary (optional)'))}">
+      ${(def.fields||[]).map(fieldInput).join('')}
+      <button class="btn btn-primary" id="pf-send" style="width:100%;justify-content:center;margin-top:22px;padding:12px">Submit request</button>
+      <p style="margin-top:14px;font-size:11.5px;color:var(--ink3);text-align:center">Response SLA: ${def.sla_hours} hours · Powered by WorkOS</p>`;
+    card.querySelector('#pf-send').onclick = async ()=>{
+      const guest_name=card.querySelector('#pf-name').value.trim(), guest_email=card.querySelector('#pf-email').value.trim();
+      if(!guest_name||!guest_email) return toast('Please fill your name and email', true);
+      const tl = pfTitleLabel(def);
+      if(tl!=='Subject' && !card.querySelector('#pf-title').value.trim()) return toast('"'+tl+'" is required', true);
+      const values={};
+      for(const f of (def.fields||[])){
+        const v = readField(card, f);
+        if(f.required && !v) return toast('"'+f.label+'" is required', true);
+        values[f.key]=v;
+      }
+      const btn=card.querySelector('#pf-send'); btn.disabled=true; btn.textContent='Submitting…';
+      try{
+        const r2 = await fetch(ADMIN_API+'/public-submit', {method:'POST', headers:{'Content-Type':'application/json','apikey':SUPABASE_ANON,'Authorization':'Bearer '+SUPABASE_ANON}, body:JSON.stringify({token, guest_name, guest_email, title:card.querySelector('#pf-title').value, values})});
+        const out = await r2.json();
+        if(!r2.ok) throw new Error(out.error||'Failed');
+        card.innerHTML = '<div style="text-align:center;padding:30px 0"><div style="font-family:\'Fraunces\',Georgia,serif;font-size:26px;font-weight:600">Request received</div><p style="color:var(--ink2);margin-top:12px;line-height:1.6">Your ticket number is <b>WO-'+out.ticket_no+'</b>.<br>The team will get back to you within '+def.sla_hours+' hours.</p></div>';
+      }catch(e){ toast(e.message, true); btn.disabled=false; btn.textContent='Submit request'; }
+    };
+  }catch(e){ card.innerHTML = '<div style="text-align:center;color:var(--ink2);padding:20px 0">'+esc(e.message)+'</div>'; }
+}
+</script>
