@@ -1,0 +1,4 @@
+# built artifact - CI builds it from src/ and publishes it as the root index.html
+app/
+# local test scratch
+node_modules/
