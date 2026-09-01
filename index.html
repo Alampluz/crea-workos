@@ -2745,7 +2745,10 @@ async function doImportExcel(){
   closeModals(); renderProject(im.pid);
 }
 /* The board's own activity log — every task created, changed or removed here,
-   with Restore on removed tasks (the row itself comes back; comments and files don't). */
+   with Restore on removed tasks (the row itself comes back; comments and files don't).
+   Times are absolute ("1 Sep 2026, 14:32"), not "1d ago": this is the log people read
+   to work out when something actually happened. The task drawer's History stays
+   relative, where "2h ago" is the useful reading. */
 async function boardActivityModal(pid){
   const p = projById(pid);
   const {data:rows} = await db.from('activity_log').select('*').eq('project_id', pid)
@@ -2759,7 +2762,7 @@ async function boardActivityModal(pid){
         const canRestore = a.action==='deleted' && (a.detail||{}).snapshot && !live.has(a.entity_id) && isStaff();
         return `<div class="hist-row">${avatar(who,true)}
           <div class="hist-txt"><b>${esc(who?.full_name||'Someone')}</b> ${histLine(a)}${title? ` · <b>${esc(title)}</b>`:''}
-            <span class="hist-when" title="${fmtDateTime(a.created_at)}">${timeAgo(a.created_at)}</span>
+            <span class="hist-when">${fmtDateTime(a.created_at)}</span>
             ${canRestore? `<button class="hist-undo" onclick="restoreTask(${a.id}, '${pid}')">Restore</button>`:''}</div>
         </div>`;}).join('')}</div>`
       : '<div class="empty">Nothing recorded on this board yet.</div>'}
