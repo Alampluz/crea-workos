@@ -89,6 +89,36 @@ const driver=`window.__run=function(){const r={};try{
  renderCalendar('p1', [], host);
  r.emptyStillDrawsGrid = host.querySelectorAll('.cal-cell').length===42
    && host.querySelectorAll('.cal-pill').length===0;
+
+ // ---- workspace calendar: every board on one grid, board legend toggles
+ S.projects = [{id:'p1',name:'Creative Queue',workspace_id:'w1',color:'#0F766E',status:'active'},
+               {id:'p2',name:'Brand Review',workspace_id:'w1',color:'#B97A08',status:'active'},
+               {id:'p3',name:'Archived one',workspace_id:'w1',color:'#999',status:'archived'},
+               {id:'p9',name:'Other workspace',workspace_id:'w2',color:'#333',status:'active'}];
+ S.workspaces = [{id:'w1',name:'Creative'}];
+ r.wsTabHasCalendar = wsTabsHTML('w1','calendar').includes('#/ws/w1/calendar');
+ const wsHost=w0.document.createElement('div'); wsHost.id='ws-cal-body'; w0.document.body.appendChild(wsHost);
+ S._wsCalRows = [
+   {...T('a1','KV set','2026-09-09'), project_id:'p1', _pname:'Creative Queue', _pcolor:'#0F766E'},
+   {...T('a2','Copy check','2026-09-09'), project_id:'p2', _pname:'Brand Review', _pcolor:'#B97A08'},
+   {...T('a3','Retouch','2026-09-10'), project_id:'p1', _pname:'Creative Queue', _pcolor:'#0F766E'},
+ ];
+ calWsHidden = new Set(); calWsFor = 'w1'; calMonth = new Date(2026,8,1);
+ renderWorkspaceCalendarBody('w1');
+ r.wsLegendChips = wsHost.querySelectorAll('.cal-lg').length;             // 2 active boards, archived left out
+ r.wsLegendCounts = [...wsHost.querySelectorAll('.cal-lgn')].map(e=>e.textContent).join(',');   // "2,1"
+ r.wsPills = wsHost.querySelectorAll('.cal-pill').length;                 // 3
+ r.wsPillNamesBoard = /Brand Review/.test(wsHost.querySelector('[data-day="2026-09-09"] .cal-pill[title*="Copy check"]').getAttribute('title'));
+ r.wsPillHasBoardDot = wsHost.querySelectorAll('.cal-pill .cal-bdot').length===3;
+ calWsToggle('w1','p2');
+ r.wsPillsAfterHide = wsHost.querySelectorAll('.cal-pill').length;        // 2
+ r.wsHiddenChipMarked = wsHost.querySelector('.cal-lg.off') && /Brand Review/.test(wsHost.querySelector('.cal-lg.off').textContent);
+ calWsToggle('w1','p2');
+ r.wsPillsAfterShow = wsHost.querySelectorAll('.cal-pill').length;        // 3
+ // month arrows redraw the workspace grid, not a board
+ calMove('w1',1);
+ r.wsNavKeepsLegend = wsHost.querySelectorAll('.cal-lg').length===2 && /October 2026/.test(wsHost.querySelector('.cal-title').textContent);
+ calMove('w1',-1);
 }catch(e){r.error=e.message+' | '+(e.stack||'').split('\\n').slice(0,3).join(' / ');}return r;};`;
 
 w.eval('var w0=window;');
@@ -122,5 +152,12 @@ ok('next month advances the title', /October 2026/.test(r.afterNext));
 ok('previous month goes back', /September 2026/.test(r.afterPrev));
 ok('Today clears the pinned month', r.todayResets);
 ok('an empty filter result still draws the grid', r.emptyStillDrawsGrid);
+ok('workspace tabs include Calendar', r.wsTabHasCalendar);
+ok('workspace legend lists active boards only', r.wsLegendChips===2 && r.wsLegendCounts==='2,1');
+ok('workspace grid shows every board\'s tasks', r.wsPills===3 && r.wsPillHasBoardDot);
+ok('workspace pills name their board', r.wsPillNamesBoard);
+ok('hiding a board in the legend removes its tasks', r.wsPillsAfterHide===2 && r.wsHiddenChipMarked);
+ok('showing it again brings them back', r.wsPillsAfterShow===3);
+ok('month arrows redraw the workspace grid with the legend', r.wsNavKeepsLegend);
 console.log(`calendar: ${pass} passed, ${fail} failed`);
 process.exit(fail? 1 : 0);
