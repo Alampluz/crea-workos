@@ -1,6 +1,6 @@
 name: Build, test, deploy
 
-# Builds index.html from src/, runs all 27 jsdom suites, and only then commits
+# Builds index.html from src/, runs every jsdom suite in tests/, and only then commits
 # the built file that GitHub Pages serves. A failing suite blocks the deploy.
 on:
   push:
@@ -38,7 +38,7 @@ jobs:
       - name: Build app/index.html from src/
         run: bash ./build.sh   # bash: files uploaded via the GitHub web UI land as 100644
 
-      - name: Run the 27 regression suites
+      - name: Run the regression suites
         run: bash ./run_tests.sh
 
       # Only reached when every suite passed.
