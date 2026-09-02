@@ -646,6 +646,7 @@ async function renderProject(id){
   setTopbar(`<span onclick="location.hash='#/ws/${p.workspace_id}'" style="cursor:pointer">${w? esc(w.name):''}</span> <span>/</span> ${esc(p.name)} ${visChip(p.visibility)}${gateChip}`,
     `<div class="tabs"><button class="tab ${boardMode==='table'?'active':''}" onclick="boardMode='table';renderProject('${id}')">Table</button>
      <button class="tab ${boardMode==='board'?'active':''}" onclick="boardMode='board';renderProject('${id}')">Board</button>
+     <button class="tab ${boardMode==='calendar'?'active':''}" onclick="boardMode='calendar';renderProject('${id}')">Calendar</button>
      <button class="tab ${boardMode==='report'?'active':''}" onclick="boardMode='report';renderProject('${id}')">Report</button>
      <button class="tab ${boardMode==='workload'?'active':''}" onclick="boardMode='workload';renderProject('${id}')">Workload</button></div>
      ${isStaff()? `<button class="btn btn-ghost btn-sm" onclick="projectMembersModal('${id}')">Partner access</button>`:''}
@@ -690,6 +691,7 @@ function renderBoardBody(id){
   // keep the select/search states in sync without rebuilding the bar
   if(boardMode==='table'){ renderProjectTableView(id, rows, host); return; }
   if(boardMode==='workload'){ renderWorkload(id, rows, host); return; }
+  if(boardMode==='calendar'){ renderCalendar(id, rows, host); return; }
   host.innerHTML = `<div class="board">${STATUSES.map(s=>{
     const list = rows.filter(t=>t.status===s.k);
     return `<div class="col" data-status="${s.k}">
@@ -740,6 +742,114 @@ function renderWorkload(id, rows, host){
     </div>
     ${list.length? list.map(rowHTML).join('') : '<div class="empty">No tasks match the current filters</div>'}
   </div>`;
+}
+/* ---- Calendar view: the month a board's due dates actually land in ----
+   Dates here are handled as local calendar days, never as instants: keys are
+   built from local y/m/d and a bare yyyy-mm-dd is parsed at T00:00:00, so a
+   task due the 1st never shows on the 31st on a UTC+7 clock (same trap the
+   date formatting fixed on 30 Aug).
+   calMonth is the first of the displayed month; null means "this month". */
+let calMonth = null;
+let calOpenDays = new Set();     // days the user expanded past the 3-task fold
+const CAL_FOLD = 3;
+function calKey(d){
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+}
+function calParse(v){
+  if(!v) return null;
+  const d = new Date(String(v).slice(0,10)+'T00:00:00');
+  return isNaN(d)? null : d;
+}
+function calFirst(){
+  if(calMonth) return new Date(calMonth.getFullYear(), calMonth.getMonth(), 1);
+  const n = new Date(); return new Date(n.getFullYear(), n.getMonth(), 1);
+}
+/* Six Monday-first weeks, always 42 cells so the grid never changes height. */
+function calGrid(first){
+  const start = new Date(first);
+  const back = (start.getDay() + 6) % 7;        // Sunday(0) sits at the end of the week
+  start.setDate(start.getDate() - back);
+  const cells = [];
+  for(let i=0;i<42;i++){
+    const d = new Date(start.getFullYear(), start.getMonth(), start.getDate()+i);
+    cells.push({date:d, key:calKey(d), inMonth: d.getMonth()===first.getMonth()});
+  }
+  return cells;
+}
+/* date key -> tasks, plus the ones with no due date (never silently dropped). */
+function calBuckets(rows){
+  const by = new Map(), undated = [];
+  (rows||[]).forEach(t=>{
+    const d = calParse(t.due_date);
+    if(!d){ undated.push(t); return; }
+    const k = calKey(d);
+    (by.get(k) || by.set(k, []).get(k)).push(t);
+  });
+  by.forEach(list=> list.sort((a,b)=>
+    (a.status==='done') - (b.status==='done')
+    || PRIORITIES.findIndex(p=>p.k===a.priority) - PRIORITIES.findIndex(p=>p.k===b.priority)
+    || (a.title||'').localeCompare(b.title||'')));
+  return {by, undated};
+}
+function calMove(id, delta){
+  const f = calFirst();
+  calMonth = delta===0 ? null : new Date(f.getFullYear(), f.getMonth()+delta, 1);
+  calOpenDays = new Set();
+  renderBoardBody(id);
+}
+function calToggleDay(id, key){
+  if(calOpenDays.has(key)) calOpenDays.delete(key); else calOpenDays.add(key);
+  renderBoardBody(id);
+}
+function calPill(t){
+  const st = STATUSES.find(s=>s.k===t.status) || STATUSES[0];
+  const overdue = t.status!=='done' && daysDiff(t.due_date) < 0;
+  return `<button class="cal-pill${overdue?' over':''}" style="--pc:${st.color}" title="${esc(t.title)} · ${esc(st.label)}${overdue?' · overdue':''}"
+    onclick="openTask('${t.id}')"><span class="cdot" style="background:${st.color}"></span><span class="cal-pt">${esc(t.title)}</span></button>`;
+}
+function calendarHTML(id, rows){
+  const first = calFirst(), todayKey = calKey(new Date());
+  const {by, undated} = calBuckets(rows);
+  const cells = calGrid(first);
+  // A task due last month is not on this grid at all. Say so, or the header
+  // count and what you can actually see disagree with no explanation.
+  const span = new Set(cells.map(c=>c.key));
+  let shownCount = 0; by.forEach((list,k)=>{ if(span.has(k)) shownCount += list.length; });
+  const elsewhere = (rows||[]).length - undated.length - shownCount;
+  const dows = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+  const cellHTML = c => {
+    const list = by.get(c.key) || [];
+    const open = calOpenDays.has(c.key);
+    const shown = open? list : list.slice(0, CAL_FOLD);
+    const hidden = list.length - shown.length;
+    const wknd = c.date.getDay()===0 || c.date.getDay()===6;
+    return `<div class="cal-cell${c.inMonth?'':' out'}${wknd?' wknd':''}${c.key===todayKey?' today':''}" data-day="${c.key}">
+      <div class="cal-dnum">${c.date.getDate()}${c.key===todayKey? '<span class="cal-tod">Today</span>':''}</div>
+      <div class="cal-list">${shown.map(calPill).join('')}
+        ${hidden>0? `<button class="cal-more" onclick="calToggleDay('${id}','${c.key}')">+${hidden} more</button>`:''}
+        ${open && list.length>CAL_FOLD? `<button class="cal-more" onclick="calToggleDay('${id}','${c.key}')">Show less</button>`:''}</div>
+    </div>`;
+  };
+  return `<div class="card cal-wrap">
+    <div class="cal-head">
+      <div class="cal-nav">
+        <button class="btn btn-ghost btn-sm" onclick="calMove('${id}',-1)" title="Previous month">‹</button>
+        <b class="cal-title">${first.toLocaleDateString('en-GB',{month:'long', year:'numeric'})}</b>
+        <button class="btn btn-ghost btn-sm" onclick="calMove('${id}',1)" title="Next month">›</button>
+        <button class="btn btn-ghost btn-sm" onclick="calMove('${id}',0)">Today</button>
+      </div>
+      <div class="cal-note">${shownCount} task${shownCount===1?'':'s'} shown${elsewhere>0? ` · <span class="cal-und">${elsewhere} outside this view</span>`:''}${undated.length? ` · <span class="cal-und">${undated.length} with no due date</span>`:''}</div>
+    </div>
+    <div class="cal-dows">${dows.map(d=>`<div>${d}</div>`).join('')}</div>
+    <div class="cal-grid">${cells.map(cellHTML).join('')}</div>
+    ${(undated.length||elsewhere>0)? `<div class="cal-foot">${[
+        undated.length? `${undated.length} task${undated.length===1?' has':'s have'} no due date` : '',
+        elsewhere>0? `${elsewhere} ${elsewhere===1?'is':'are'} due outside the weeks shown` : ''
+      ].filter(Boolean).join(' · ')} — the Table view shows everything.</div>`:''}
+  </div>`;
+}
+function renderCalendar(id, rows, host){
+  host.innerHTML = calendarHTML(id, rows);
 }
 function taskCard(t){
   const done = t.status==='done';
