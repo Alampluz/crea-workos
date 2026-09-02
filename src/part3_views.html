@@ -99,6 +99,7 @@ function approvalTable(apprs){
 function wsTabsHTML(wsId, active){
   return `<div class="tabs" style="margin-bottom:18px;width:fit-content">
     <button class="tab ${active==='boards'?'active':''}" onclick="location.hash='#/ws/${wsId}'">Boards</button>
+    <button class="tab ${active==='calendar'?'active':''}" onclick="location.hash='#/ws/${wsId}/calendar'">Calendar</button>
     <button class="tab ${active==='report'?'active':''}" onclick="location.hash='#/ws/${wsId}/report'">Report</button>
     ${isStaff()? `<button class="tab ${active==='automations'?'active':''}" onclick="location.hash='#/ws/${wsId}/automations'">Automations</button>`:''}
   </div>`;
@@ -106,6 +107,7 @@ function wsTabsHTML(wsId, active){
 async function renderWorkspace(id, tab){
   const w = wsById(id); if(!w){ location.hash='#/home'; return; }
   if(tab==='report') return renderWorkspaceReport(id);
+  if(tab==='calendar') return renderWorkspaceCalendar(id);
   if(tab==='automations') return renderWorkspaceAutomations(id);
   widgetScope = null; widgetProjScope = null;
   setTopbar(esc(w.name), (canManageWs(w.id)? `<button class="btn btn-ghost btn-sm" onclick="editWorkspaceModal('${w.id}')">Edit workspace</button>`:'')
@@ -752,6 +754,10 @@ function renderWorkload(id, rows, host){
 let calMonth = null;
 let calOpenDays = new Set();     // days the user expanded past the 3-task fold
 const CAL_FOLD = 3;
+/* Whoever draws the calendar says how to redraw it. The board view redraws
+   through renderBoardBody (filters intact); the workspace view through its own
+   renderer. Falls back to the board path so old callers keep working. */
+let calRerender = null;
 function calKey(d){
   return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
 }
@@ -791,23 +797,27 @@ function calBuckets(rows){
     || (a.title||'').localeCompare(b.title||'')));
   return {by, undated};
 }
+function calRedraw(id){ if(calRerender) calRerender(); else renderBoardBody(id); }
 function calMove(id, delta){
   const f = calFirst();
   calMonth = delta===0 ? null : new Date(f.getFullYear(), f.getMonth()+delta, 1);
   calOpenDays = new Set();
-  renderBoardBody(id);
+  calRedraw(id);
 }
 function calToggleDay(id, key){
   if(calOpenDays.has(key)) calOpenDays.delete(key); else calOpenDays.add(key);
-  renderBoardBody(id);
+  calRedraw(id);
 }
 function calPill(t){
   const st = STATUSES.find(s=>s.k===t.status) || STATUSES[0];
   const overdue = t.status!=='done' && daysDiff(t.due_date) < 0;
-  return `<button class="cal-pill${overdue?' over':''}" style="--pc:${st.color}" title="${esc(t.title)} · ${esc(st.label)}${overdue?' · overdue':''}"
-    onclick="openTask('${t.id}')"><span class="cdot" style="background:${st.color}"></span><span class="cal-pt">${esc(t.title)}</span></button>`;
+  const board = t._pname? ` · ${esc(t._pname)}` : '';
+  const bdot = t._pname? `<span class="cal-bdot" style="background:${t._pcolor||'var(--ink3)'}" title="${esc(t._pname)}"></span>` : '';
+  return `<button class="cal-pill${overdue?' over':''}" style="--pc:${st.color}" title="${esc(t.title)} · ${esc(st.label)}${overdue?' · overdue':''}${board}"
+    onclick="openTask('${t.id}')"><span class="cdot" style="background:${st.color}"></span>${bdot}<span class="cal-pt">${esc(t.title)}</span></button>`;
 }
-function calendarHTML(id, rows){
+function calendarHTML(id, rows, opts){
+  const everywhere = (opts&&opts.everywhere) || 'the Table view shows everything';
   const first = calFirst(), todayKey = calKey(new Date());
   const {by, undated} = calBuckets(rows);
   const cells = calGrid(first);
@@ -845,11 +855,61 @@ function calendarHTML(id, rows){
     ${(undated.length||elsewhere>0)? `<div class="cal-foot">${[
         undated.length? `${undated.length} task${undated.length===1?' has':'s have'} no due date` : '',
         elsewhere>0? `${elsewhere} ${elsewhere===1?'is':'are'} due outside the weeks shown` : ''
-      ].filter(Boolean).join(' · ')} — the Table view shows everything.</div>`:''}
+      ].filter(Boolean).join(' · ')} — ${everywhere}.</div>`:''}
   </div>`;
 }
 function renderCalendar(id, rows, host){
+  calRerender = () => renderBoardBody(id);
   host.innerHTML = calendarHTML(id, rows);
+}
+/* ---- Workspace calendar: every board in the workspace on one grid ----
+   Reads live tasks for the workspace's active boards (RLS decides which boards
+   this person can see), tags each with its board, and lets the board legend
+   toggle boards in and out. Archived tasks are left out, as in the Table view. */
+let calWsHidden = new Set();     // project ids toggled off in the legend
+let calWsFor = null;             // which workspace the legend state belongs to
+async function renderWorkspaceCalendar(wsId){
+  const w = wsById(wsId); if(!w){ location.hash='#/home'; return; }
+  widgetScope = null; widgetProjScope = null;
+  if(calWsFor!==wsId){ calWsHidden = new Set(); calOpenDays = new Set(); calWsFor = wsId; }
+  setTopbar(esc(w.name), (canManageWs(w.id)? `<button class="btn btn-ghost btn-sm" onclick="editWorkspaceModal('${w.id}')">Edit workspace</button>`:'')
+    + (isStaff()? `<button class="btn btn-ghost btn-sm" onclick="teamMembersModal('${w.id}')">Members</button>`:''));
+  const C=$('#content'); C.innerHTML='<div class="empty">Loading calendar…</div>';
+  const projects = S.projects.filter(p=>p.workspace_id===wsId && p.status!=='archived');
+  const ids = projects.map(p=>p.id);
+  let tasks = [];
+  if(ids.length){
+    const {data, error} = await db.from('tasks').select('*').in('project_id', ids).is('archived_at', null);
+    if(error){ C.innerHTML = `${wsTabsHTML(wsId,'calendar')}<div class="card empty">${esc(error.message)}</div>`; return; }
+    tasks = data||[];
+  }
+  const byId = Object.fromEntries(projects.map(p=>[p.id,p]));
+  const all = tasks.map(t=>{ const p=byId[t.project_id]||{}; return {...t, _pname:p.name||'', _pcolor:p.color||''}; });
+  S._wsCalRows = all;
+  C.innerHTML = `${wsTabsHTML(wsId,'calendar')}<div id="ws-cal-body"></div>`;
+  renderWorkspaceCalendarBody(wsId);
+}
+function calWsToggle(wsId, pid){
+  if(calWsHidden.has(pid)) calWsHidden.delete(pid); else calWsHidden.add(pid);
+  renderWorkspaceCalendarBody(wsId);
+}
+function calWsLegendHTML(wsId, projects, counts){
+  if(!projects.length) return '';
+  return `<div class="cal-legend">${projects.map(p=>{
+    const off = calWsHidden.has(p.id);
+    return `<button class="cal-lg${off?' off':''}" onclick="calWsToggle('${wsId}','${p.id}')" title="${off?'Show':'Hide'} ${esc(p.name)}">
+      <span class="cal-bdot" style="background:${p.color||'var(--ink3)'}"></span>${esc(p.name)}<span class="cal-lgn">${counts[p.id]||0}</span></button>`;
+  }).join('')}</div>`;
+}
+function renderWorkspaceCalendarBody(wsId){
+  const host = $('#ws-cal-body'); if(!host) return;
+  calRerender = () => renderWorkspaceCalendarBody(wsId);   // arrows and the fold redraw this, not a board
+  const projects = S.projects.filter(p=>p.workspace_id===wsId && p.status!=='archived');
+  const all = S._wsCalRows||[];
+  const counts = {}; all.forEach(t=>{ counts[t.project_id]=(counts[t.project_id]||0)+1; });
+  const rows = all.filter(t=>!calWsHidden.has(t.project_id));
+  host.innerHTML = calWsLegendHTML(wsId, projects, counts)
+    + (projects.length? calendarHTML(wsId, rows, {everywhere:'each board\'s Table view shows everything'}) : `<div class="card empty">No boards yet in this workspace${isStaff()? ' — create the first one.':''}</div>`);
 }
 function taskCard(t){
   const done = t.status==='done';
