@@ -2,7 +2,7 @@
    month navigation, and that undated tasks are reported rather than dropped. */
 const fs=require('fs'),{JSDOM}=require('jsdom');
 const html=fs.readFileSync('index.html','utf8');
-const dom=new JSDOM(html.replace(/<script src=[^>]+><\/script>/g,''),{runScripts:'outside-only',pretendToBeVisual:true});
+const dom=new JSDOM(html.replace(/<script src=[^>]+><\/script>/g,''),{runScripts:'outside-only',pretendToBeVisual:true,url:'https://workos.test/'});   // a real origin so localStorage works
 const w=dom.window;
 w.eval(`window.scrollTo=()=>{};
 window.supabase={createClient:()=>({from:()=>({select:()=>({eq:()=>({eq:()=>({order:()=>({limit:()=>Promise.resolve({data:[]})})})})})}),
@@ -119,6 +119,29 @@ const driver=`window.__run=function(){const r={};try{
  calMove('w1',1);
  r.wsNavKeepsLegend = wsHost.querySelectorAll('.cal-lg').length===2 && /October 2026/.test(wsHost.querySelector('.cal-title').textContent);
  calMove('w1',-1);
+
+ // ---- My calendar on Home: List / Calendar toggle over the same person's tasks
+ const home=w0.document.createElement('div');
+ home.innerHTML = '<div class="tabs"><button class="tab home-mode" data-m="list"></button><button class="tab home-mode" data-m="calendar"></button></div><div id="home-tasks-body"></div>';
+ w0.document.body.appendChild(home);
+ S._myTasks = [T('m1','Open one','2026-09-15'), T('m2','Open two',null)];
+ S._myCalRows = [
+   {...T('m1','Open one','2026-09-15'), project_id:'p1', _pname:'Creative Queue', _pcolor:'#0F766E'},
+   {...T('m3','Done one','2026-09-16','done'), project_id:'p2', _pname:'Brand Review', _pcolor:'#B97A08'},
+ ];
+ calMonth = new Date(2026,8,1);
+ setHomeTasksMode('list');
+ r.homeListRenders = !!home.querySelector('#home-tasks-body table') && home.querySelector('.home-mode[data-m="list"]').classList.contains('active');
+ setHomeTasksMode('calendar');
+ r.homeCalRenders = home.querySelectorAll('#home-tasks-body .cal-cell').length===42
+   && home.querySelector('.home-mode[data-m="calendar"]').classList.contains('active');
+ r.homeCalPills = home.querySelectorAll('#home-tasks-body .cal-pill').length;           // 2 - done tasks stay on the grid
+ r.homeCalPillNamesBoard = /Brand Review/.test(home.querySelector('[data-day="2026-09-16"] .cal-pill').getAttribute('title'));
+ r.homeModeSticks = w0.localStorage.getItem('workos.homeTasks')==='calendar';
+ calMove('home',1);
+ r.homeNavRedrawsHome = /October 2026/.test(home.querySelector('#home-tasks-body .cal-title').textContent);
+ calMove('home',-1);
+ setHomeTasksMode('list');
 }catch(e){r.error=e.message+' | '+(e.stack||'').split('\\n').slice(0,3).join(' / ');}return r;};`;
 
 w.eval('var w0=window;');
@@ -159,5 +182,10 @@ ok('workspace pills name their board', r.wsPillNamesBoard);
 ok('hiding a board in the legend removes its tasks', r.wsPillsAfterHide===2 && r.wsHiddenChipMarked);
 ok('showing it again brings them back', r.wsPillsAfterShow===3);
 ok('month arrows redraw the workspace grid with the legend', r.wsNavKeepsLegend);
+ok('Home: List mode renders the task table', r.homeListRenders);
+ok('Home: Calendar mode renders the grid and marks its tab', r.homeCalRenders);
+ok('Home: done tasks stay on the grid, pills name their board', r.homeCalPills===2 && r.homeCalPillNamesBoard);
+ok('Home: the chosen mode sticks in localStorage', r.homeModeSticks);
+ok('Home: month arrows redraw the Home grid', r.homeNavRedrawsHome);
 console.log(`calendar: ${pass} passed, ${fail} failed`);
 process.exit(fail? 1 : 0);
