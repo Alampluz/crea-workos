@@ -471,6 +471,11 @@ td.tv-name .tv-open{padding-left:20px}
 .view-pick select{appearance:none;-webkit-appearance:none;border:none;background:transparent;font:600 13px inherit;color:var(--ink);padding:0 16px 0 0;cursor:pointer;outline:none}
 .view-pick .vp-chev{position:absolute;right:10px;font-size:11px;color:var(--ink2);pointer-events:none}
 .view-pick:hover{background:var(--line)}
+/* email settings */
+.es-master{display:flex;align-items:center;gap:10px;font-weight:700;font-size:14px;margin:6px 0 12px}
+.es-row{display:flex;align-items:center;gap:10px;padding:7px 0;border-top:1px solid var(--line);font-size:13.5px;color:var(--ink)}
+.es-row input{width:16px;height:16px;accent-color:var(--accent)}
+#es-kinds.es-off{opacity:.45;pointer-events:none}
 @media (max-width:720px){
   .cal-cell{min-height:74px}
   .cal-pt{display:none}
@@ -1355,7 +1360,7 @@ function startNotifPolling(){
 function notifPanelHTML(){
   const list = S._notifs||[];
   const unread = list.filter(n=>!n.read_at).length;
-  return `<div class="np-head"><span>Notifications${unread? ` · ${unread}`:''}</span>${unread? `<button onclick="markAllNotifsRead()">Mark all read</button>`:''}</div>
+  return `<div class="np-head"><span>Notifications${unread? ` · ${unread}`:''}</span><span style="display:flex;gap:2px">${unread? `<button onclick="markAllNotifsRead()">Mark all read</button>`:''}<button onclick="emailSettingsModal()" title="Which of these also reach your inbox">Email settings</button></span></div>
     <div class="np-body">${list.length? list.map(n=>{
       const who = prof(n.actor_id);
       return `<div class="np-item ${n.read_at?'':'unread'}" onclick="openNotif('${n.id}')">
@@ -1386,6 +1391,45 @@ function notifLine(n, who){
     }
     default:            return `${name} mentioned you${n.title? ` in ${t}`:''}`;
   }
+}
+/* ---- Email settings: which notification kinds also go to the person's inbox ----
+   Mirrors profiles.email_notify / email_muted_kinds, which the enqueue trigger reads.
+   Kinds are listed in the order they tend to matter, not alphabetically. */
+const EMAIL_KINDS = [
+  ['mention',          'Someone mentions me in a comment'],
+  ['assigned',         'Someone assigns me a task'],
+  ['approval',         'Someone asks me to sign off'],
+  ['approval_decided', 'My sign-off request is decided'],
+  ['review',           'A task is ready for review'],
+  ['request',          'A new ticket arrives'],
+  ['sla_warning',      'A ticket is close to its SLA'],
+  ['sla_breach',       'A ticket breaches its SLA'],
+  ['overdue',          'A task of mine is overdue'],
+  ['automation',       'An automation flags something'],
+];
+function emailSettingsModal(){
+  $('#notif-panel')?.remove();
+  const on = S.me.email_notify !== false;
+  const muted = new Set(S.me.email_muted_kinds || []);
+  modal(`<div class="modal-head"><h2>Email settings</h2><button class="x" onclick="closeModals()">✕</button></div>
+    <div class="modal-body">
+      <div class="mi-hint">Everything still shows in the bell. This only decides what is <b>also</b> sent to <b>${esc(S.me.email||'your email')}</b>.</div>
+      <label class="es-master"><label class="sw"><input type="checkbox" id="es-on" ${on?'checked':''} onchange="document.getElementById('es-kinds').classList.toggle('es-off', !this.checked)"><span></span></label>
+        <span>Email me about WorkOS activity</span></label>
+      <div id="es-kinds" class="${on?'':'es-off'}">
+        ${EMAIL_KINDS.map(([k,l])=>`<label class="es-row"><input type="checkbox" data-kind="${k}" ${muted.has(k)?'':'checked'}><span>${l}</span></label>`).join('')}
+      </div>
+    </div>
+    <div class="modal-foot"><button class="btn btn-ghost" onclick="closeModals()">Cancel</button><button class="btn btn-primary" onclick="saveEmailSettings()">Save</button></div>`);
+}
+async function saveEmailSettings(){
+  const on = $('#es-on').checked;
+  const muted = [...document.querySelectorAll('#es-kinds input[data-kind]')].filter(i=>!i.checked).map(i=>i.dataset.kind);
+  const {error} = await db.from('profiles').update({email_notify:on, email_muted_kinds:muted}).eq('id', S.me.id);
+  if(error) return toast(error.message, true);
+  S.me.email_notify = on; S.me.email_muted_kinds = muted;
+  closeModals();
+  toast(on? (muted.length? `Email on · ${muted.length} kind${muted.length>1?'s':''} muted` : 'Email on for everything') : 'Email off — the bell still has everything');
 }
 function toggleNotifPanel(e){
   e?.stopPropagation();
