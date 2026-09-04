@@ -4,12 +4,17 @@ async function renderHome(){
   setTopbar('My Work');
   const C=$('#content');
   C.innerHTML = '<div class="empty">Loading…</div>';
-  const [tks, reqs, apprs] = await Promise.all([
+  const [tks, reqs, apprs, cal] = await Promise.all([
     db.from('tasks').select('*').eq('assignee_id',S.me.id).neq('status','done').order('due_date',{ascending:true,nullsFirst:false}),
     db.from('requests').select('*').eq('submitted_by',S.me.id).not('status','in',"(done,cancelled)").order('created_at',{ascending:false}),
     db.from('approvals').select('*').eq('approver_id',S.me.id).eq('status','pending'),
+    // My calendar: everything assigned to me that has a date, done included - a
+    // finished task still happened on that day, and the grid greys it out.
+    db.from('tasks').select('*').eq('assignee_id',S.me.id).is('archived_at',null).not('due_date','is',null),
   ]);
   const tasks = tks.data||[], requests = reqs.data||[], approvals = apprs.data||[];
+  S._myTasks = tasks;
+  S._myCalRows = (cal.data||[]).map(t=>{ const p=projById(t.project_id)||{}; return {...t, _pname:p.name||'', _pcolor:p.color||''}; });
   const overdue = tasks.filter(t=>t.due_date && daysDiff(t.due_date)<0);
   const today = tasks.filter(t=>t.due_date && daysDiff(t.due_date)===0);
 
@@ -47,13 +52,34 @@ async function renderHome(){
       <div class="stat"><div class="n">${requests.length}</div><div class="l">My open requests</div></div>
       <div class="stat"><div class="n ${approvals.length?'red':''}">${approvals.length}</div><div class="l">Waiting for my approval</div></div>
     </div>
-    <div class="section-title">My tasks <span class="count">${tasks.length}</span></div>
-    <div class="card">${tasks.length? taskTable(tasks) : `<div class="empty">No open tasks assigned to you</div>`}</div>
+    <div class="section-title">My tasks <span class="count">${tasks.length}</span><span style="flex:1"></span>
+      <div class="tabs home-modes"><button class="tab home-mode" data-m="list" onclick="setHomeTasksMode('list')">List</button><button class="tab home-mode" data-m="calendar" onclick="setHomeTasksMode('calendar')">Calendar</button></div></div>
+    <div id="home-tasks-body"></div>
     <div class="section-title">My requests <span class="count">${requests.length}</span></div>
     <div class="card">${requests.length? requestTable(requests) : `<div class="empty">No open requests yet</div>`}</div>
     ${approvals.length? `<div class="section-title">Waiting for my approval <span class="count">${approvals.length}</span></div>
       <div class="card">${approvalTable(approvals)}</div>`:''}
   `;
+  renderHomeTasksBody();
+}
+/* My tasks on Home: the open-task list, or the same person's dated tasks across
+   every workspace on one calendar. The choice sticks per browser. */
+let homeTasksMode = (()=>{ try{ return localStorage.getItem('workos.homeTasks')==='calendar'? 'calendar':'list'; }catch(e){ return 'list'; } })();
+function setHomeTasksMode(m){
+  homeTasksMode = m==='calendar'? 'calendar':'list';
+  try{ localStorage.setItem('workos.homeTasks', homeTasksMode); }catch(e){}
+  renderHomeTasksBody();
+}
+function renderHomeTasksBody(){
+  const host = $('#home-tasks-body'); if(!host) return;
+  document.querySelectorAll('.home-mode').forEach(b=> b.classList.toggle('active', b.dataset.m===homeTasksMode));
+  if(homeTasksMode==='calendar'){
+    calRerender = () => renderHomeTasksBody();
+    host.innerHTML = calendarHTML('home', S._myCalRows||[], {everywhere:'the List shows every open task'});
+    return;
+  }
+  const tasks = S._myTasks||[];
+  host.innerHTML = `<div class="card">${tasks.length? taskTable(tasks) : `<div class="empty">No open tasks assigned to you</div>`}</div>`;
 }
 function taskTable(tasks){
   return `<table class="tbl"><thead><tr><th>Task</th><th>Board</th><th>Status</th><th>Priority</th><th>Due</th><th>Assignee</th></tr></thead><tbody>
