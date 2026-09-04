@@ -465,6 +465,12 @@ td.tv-name .tv-open{padding-left:20px}
 .cal-lgn{font-size:11px;color:var(--ink3);font-weight:700}
 .home-modes{padding:2px}
 .home-modes .tab{padding:4px 11px;font-size:12px}
+/* board view dropdown */
+.view-pick{position:relative;display:inline-flex;align-items:center;gap:6px;background:var(--gray-soft);border-radius:9px;padding:0 10px 0 10px;height:32px;cursor:pointer}
+.view-pick .vp-l{font-size:12px;font-weight:600;color:var(--ink3)}
+.view-pick select{appearance:none;-webkit-appearance:none;border:none;background:transparent;font:600 13px inherit;color:var(--ink);padding:0 16px 0 0;cursor:pointer;outline:none}
+.view-pick .vp-chev{position:absolute;right:10px;font-size:11px;color:var(--ink2);pointer-events:none}
+.view-pick:hover{background:var(--line)}
 @media (max-width:720px){
   .cal-cell{min-height:74px}
   .cal-pt{display:none}
@@ -2117,6 +2123,15 @@ function filterBarHTML(pid){
     <button class="btn btn-ghost btn-sm" onclick="boardActivityModal('${pid}')">Activity</button>`:''}
   </div>`;
 }
+/* The board's view switcher - one dropdown rather than five tabs, so the topbar
+   stays short as views are added. Order is the order people reach for them. */
+const BOARD_VIEWS = [['table','Table'],['board','Board'],['calendar','Calendar'],['report','Report'],['workload','Workload']];
+function viewPickerHTML(id){
+  return `<label class="view-pick" title="Change view"><span class="vp-l">View</span>
+    <select onchange="boardMode=this.value;renderProject('${id}')">
+      ${BOARD_VIEWS.map(([k,l])=>`<option value="${k}" ${boardMode===k?'selected':''}>${l}</option>`).join('')}
+    </select><span class="vp-chev">▾</span></label>`;
+}
 async function renderProject(id){
   const p = projById(id);
   if(!p){ // maybe not in cache (partner) — try fetch, but never loop on it
@@ -2127,11 +2142,7 @@ async function renderProject(id){
   const w = wsById(p.workspace_id);
   const gateChip = p.approval_gate?.on? `<span class="chip" style="background:var(--gray-soft);color:var(--ink3)" title="Tasks need an approved sign-off before they can be marked ${esc((STATUSES.find(s=>s.k===p.approval_gate.status)||{}).label||'Done')}">Sign-off required</span>` : '';
   setTopbar(`<span onclick="location.hash='#/ws/${p.workspace_id}'" style="cursor:pointer">${w? esc(w.name):''}</span> <span>/</span> ${esc(p.name)} ${visChip(p.visibility)}${gateChip}`,
-    `<div class="tabs"><button class="tab ${boardMode==='table'?'active':''}" onclick="boardMode='table';renderProject('${id}')">Table</button>
-     <button class="tab ${boardMode==='board'?'active':''}" onclick="boardMode='board';renderProject('${id}')">Board</button>
-     <button class="tab ${boardMode==='calendar'?'active':''}" onclick="boardMode='calendar';renderProject('${id}')">Calendar</button>
-     <button class="tab ${boardMode==='report'?'active':''}" onclick="boardMode='report';renderProject('${id}')">Report</button>
-     <button class="tab ${boardMode==='workload'?'active':''}" onclick="boardMode='workload';renderProject('${id}')">Workload</button></div>
+    `${viewPickerHTML(id)}
      ${isStaff()? `<button class="btn btn-ghost btn-sm" onclick="projectMembersModal('${id}')">Partner access</button>`:''}
      ${canManageBoard(id)? `<button class="btn btn-ghost btn-sm" onclick="editProjectModal('${id}')">Edit board</button>`:''}
      ${canManageBoard(id)? `<button class="btn btn-ghost btn-sm" style="color:var(--red)" onclick="deleteProjectModal('${id}')">Delete board</button>`:''}
