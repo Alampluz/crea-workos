@@ -54,5 +54,17 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add index.html
           git commit -m "Deploy: build from ${GITHUB_SHA::7}"
-          git push
-          echo "deployed - users need a hard refresh (Ctrl/Cmd+Shift+R)"
+          # main can move while this job runs (uploads through the GitHub web UI land as
+          # several commits seconds apart). Rebase onto the tip, keeping this build's
+          # index.html, and retry the push rather than failing the deploy.
+          for attempt in 1 2 3 4; do
+            git fetch origin main
+            git rebase -X theirs origin/main || { git rebase --abort; git reset --hard origin/main; cp app/index.html index.html; git add index.html; git commit -m "Deploy: build from ${GITHUB_SHA::7}"; }
+            if git push origin HEAD:main; then
+              echo "deployed - users need a hard refresh (Ctrl/Cmd+Shift+R)"
+              exit 0
+            fi
+            echo "push rejected (attempt $attempt) - main moved, retrying"
+            sleep $((attempt * 5))
+          done
+          echo "could not push after 4 attempts"; exit 1
