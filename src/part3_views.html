@@ -375,7 +375,10 @@ function editProjectModal(pid){
         <span style="font-size:13px;color:var(--ink2);flex:1;min-width:120px">${esc(ownerNames(boardOwnerIds(pid)))}</span>
         <button type="button" class="btn btn-ghost btn-sm" id="ep-owners">Manage owners</button>
       </div>
-      <div style="font-size:12px;color:var(--ink3);margin-top:4px">Owners and admins manage this board's settings, columns, groups and sign-off. Everyone with access still works on its tasks.</div>
+      <div style="font-size:12px;color:var(--ink3);margin-top:4px">Owners and admins manage this board's settings, columns, groups and sign-off.</div>
+      ${canManageBoard(pid)? `<label style="margin-top:14px">Who can change tasks</label>
+      <select id="ep-preset">${BOARD_PRESETS.map(o=>`<option value="${o.k}" ${o.k===(p.edit_preset||'everything')?'selected':''}>${o.label}</option>`).join('')}</select>
+      <div id="ep-preset-blurb" style="font-size:12px;color:var(--ink3);margin-top:4px">${BOARD_PRESETS.find(o=>o.k===(p.edit_preset||'everything')).blurb} Owners, admins and management are never restricted.</div>`:''}
       <label style="margin-top:14px">Who can open this board</label>
       ${visPickerHTML('ep-vis', p.visibility||'collaborate')}
       <label style="margin-top:14px">Colour</label>
@@ -386,6 +389,8 @@ function editProjectModal(pid){
     <div class="modal-foot"><button class="btn btn-ghost" onclick="closeModals()">Cancel</button><button class="btn btn-primary" id="ep-save">Save</button></div>`);
   let colour = p.color;
   m.querySelector('#ep-owners').onclick = ()=>{ closeModals(); projectMembersModal(pid); };
+  const presetSel = m.querySelector('#ep-preset');
+  if(presetSel) presetSel.onchange = ()=>{ m.querySelector('#ep-preset-blurb').textContent = BOARD_PRESETS.find(o=>o.k===presetSel.value).blurb + ' Owners, admins and management are never restricted.'; };
   wireVisPicker(m,'ep-vis');
   const gateOn = m.querySelector('#ep-gate-on');
   if(gateOn) gateOn.onchange = ()=>{ m.querySelector('#ep-gate-appr').hidden = !gateOn.checked; };
@@ -405,6 +410,7 @@ function editProjectModal(pid){
     const upd = {name, description:m.querySelector('#ep-desc').value.trim(),
       workspace_id:m.querySelector('#ep-ws').value, visibility:vis,
       status:m.querySelector('#ep-status').value, color:colour};
+    if(presetSel) upd.edit_preset = presetSel.value;
     if(canGate) upd.approval_gate = {on: gateOn.checked,
       status: m.querySelector('#ep-gate-status').value,
       approvers: [...m.querySelectorAll('#ep-gate-appr input[data-gapp]:checked')].map(c=>c.dataset.gapp)};
@@ -685,7 +691,7 @@ async function renderProject(id){
      ${isStaff()? `<button class="btn btn-ghost btn-sm" onclick="projectMembersModal('${id}')">Partner access</button>`:''}
      ${canManageBoard(id)? `<button class="btn btn-ghost btn-sm" onclick="editProjectModal('${id}')">Edit board</button>`:''}
      ${canManageBoard(id)? `<button class="btn btn-ghost btn-sm" style="color:var(--red)" onclick="deleteProjectModal('${id}')">Delete board</button>`:''}
-     <button class="btn btn-primary btn-sm" onclick="newTaskModal('${id}')">＋ New task</button>`);
+     ${(canEditOnBoard(id) || isRequester() && boardPreset(id)!=='view')? `<button class="btn btn-primary btn-sm" onclick="newTaskModal('${id}')">＋ New task</button>`:''}`);
   const C=$('#content'); C.innerHTML='<div class="empty">Loading…</div>';
   const [{data:tasks, error},{data:sc},{data:fields},{data:groups}] = await Promise.all([
     db.from('tasks').select('*').eq('project_id',id).order('position'),
@@ -710,7 +716,7 @@ async function renderProject(id){
     return;
   }
   widgetProjScope = null;
-  C.innerHTML = filterBarHTML(id) + '<div id="board-body"></div>';
+  C.innerHTML = presetNoticeHTML(id) + filterBarHTML(id) + '<div id="board-body"></div>';
   renderBoardBody(id);
 }
 /* Re-renders only the content below the filter bar, so typing in the search
@@ -730,7 +736,7 @@ function renderBoardBody(id){
     return `<div class="col" data-status="${s.k}">
       <div class="col-head"><span class="dot" style="background:${s.color}"></span>${s.label}<span class="count">${list.length}</span></div>
       <div class="col-body" data-status="${s.k}">${list.map(taskCard).join('')}</div>
-      ${canCreate()? `<button class="add-card" onclick="newTaskModal('${id}','${s.k}')">＋ Add task</button>`:''}
+      ${(canEditOnBoard(id) || isRequester() && boardPreset(id)!=='view')? `<button class="add-card" onclick="newTaskModal('${id}','${s.k}')">＋ Add task</button>`:''}
     </div>`;}).join('')}</div>`;
   wireDnD(id);
 }
@@ -945,7 +951,7 @@ function renderWorkspaceCalendarBody(wsId){
 function taskCard(t){
   const done = t.status==='done';
   const chk = t._chk;
-  return `<div class="tcard" draggable="true" data-id="${t.id}" onclick="openTask('${t.id}')">
+  return `<div class="tcard" draggable="${canEditTask(t)}" data-id="${t.id}" onclick="openTask('${t.id}')">
     <div class="t">${esc(t.title)}</div>
     <div class="meta">${prioChip(t.priority)}${dueBadge(t.due_date, done)}
       ${(S._subs||{})[t.id]?.total? `<span class="subchip" style="font-size:11px;font-weight:700;color:var(--ink3);background:var(--gray-soft);border-radius:6px;padding:1px 6px">${S._subs[t.id].done}/${S._subs[t.id].total}</span>`:''}
@@ -1034,7 +1040,8 @@ function tvDisplay(kind, val, t){
 }
 function tvPickHTML(kind, tid, field, isCustom, val, t){
   const fill = (kind==='status'||kind==='priority')? ' fillcell':'';
-  if(!canEdit()) return `<div class="tv-pickv${fill} ro">${tvDisplay(kind, val, t)}</div>`;
+  const tk = t || (S._tasksAll||S._tasks||[]).find(x=>x.id===tid);
+  if(!canEditTask(tk)) return `<div class="tv-pickv${fill} ro">${tvDisplay(kind, val, t)}</div>`;
   return `<div class="tv-pickv${fill}" data-kind="${kind}" data-tid="${tid}" data-field="${esc(field)}" data-cust="${isCustom?1:0}" onclick="tvEdit(this,event)">${tvDisplay(kind, val, t)}</div>`;
 }
 /* ---- dropdown picker (chip cells open a menu, like monday) ---- */
@@ -1267,7 +1274,7 @@ function tvLinkCell(t, f){
   const title = lt? String(lt.title||'') : '';
   const chip = lt? `<span class="tv-linkchip" title="${esc(title)}" onclick="event.stopPropagation();location.hash='#/task/${lt.id}'">${tvLinkIcon()}<span class="lt">${esc(title.length>24? title.slice(0,24)+'…' : title)}</span></span>`
     : `<span class="tv-empty">—</span>`;
-  if(!canEdit()) return `<div class="tv-pickv ro">${chip}</div>`;
+  if(!canEditTask(t)) return `<div class="tv-pickv ro">${chip}</div>`;
   return `<div class="tv-pickv" onclick="tvLinkPick(this,'${t.id}','${f.id}')">${chip}</div>`;
 }
 /* Target-board task lists for the link picker, cached per board for the session. */
@@ -1329,7 +1336,7 @@ function tvMirrorCell(t, f){
     else if(show==='due_date') inner = lt.due_date? esc(fmtDate(lt.due_date)) : inner;
     else { const s = mirrorText(t, f); inner = s? esc(s) : inner; }
   }
-  if(canEdit() && mirrorEditable(f, lt))
+  if(canEditTask(t) && mirrorEditable(f, lt))
     return `<div class="tv-pickv tv-mirror" title="Mirrored — editing here updates the linked task" onclick="tvMirrorEdit(this,'${t.id}','${f.id}')">${inner}</div>`;
   return `<div class="tv-pickv ro tv-mirror" title="Mirrored from the linked task">${inner}</div>`;
 }
@@ -1393,7 +1400,7 @@ function tvCell(t, f){
   if(f.ftype==='link')    return tvLinkCell(t, f);
   if(f.ftype==='mirror')  return tvMirrorCell(t, f);
   const v = (t.custom||{})[f.id];
-  if(f.ftype==='checkbox') return `<input type="checkbox" ${v?'checked':''} ${canEdit()?`onchange="tvCustom('${t.id}','${f.id}', this.checked)"`:'disabled'}>`;
+  if(f.ftype==='checkbox') return `<input type="checkbox" ${v?'checked':''} ${canEditTask(t)?`onchange="tvCustom('${t.id}','${f.id}', this.checked)"`:'disabled'}>`;
   if(f.ftype==='number')   return tvPickHTML('number', t.id, f.id, true, v);
   if(f.ftype==='date')     return tvPickHTML('date', t.id, f.id, true, v);
   if(f.ftype==='select')   return tvPickHTML('f_'+f.id, t.id, f.id, true, v);
@@ -1588,8 +1595,8 @@ function tvRowHTML(t, flds, gc){
   const arch = !!t.archived_at;
   const dep = taskHasOpenDeps(t.id)? depIconHTML() : '';
   return `<tr class="tv-row${tvSel.has(t.id)?' rowsel':''}${arch?' tv-arch':''}" data-tid="${t.id}" ${gc?`style="--gcol:${gc}"`:''}>
-    ${canEdit()?`<td class="tv-check"><input type="checkbox" ${tvSel.has(t.id)?'checked':''} onchange="tvSelToggle('${t.id}',this.checked)"></td>`:''}
-    <td class="tv-name"><span class="tv-dots" title="Task options" onclick="event.stopPropagation();rowMenu(this,'${t.id}')">⋯</span><div class="tv-open" draggable="${canEdit()&&!arch}" ondragstart="tvDragStart(event,'${t.id}')" ondragend="tvDragEnd(event)" onclick="openTask('${t.id}')">${dep}${esc(t.title)}${sc&&sc.total? `<span class="subchip">${sc.done}/${sc.total}</span>`:''}</div>${arch&&canEdit()?`<span class="tv-restore" onclick="event.stopPropagation();tvUnarchive('${t.id}')">Restore</span>`:''}</td>
+    ${canEdit()?`<td class="tv-check">${canEditTask(t)?`<input type="checkbox" ${tvSel.has(t.id)?'checked':''} onchange="tvSelToggle('${t.id}',this.checked)">`:''}</td>`:''}
+    <td class="tv-name"><span class="tv-dots" title="Task options" onclick="event.stopPropagation();rowMenu(this,'${t.id}')">⋯</span><div class="tv-open" draggable="${canEditTask(t)&&!arch}" ondragstart="tvDragStart(event,'${t.id}')" ondragend="tvDragEnd(event)" onclick="openTask('${t.id}')">${dep}${esc(t.title)}${sc&&sc.total? `<span class="subchip">${sc.done}/${sc.total}</span>`:''}</div>${arch&&canEdit()?`<span class="tv-restore" onclick="event.stopPropagation();tvUnarchive('${t.id}')">Restore</span>`:''}</td>
     <td>${tvPickHTML('status', t.id, 'status', false, t.status, t)}</td>
     <td>${tvPickHTML('people', t.id, 'assignee_id', false, t.assignee_id, t)}</td>
     <td>${tvPickHTML('due', t.id, 'due_date', false, t.due_date, t)}</td>
@@ -1744,7 +1751,7 @@ function rowMenu(anchor, tid){
     {label:'Open task', fn:()=>openTask(tid)},
     {label:'Copy task link', fn:()=>copyTaskLink(tid)},
   ];
-  if(canEdit() && !t.archived_at){
+  if(canEditTask(t) && !t.archived_at){
     items.push('-');
     items.push({label:'Move to top of group', fn:()=>taskMoveTop(tid)});
     if((S._groups||[]).length) items.push({label:'Move to group…', fn:()=>taskMoveGroup(anchor, tid)});

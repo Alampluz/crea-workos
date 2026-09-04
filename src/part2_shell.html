@@ -103,6 +103,33 @@ const isExternal = ()=> S.me && ['partner','freelancer'].includes(S.me.role);
 const isRequester = ()=> S.me && S.me.role==='requester';
 const canEdit = ()=> isStaff() && !isRequester();
 const canCreate = ()=> isStaff() || isRequester();
+/* Per-board edit presets (projects.edit_preset). The database enforces these in the
+   tasks / subtasks / checklist policies; these mirrors only decide what the UI offers.
+   Admins, management and the board's owners are never restricted. */
+const BOARD_PRESETS = [
+  {k:'everything', label:'Edit everything',        blurb:'Anyone with access can create, edit and move any task. The default.'},
+  {k:'assigned',   label:'Edit assigned tasks only', blurb:'People can create tasks and edit the ones assigned to them or created by them. Everything else is read-only for them.'},
+  {k:'view',       label:'View only',              blurb:'People can read and comment. Only owners, admins and management change tasks.'},
+];
+function boardPreset(pid){ const p=(S.projects||[]).find(x=>x.id===pid); return (p&&p.edit_preset)||'everything'; }
+function presetExempt(pid){ return isAdmin() || (S.me&&S.me.role==='management') || (typeof canManageBoard==='function' && canManageBoard(pid)); }
+function canEditOnBoard(pid){ if(!canEdit()) return false; return presetExempt(pid) || boardPreset(pid)!=='view'; }
+function canEditTask(t){
+  if(!t || !canEdit()) return false;
+  if(presetExempt(t.project_id)) return true;
+  const pr = boardPreset(t.project_id);
+  if(pr==='everything') return true;
+  if(pr==='assigned') return t.assignee_id===S.me.id || t.created_by===S.me.id;
+  return false;
+}
+/* What a restricted member sees at the top of the board, or '' when unrestricted. */
+function presetNoticeHTML(pid){
+  if(!S.me || isRequester() || presetExempt(pid)) return '';
+  const pr = boardPreset(pid);
+  if(pr==='assigned') return `<div class="preset-note">You can edit the tasks assigned to you or created by you on this board. Everything else is read-only.</div>`;
+  if(pr==='view')     return `<div class="preset-note">This board is view-only for you — you can open tasks and comment, but not change them.</div>`;
+  return '';
+}
 /* ---- Ownership: board and workspace SETTINGS are owner-or-admin.
    Task create/edit is unchanged — that still runs off canEdit(). These mirror
    can_manage_board() / can_manage_ws() in the database, which is what actually
